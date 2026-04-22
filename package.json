@@ -1,0 +1,27 @@
+{
+  "name": "ai_prompt_speed_optimizer",
+  "version": "1.0.0",
+  "main": "build.js",
+  "type": "module",
+  "scripts": {
+    "build": "node build.cjs",
+    "build:chrome": "node build.cjs --target=chrome",
+    "build:firefox": "node build.cjs --target=firefox",
+    "build:safari": "node build.cjs --target=safari",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "verify": "npm test && npm run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/chrome": "^0.1.39",
+    "esbuild": "^0.27.5",
+    "http-server": "^14.1.1",
+    "jsdom": "^25.0.0",
+    "vitest": "^2.1.8"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}

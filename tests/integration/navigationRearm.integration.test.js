@@ -1,0 +1,217 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+const mockRefs = vi.hoisted(() => ({
+    registeredHandlers: null,
+    runInitialPruneBase: vi.fn(),
+    attachObserverToContainerBase: vi.fn(),
+    ensureObserverAttachedBase: vi.fn(() => true),
+    waitForContainerAndInitialPruneBase: vi.fn(),
+    createObserverDeps: vi.fn(({ scheduleAutoPrune, getDidInitialPrune }) => ({
+        scheduleAutoPrune,
+        getDidInitialPrune,
+    })),
+}));
+
+vi.mock("../../src/shared/ext.js", () => ({
+    ext: {
+        storage: {
+            onChanged: {
+                addListener: vi.fn(),
+            },
+        },
+        runtime: {
+            onMessage: {
+                addListener: vi.fn(),
+            },
+        },
+    },
+    storageSyncGet: vi.fn(async (defaults = {}) => ({
+        ...defaults,
+        historyKeptExchanges: 10,
+        autoPrune: true,
+        enablePruning: true,
+        enableOffscreenOptimization: false,
+        enableLargeCodeBlockOptimization: false,
+        enableStreamingSectionHiding: false,
+        enableDebugLogging: false,
+        largeCodeBlockMinChars: 1,
+    })),
+}));
+
+vi.mock("../../src/content/core/messages.js", () => ({
+    registerRuntimeMessageHandlers: vi.fn((handlers) => {
+        mockRefs.registeredHandlers = handlers;
+    }),
+}));
+
+vi.mock("../../src/content/pruning/prune.js", () => ({
+    pruneOldSections: vi.fn(() => []),
+    restoreAllSections: vi.fn(() => []),
+    runInitialPrune: mockRefs.runInitialPruneBase,
+    enforceSoftPrunedLimit: vi.fn(),
+}));
+
+vi.mock("../../src/content/pruning/pruneUi.js", () => ({
+    ensurePlaceholderState: vi.fn(),
+    removePlaceholder: vi.fn(),
+    installStartupPruneMask: vi.fn(),
+    removeStartupPruneMask: vi.fn(),
+}));
+
+vi.mock("../../src/content/pruning/pruneSentinels.js", () => ({
+    ensureTopRestoreSentinelState: vi.fn(),
+    ensureBottomPruneSentinelState: vi.fn(),
+}));
+
+vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
+    invalidateSentinelObserversForRootChange: vi.fn(),
+    refreshTopRestoreSentinelObservation: vi.fn(),
+    refreshBottomPruneSentinelObservation: vi.fn(),
+    disconnectSentinelObservers: vi.fn(),
+}));
+
+vi.mock("../../src/content/offscreen/offscreen.js", () => ({
+    ensureSectionCssOffscreenMode: vi.fn(),
+    handleReplyStreamingStarted: vi.fn(),
+    scheduleOffscreenRefresh: vi.fn(),
+    setOffscreenOptimizationEnabled: vi.fn(),
+}));
+
+vi.mock("../../src/content/observers/observers.js", () => ({
+    attachObserverToContainer: mockRefs.attachObserverToContainerBase,
+    ensureObserverAttached: mockRefs.ensureObserverAttachedBase,
+    waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPruneBase,
+    createObserverDeps: mockRefs.createObserverDeps,
+}));
+
+vi.mock("../../src/content/streaming/streamingSection.js", () => ({
+    setStreamingSectionHidingEnabled: vi.fn(),
+    syncStreamingSectionState: vi.fn(),
+}));
+
+vi.mock("../../src/content/streaming/replyTiming.js", () => ({
+    installReplyTimingListeners: vi.fn(),
+    ensureReplyCompletionPoll: vi.fn(),
+    isReplyStreaming: vi.fn(() => false),
+}));
+
+function createConversationContainer({ anchorId = "4" } = {}) {
+    const root = document.createElement("div");
+    const wrapper = document.createElement("div");
+    const container = document.createElement("div");
+
+    root.appendChild(wrapper);
+    wrapper.appendChild(container);
+    document.body.appendChild(root);
+
+    for (let i = 1; i <= 4; i += 1) {
+        const section = document.createElement("section");
+        section.setAttribute("data-testid", `conversation-turn-${i}`);
+        section.setAttribute("data-turn", i % 2 === 0 ? "assistant" : "user");
+        if (String(i) === anchorId) {
+            section.setAttribute("data-scroll-anchor", "true");
+        }
+        section.textContent = `section-${i}`;
+        container.appendChild(section);
+    }
+
+    return container;
+}
+
+async function flush() {
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
+async function resetNavigationWatcher() {
+    const navigationModule = await import("../../src/content/core/navigation.js");
+    navigationModule.resetConversationNavigationWatcherForTests();
+}
+
+describe("navigation rearm integration", () => {
+    let originalRAF;
+    let originalCAF;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+
+        await resetNavigationWatcher();
+
+        document.body.innerHTML = "";
+        document.head.innerHTML = "";
+        history.replaceState({}, "", "/");
+
+        mockRefs.registeredHandlers = null;
+        mockRefs.runInitialPruneBase.mockClear();
+        mockRefs.attachObserverToContainerBase.mockClear();
+        mockRefs.ensureObserverAttachedBase.mockClear();
+        mockRefs.waitForContainerAndInitialPruneBase.mockClear();
+        mockRefs.createObserverDeps.mockClear();
+
+        originalRAF = globalThis.requestAnimationFrame;
+        originalCAF = globalThis.cancelAnimationFrame;
+
+        globalThis.requestAnimationFrame = (callback) =>
+            setTimeout(() => callback(performance.now()), 0);
+        globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+    });
+
+    afterEach(async () => {
+        vi.useRealTimers();
+        await resetNavigationWatcher();
+        globalThis.requestAnimationFrame = originalRAF;
+        globalThis.cancelAnimationFrame = originalCAF;
+        document.body.innerHTML = "";
+        document.head.innerHTML = "";
+        history.replaceState({}, "", "/");
+    });
+
+    it("reruns initial prune after a route change", async () => {
+        createConversationContainer();
+        await import("../../src/content/core/index.js");
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        document.body.innerHTML = "";
+        createConversationContainer();
+
+        history.pushState({}, "", "/c/chat-2");
+        vi.runAllTimers();
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+    });
+
+    it("rearms initial prune from a sidebar click hint", async () => {
+        createConversationContainer();
+        await import("../../src/content/core/index.js");
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        document.body.innerHTML = "";
+        createConversationContainer();
+
+        const link = document.createElement("a");
+        link.setAttribute("data-sidebar-item", "true");
+        link.href = "/c/chat-from-sidebar";
+        link.addEventListener("click", (event) => {
+            event.preventDefault();
+        });
+        document.body.appendChild(link);
+
+        link.dispatchEvent(
+            new MouseEvent("click", {
+                bubbles: true,
+                cancelable: true,
+            })
+        );
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+    });
+});

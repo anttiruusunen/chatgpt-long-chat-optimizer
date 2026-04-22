@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Thread Optimizer Fixture</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+        }
+
+        #scroll-wrap {
+            height: 700px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 20px;
+        }
+
+        #conversation {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        section {
+            padding: 16px;
+            border-radius: 12px;
+            background: #f5f5f5;
+            min-height: 80px;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            background: #111;
+            color: #fff;
+            padding: 16px;
+            border-radius: 8px;
+        }
+
+        .actions {
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="page">
+        <div id="scroll-wrap">
+            <div id="conversation"></div>
+        </div>
+    </div>
+
+    <script>
+        const conversation = document.getElementById("conversation");
+
+        function addExchange(index, { latest = false, streaming = false, largeCode = false } = {}) {
+            const user = document.createElement("section");
+            user.setAttribute("data-turn", "user");
+            user.setAttribute("data-testid", `conversation-turn-${index * 2 - 1}`);
+            user.textContent = `User ${index}`;
+
+            const assistant = document.createElement("section");
+            assistant.setAttribute("data-turn", "assistant");
+            assistant.setAttribute("data-testid", `conversation-turn-${index * 2}`);
+
+            if (latest) {
+                assistant.setAttribute("data-scroll-anchor", "true");
+            }
+
+            assistant.append(`Assistant ${index}`);
+
+            if (largeCode) {
+                const pre = document.createElement("pre");
+                pre.textContent = "const x = 1;\n".repeat(300);
+                assistant.appendChild(pre);
+            }
+
+            if (!streaming) {
+                const actions = document.createElement("div");
+                actions.className = "actions";
+                actions.setAttribute("aria-label", "Response actions");
+                actions.textContent = "Actions";
+                assistant.appendChild(actions);
+            }
+
+            conversation.appendChild(user);
+            conversation.appendChild(assistant);
+        }
+
+        for (let i = 1; i <= 6; i += 1) {
+            addExchange(i, {
+                latest: i === 6,
+                streaming: false,
+                largeCode: i === 6,
+            });
+        }
+
+        window.__FIXTURE__ = {
+            setLatestStreaming() {
+                const sections = [...document.querySelectorAll('section[data-turn="assistant"]')];
+                const latest = sections[sections.length - 1];
+                latest.querySelector('[aria-label="Response actions"]')?.remove();
+            },
+
+            completeLatestStreaming() {
+                const sections = [...document.querySelectorAll('section[data-turn="assistant"]')];
+                const latest = sections[sections.length - 1];
+
+                let actions = latest.querySelector('[aria-label="Response actions"]');
+                if (!actions) {
+                    actions = document.createElement("div");
+                    actions.className = "actions";
+                    actions.setAttribute("aria-label", "Response actions");
+                    actions.textContent = "Actions";
+                    latest.appendChild(actions);
+                }
+            },
+        };
+    </script>
+</body>
+</html>

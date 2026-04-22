@@ -1,0 +1,259 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <style>
+        body {
+            width: 320px;
+            font-family: sans-serif;
+            padding: 12px;
+            margin: 0;
+        }
+
+        h3 {
+            margin: 0 0 14px;
+            font-size: 16px;
+        }
+
+        .summary {
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            background: rgba(0, 0, 0, 0.02);
+        }
+
+        .summaryRow {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .summaryRow:last-child {
+            margin-bottom: 0;
+        }
+
+        .summaryLabel {
+            opacity: 0.75;
+        }
+
+        .summaryValue {
+            font-weight: 600;
+        }
+
+        .setting {
+            margin-bottom: 14px;
+        }
+
+        .label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .controlRow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        input[type="number"] {
+            width: 90px;
+            padding: 6px 8px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+
+        .clearButton {
+            border: 1px solid #d33;
+            background: #fff;
+            color: #d33;
+            border-radius: 6px;
+            width: 28px;
+            height: 28px;
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+        }
+
+        .clearButton:hover {
+            background: rgba(211, 51, 51, 0.08);
+        }
+
+        .hint {
+            margin-top: 6px;
+            font-size: 12px;
+            opacity: 0.75;
+            line-height: 1.35;
+        }
+
+        .flags,
+        .debug {
+            border-top: 1px solid rgba(0, 0, 0, 0.08);
+            padding-top: 12px;
+            margin-top: 14px;
+        }
+
+        .flagRow {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .flagLabel {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .flagLabel strong {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .flagLabel span {
+            font-size: 12px;
+            opacity: 0.75;
+            line-height: 1.3;
+        }
+
+        .subSetting {
+            margin: 6px 0 12px 24px;
+        }
+
+        .subSettingRow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        .subSetting input[type="number"] {
+            width: 110px;
+        }
+
+        .debug[hidden] {
+            display: none !important;
+        }
+
+        .debugButtons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .debugButton {
+            border: 1px solid rgba(0, 0, 0, 0.16);
+            background: #fff;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .debugButton:hover {
+            background: rgba(0, 0, 0, 0.04);
+        }
+
+        .status {
+            margin-top: 10px;
+            font-size: 12px;
+            opacity: 0.8;
+            min-height: 16px;
+        }
+    </style>
+</head>
+<body>
+<h3>Thread Optimizer</h3>
+
+<div class="summary">
+    <div class="summaryRow">
+        <span class="summaryLabel">Hidden messages</span>
+        <span id="hiddenMessagesValue" class="summaryValue">—</span>
+    </div>
+    <div class="summaryRow">
+        <span class="summaryLabel">Latest reply time</span>
+        <span id="lastReplyTimeValue" class="summaryValue">—</span>
+    </div>
+</div>
+
+<div class="setting">
+    <label class="label" for="historyKeptExchanges">Chat history kept</label>
+    <div class="controlRow">
+        <input id="historyKeptExchanges" type="number" min="1" step="1" />
+        <button
+            id="clearHistoryKeptExchanges"
+            class="clearButton"
+            title="Disable auto-pruning"
+            aria-label="Disable auto-pruning"
+        >×</button>
+    </div>
+    <div class="hint">
+        How many recent exchanges stay recoverable. The newest exchange remains visible,
+        older recoverable exchanges stay in memory, and anything beyond this limit is removed permanently.
+        Clear to disable auto-pruning.
+    </div>
+</div>
+
+<div class="flags">
+    <div class="flagRow">
+        <input id="enablePruning" type="checkbox" />
+        <label class="flagLabel" for="enablePruning">
+            <strong>Enable pruning</strong>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableOffscreenOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableOffscreenOptimization">
+            <strong>Enable offscreen optimization</strong>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableLargeCodeBlockOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableLargeCodeBlockOptimization">
+            <strong>Collapse code blocks</strong>
+            <span>Hide code blocks behind a click-to-reveal placeholder while optimizing the thread.</span>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableStreamingSectionHiding" type="checkbox" />
+        <label class="flagLabel" for="enableStreamingSectionHiding">
+            <strong>Optimize streamed responses</strong>
+            <span>Hide the active ChatGPT reply until it finishes, for smoother rendering.</span>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableDebugLogging" type="checkbox" />
+        <label class="flagLabel" for="enableDebugLogging">
+            <strong>Enable debug logging</strong>
+        </label>
+    </div>
+</div>
+
+<div id="debugSection" class="debug" hidden>
+    <div class="label">Debug</div>
+    <div class="debugButtons">
+        <button id="logDebugState" class="debugButton" type="button">Log state</button>
+        <button id="logDebugBuckets" class="debugButton" type="button">Log buckets</button>
+        <button id="logDebugLogical" class="debugButton" type="button">Log logical</button>
+    </div>
+    <div class="hint">
+        Logs debug output in the content script console for the current tab.
+    </div>
+</div>
+
+<div id="status" class="status"></div>
+
+<script type="module" src="popup.js"></script>
+</body>
+</html>
