@@ -9,14 +9,17 @@ export function preserveScrollAfterRestore({
         !visibleSectionsChanged ||
         !anchorSection?.isConnected ||
         anchorTopBefore == null ||
-        !lastRestoredSection?.isConnected
+        !lastRestoredSection?.isConnected ||
+        !scrollContainer
     ) {
         return;
     }
 
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            if (!anchorSection?.isConnected || !lastRestoredSection?.isConnected) return;
+            if (!anchorSection?.isConnected || !lastRestoredSection?.isConnected) {
+                return;
+            }
 
             const anchorTopAfter = anchorSection.getBoundingClientRect().top;
             const anchorDelta = anchorTopAfter - anchorTopBefore;
@@ -25,18 +28,11 @@ export function preserveScrollAfterRestore({
                 scrollContainer.scrollTop += anchorDelta;
             }
 
-            requestAnimationFrame(() => {
-                if (!lastRestoredSection?.isConnected) return;
-
-                const bottomClearance = 32;
-                const rect = lastRestoredSection.getBoundingClientRect();
-                const targetBottom = window.innerHeight - bottomClearance;
-                const bottomDelta = rect.bottom - targetBottom;
-
-                if (bottomDelta > 1) {
-                    scrollContainer.scrollTop += bottomDelta;
-                }
-            });
+            /*
+             * Do not apply a second "fit restored section into viewport" adjustment here.
+             * That extra nudge can skip over the immediately previous message when restoring
+             * older content during upward scrolling.
+             */
         });
     });
 }
@@ -50,7 +46,8 @@ export function preserveScrollAfterReprune({
     if (
         !visibleSectionsChanged ||
         !anchorSection?.isConnected ||
-        anchorTopBefore == null
+        anchorTopBefore == null ||
+        !scrollContainer
     ) {
         return;
     }
