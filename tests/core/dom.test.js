@@ -9,6 +9,7 @@ import {
     getLatestAssistantSection,
     getConversationScrollContainer,
     getConversationTurnRoot,
+    getConversationSectionMountNode,
 } from "../../src/content/core/dom.js";
 
 import {
@@ -233,11 +234,20 @@ describe("conversation DOM helpers", () => {
         const outerScroll = document.getElementById("outer-scroll");
         const threadRoot = document.getElementById("thread-root");
 
+        let mode = "outer";
+
         vi.spyOn(window, "getComputedStyle").mockImplementation((el) => {
-            if (el === outerScroll) {
+            if (mode === "outer") {
+                if (el === outerScroll) {
+                    return {
+                        overflow: "auto",
+                        overflowY: "auto",
+                    };
+                }
+
                 return {
-                    overflow: "auto",
-                    overflowY: "auto",
+                    overflow: "visible",
+                    overflowY: "visible",
                 };
             }
 
@@ -248,20 +258,27 @@ describe("conversation DOM helpers", () => {
                 };
             }
 
+            if (el === outerScroll) {
+                return {
+                    overflow: "visible",
+                    overflowY: "visible",
+                };
+            }
+
             return {
                 overflow: "visible",
                 overflowY: "visible",
             };
         });
 
-        expect(getConversationScrollContainer()).toBe(threadRoot);
+        expect(getConversationScrollContainer()).toBe(outerScroll);
 
         sections[1].setAttribute("data-scroll-anchor", "false");
         sections[3].setAttribute("data-scroll-anchor", "true");
+        mode = "thread";
 
         expect(getAnchorSection()).toBe(sections[3]);
         expect(getConversationScrollContainer()).toBe(threadRoot);
-        expect(getConversationScrollContainer()).not.toBe(outerScroll);
     });
 
     it("returns null container and empty sections when there is no conversation", () => {
@@ -286,16 +303,60 @@ describe("conversation DOM helpers", () => {
         const { wrappers, sections } = buildWrappedConversation();
 
         expect(getConversationTurnRoot(sections[1])).toBe(wrappers[1]);
+        expect(getConversationSectionMountNode(sections[1])).toBe(wrappers[1]);
     });
 
     it("falls back to the section itself when no wrapper exists", () => {
-        const section = document.createElement("section");
-        section.setAttribute("data-testid", "conversation-turn-plain");
-        section.setAttribute("data-turn", "assistant");
-        section.setAttribute("data-turn-id", "plain");
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation-host">
+                    <section
+                        data-testid="conversation-turn-1"
+                        data-turn-id="1"
+                        data-turn="assistant"
+                        data-scroll-anchor="true"
+                    ></section>
+                </div>
+            </main>
+        `;
 
-        document.body.appendChild(section);
+        const section = document.querySelector("section");
 
         expect(getConversationTurnRoot(section)).toBe(section);
+        expect(getConversationSectionMountNode(section)).toBe(section);
+    });
+
+    it("climbs through multiple exclusive wrappers and stops before a shared parent", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation-host">
+                    <div class="row" id="row-1">
+                        <div class="bubble" id="bubble-1">
+                            <section
+                                data-testid="conversation-turn-1"
+                                data-turn-id="1"
+                                data-turn="user"
+                                data-scroll-anchor="false"
+                            ></section>
+                        </div>
+                    </div>
+                    <div class="row" id="row-2">
+                        <div class="bubble" id="bubble-2">
+                            <section
+                                data-testid="conversation-turn-2"
+                                data-turn-id="2"
+                                data-turn="assistant"
+                                data-scroll-anchor="true"
+                            ></section>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        `;
+
+        const section = document.querySelector('[data-turn-id="2"]');
+        const row = document.getElementById("row-2");
+
+        expect(getConversationSectionMountNode(section)).toBe(row);
     });
 });

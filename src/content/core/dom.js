@@ -4,6 +4,8 @@ import {
     BOTTOM_PRUNE_SENTINEL_ATTR,
 } from "../core/state.js";
 
+const STRUCTURAL_STOP_TAGS = new Set(["MAIN", "BODY", "HTML"]);
+
 export function isConversationSection(el) {
     if (!(el instanceof HTMLElement)) return false;
     if (el.tagName !== "SECTION") return false;
@@ -20,7 +22,7 @@ export function isConversationSection(el) {
 
 function getLastConversationSectionInDocument() {
     const sections = Array.from(document.querySelectorAll("section"));
-    for (let i = sections.length - 1; i >= 0; i--) {
+    for (let i = sections.length - 1; i >= 0; i -= 1) {
         if (isConversationSection(sections[i])) {
             return sections[i];
         }
@@ -42,27 +44,78 @@ function getConversationSectionsWithin(root) {
     return Array.from(root.querySelectorAll("section")).filter(isConversationSection);
 }
 
-export function getConversationTurnRoot(section) {
-    if (!isConversationSection(section)) return null;
+function countConversationSectionsWithin(root) {
+    return getConversationSectionsWithin(root).length;
+}
 
-    const wrapper = section.closest("[data-turn-id-container]");
-    if (wrapper instanceof HTMLElement) {
-        return wrapper;
+function hasOnlyCurrentAsElementChild(parent, current) {
+    if (!(parent instanceof HTMLElement) || !(current instanceof Element)) {
+        return false;
     }
 
-    return section;
+    const elementChildren = Array.from(parent.children);
+    return elementChildren.length === 1 && elementChildren[0] === current;
+}
+
+export function getConversationTurnRoot(section) {
+    return getConversationSectionMountNode(section);
 }
 
 export function getConversationSectionMountNode(section) {
-    return getConversationTurnRoot(section);
+    if (!isConversationSection(section)) return null;
+
+    const explicitWrapper = section.closest("[data-turn-id-container]");
+    if (explicitWrapper instanceof HTMLElement) {
+        return explicitWrapper;
+    }
+
+    let mountNode = section;
+    let current = section;
+
+    while (current.parentElement instanceof HTMLElement) {
+        const parent = current.parentElement;
+
+        if (STRUCTURAL_STOP_TAGS.has(parent.tagName)) {
+            break;
+        }
+
+        if (
+            parent.hasAttribute(PLACEHOLDER_ATTR) ||
+            parent.hasAttribute(TOP_RESTORE_SENTINEL_ATTR) ||
+            parent.hasAttribute(BOTTOM_PRUNE_SENTINEL_ATTR)
+        ) {
+            break;
+        }
+
+        if (!hasOnlyCurrentAsElementChild(parent, current)) {
+            break;
+        }
+
+        if (countConversationSectionsWithin(parent) !== 1) {
+            break;
+        }
+
+        const grandparent = parent.parentElement;
+        if (grandparent && STRUCTURAL_STOP_TAGS.has(grandparent.tagName)) {
+            break;
+        }
+
+        mountNode = parent;
+        current = parent;
+    }
+
+    return mountNode;
 }
 
 export function getConversationContainer() {
     const anchor = getAnchorSection();
     if (!anchor) return null;
 
-    let current = getConversationTurnRoot(anchor)?.parentElement || anchor.parentElement;
-    while (current) {
+    const anchorMountNode =
+        getConversationSectionMountNode(anchor) || anchor.parentElement || anchor;
+
+    let current = anchorMountNode.parentElement;
+    while (current instanceof HTMLElement) {
         const conversationSections = getConversationSectionsWithin(current);
         if (conversationSections.length > 1) {
             return current;
@@ -70,7 +123,7 @@ export function getConversationContainer() {
         current = current.parentElement;
     }
 
-    return getConversationTurnRoot(anchor)?.parentElement || anchor.parentElement || null;
+    return anchorMountNode.parentElement || null;
 }
 
 export function getConversationSections() {
@@ -95,7 +148,7 @@ export function getRecentSections(sectionsToKeep) {
 export function getLatestAssistantSection() {
     const sections = getConversationSections();
 
-    for (let i = sections.length - 1; i >= 0; i--) {
+    for (let i = sections.length - 1; i >= 0; i -= 1) {
         if (sections[i].getAttribute("data-turn") === "assistant") {
             return sections[i];
         }
@@ -111,7 +164,7 @@ export function getConversationScrollContainer() {
     }
 
     let current = container.parentElement;
-    while (current) {
+    while (current instanceof HTMLElement) {
         const style = window.getComputedStyle(current);
         const overflowY = style.overflowY;
         const overflow = style.overflow;

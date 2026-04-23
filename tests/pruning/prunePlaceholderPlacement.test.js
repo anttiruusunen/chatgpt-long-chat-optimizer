@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { state, PLACEHOLDER_ATTR } from "../../src/content/core/state.js";
 import { ensurePlaceholderState, removePlaceholder } from "../../src/content/pruning/pruneUi.js";
-import { getConversationTurnRoot } from "../../src/content/core/dom.js";
+import {
+    getConversationContainer,
+    getConversationSectionMountNode,
+} from "../../src/content/core/dom.js";
+import {
+    state,
+    PLACEHOLDER_ATTR,
+} from "../../src/content/core/state.js";
 
 function makeWrappedTurn(id, turn, { anchor = "false" } = {}) {
     const wrapper = document.createElement("div");
@@ -20,22 +26,19 @@ function makeWrappedTurn(id, turn, { anchor = "false" } = {}) {
 
 describe("prune placeholder placement", () => {
     beforeEach(() => {
-        document.body.innerHTML = `
-            <main>
-                <div id="conversation-host"></div>
-            </main>
-        `;
-
+        document.body.innerHTML = `<main><div id="conversation-host"></div></main>`;
         state.placeholder = null;
-        state.hiddenCount = 4;
+        state.hiddenCount = 0;
     });
 
     afterEach(() => {
         removePlaceholder({ destroy: true });
+        state.placeholder = null;
+        state.hiddenCount = 0;
         document.body.innerHTML = "";
     });
 
-    it("inserts the placeholder before the wrapped turn root, not before the inner section", () => {
+    it("inserts the placeholder before the first visible wrapper node, not inside it", () => {
         const host = document.getElementById("conversation-host");
         const first = makeWrappedTurn("1", "user");
         const second = makeWrappedTurn("2", "assistant", { anchor: "true" });
@@ -43,15 +46,15 @@ describe("prune placeholder placement", () => {
         host.appendChild(first.wrapper);
         host.appendChild(second.wrapper);
 
-        const changed = ensurePlaceholderState(second.section);
-        const placeholder = host.querySelector(`[${PLACEHOLDER_ATTR}="true"]`);
+        state.hiddenCount = 4;
+
+        const changed = ensurePlaceholderState(first.section);
 
         expect(changed).toBe(true);
-        expect(placeholder).not.toBeNull();
-        expect(placeholder.parentElement).toBe(host);
-        expect(placeholder.nextElementSibling).toBe(getConversationTurnRoot(second.section));
-        expect(second.wrapper.previousElementSibling).toBe(placeholder);
-        expect(second.section.previousElementSibling).toBe(null);
+        expect(getConversationContainer()).toBe(host);
+        expect(getConversationSectionMountNode(first.section)).toBe(first.wrapper);
+        expect(host.firstElementChild?.getAttribute(PLACEHOLDER_ATTR)).toBe("true");
+        expect(host.children[1]).toBe(first.wrapper);
     });
 
     it("reuses the same placeholder node across repeated calls", () => {
@@ -62,45 +65,52 @@ describe("prune placeholder placement", () => {
         host.appendChild(first.wrapper);
         host.appendChild(second.wrapper);
 
-        ensurePlaceholderState(second.section);
+        state.hiddenCount = 2;
+        ensurePlaceholderState(first.section);
+
         const firstPlaceholder = state.placeholder;
 
-        ensurePlaceholderState(second.section);
-        const secondPlaceholder = state.placeholder;
+        state.hiddenCount = 6;
+        ensurePlaceholderState(first.section);
 
-        expect(firstPlaceholder).toBe(secondPlaceholder);
-        expect(host.querySelectorAll(`[${PLACEHOLDER_ATTR}="true"]`).length).toBe(1);
-    });
-
-    it("moves the placeholder when the first visible section changes to another wrapped turn", () => {
-        const host = document.getElementById("conversation-host");
-        const first = makeWrappedTurn("1", "user");
-        const second = makeWrappedTurn("2", "assistant");
-        const third = makeWrappedTurn("3", "user");
-
-        host.appendChild(first.wrapper);
-        host.appendChild(second.wrapper);
-        host.appendChild(third.wrapper);
-
-        ensurePlaceholderState(second.section);
-        expect(state.placeholder.nextElementSibling).toBe(second.wrapper);
-
-        ensurePlaceholderState(third.section);
-        expect(state.placeholder.nextElementSibling).toBe(third.wrapper);
+        expect(state.placeholder).toBe(firstPlaceholder);
+        expect(host.firstElementChild).toBe(firstPlaceholder);
+        expect(firstPlaceholder.firstElementChild.textContent).toBe("6 older messages hidden");
     });
 
     it("hides the placeholder when there is no first visible section", () => {
         const host = document.getElementById("conversation-host");
-        const first = makeWrappedTurn("1", "user");
+        const first = makeWrappedTurn("1", "assistant", { anchor: "true" });
 
         host.appendChild(first.wrapper);
 
+        state.hiddenCount = 3;
         ensurePlaceholderState(first.section);
-        const placeholder = state.placeholder;
 
+        const placeholder = state.placeholder;
         expect(placeholder).not.toBeNull();
 
         const changed = ensurePlaceholderState(null);
+
+        expect(changed).toBe(true);
+        expect(placeholder.hidden).toBe(true);
+    });
+
+    it("hides the placeholder when the mount node no longer belongs to the container", () => {
+        const host = document.getElementById("conversation-host");
+        const first = makeWrappedTurn("1", "assistant", { anchor: "true" });
+
+        host.appendChild(first.wrapper);
+
+        state.hiddenCount = 3;
+        ensurePlaceholderState(first.section);
+
+        const placeholder = state.placeholder;
+        expect(placeholder).not.toBeNull();
+
+        first.wrapper.remove();
+
+        const changed = ensurePlaceholderState(first.section);
 
         expect(changed).toBe(true);
         expect(placeholder.hidden).toBe(true);

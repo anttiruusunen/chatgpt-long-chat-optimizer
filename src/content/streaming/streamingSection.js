@@ -1,5 +1,10 @@
 import { debugLog } from "../core/logger.js";
-import { getConversationSections, getLatestAssistantSection } from "../core/dom.js";
+import {
+    getConversationSections,
+    getLatestAssistantSection,
+    getConversationTurnRoot,
+    getConversationSectionMountNode,
+} from "../core/dom.js";
 import { hasResponseActions } from "./assistantSignals.js";
 
 const STYLE_ID = "thread-optimizer-streaming-section-style";
@@ -17,7 +22,7 @@ let nextRevealId = 1;
 let streamingSectionHidingEnabled = false;
 
 const STREAMING_SECTION_CSS = `
-section[data-turn="assistant"][${STREAM_HIDDEN_ATTR}="true"] {
+[${STREAM_HIDDEN_ATTR}="true"] {
     position: relative;
     min-height: 56px;
 }
@@ -26,7 +31,7 @@ section[data-turn="assistant"][${STREAM_HIDDEN_ATTR}="true"] {
  * Prefer hiding only the streamed markdown subtree.
  * This keeps the section shell intact and narrows the style/layout blast radius.
  */
-section[data-turn="assistant"][${STREAM_HIDDEN_ATTR}="true"]:not([${STREAM_FORCE_VISIBLE_ATTR}="true"]) .markdown[${STREAM_MARKDOWN_HIDDEN_ATTR}="true"] {
+[${STREAM_HIDDEN_ATTR}="true"]:not([${STREAM_FORCE_VISIBLE_ATTR}="true"]) .markdown[${STREAM_MARKDOWN_HIDDEN_ATTR}="true"] {
     display: none !important;
 }
 
@@ -34,7 +39,7 @@ section[data-turn="assistant"][${STREAM_HIDDEN_ATTR}="true"]:not([${STREAM_FORCE
  * Fallback only when no .markdown root exists yet.
  * This keeps the newest assistant hidden from the start of streaming.
  */
-section[data-turn="assistant"][${STREAM_HIDDEN_ATTR}="true"][${STREAM_MARKDOWN_MISSING_ATTR}="true"]:not([${STREAM_FORCE_VISIBLE_ATTR}="true"]) > * {
+[${STREAM_HIDDEN_ATTR}="true"][${STREAM_MARKDOWN_MISSING_ATTR}="true"]:not([${STREAM_FORCE_VISIBLE_ATTR}="true"]) > * {
     display: none !important;
 }
 
@@ -103,6 +108,24 @@ function getStreamingMarkdownRoot(section) {
     return markdown instanceof HTMLElement ? markdown : null;
 }
 
+function getStreamingShellNode(section) {
+    if (!(section instanceof HTMLElement)) {
+        return null;
+    }
+
+    const mountNode = getConversationSectionMountNode(section);
+    if (mountNode instanceof HTMLElement) {
+        return mountNode;
+    }
+
+    const turnRoot = getConversationTurnRoot(section);
+    if (turnRoot instanceof HTMLElement) {
+        return turnRoot;
+    }
+
+    return section;
+}
+
 function ensureSectionRevealId(section) {
     let id = section.dataset[STREAM_REVEAL_ID_DATASET];
     if (id) return id;
@@ -139,10 +162,12 @@ function createRevealControl(section) {
     button.setAttribute(STREAM_REVEAL_BUTTON_ATTR, "true");
     button.textContent = "Show reply";
     button.addEventListener("click", () => {
-        section.setAttribute(STREAM_FORCE_VISIBLE_ATTR, "true");
+        const shellNode = getStreamingShellNode(section);
         const markdown = getStreamingMarkdownRoot(section);
+
+        shellNode?.setAttribute(STREAM_FORCE_VISIBLE_ATTR, "true");
         markdown?.removeAttribute(STREAM_MARKDOWN_HIDDEN_ATTR);
-        section.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
+        shellNode?.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
         removeRevealControlForSection(section);
     });
 
@@ -159,29 +184,40 @@ function ensureRevealControlForSection(section) {
     let control = getRevealControlForSection(section);
     if (control) return control;
 
+    const shellNode = getStreamingShellNode(section);
+    if (!(shellNode instanceof HTMLElement) || !(shellNode.parentElement instanceof HTMLElement)) {
+        return null;
+    }
+
     control = createRevealControl(section);
-    section.parentElement?.insertBefore(control, section);
+    shellNode.parentElement.insertBefore(control, shellNode);
     return control;
 }
 
 function clearStreamingStateForSection(section) {
+    const shellNode = getStreamingShellNode(section);
     const markdown = getStreamingMarkdownRoot(section);
 
-    section.removeAttribute(STREAM_HIDDEN_ATTR);
-    section.removeAttribute(STREAM_FORCE_VISIBLE_ATTR);
-    section.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
+    shellNode?.removeAttribute(STREAM_HIDDEN_ATTR);
+    shellNode?.removeAttribute(STREAM_FORCE_VISIBLE_ATTR);
+    shellNode?.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
     markdown?.removeAttribute(STREAM_MARKDOWN_HIDDEN_ATTR);
 
     removeRevealControlForSection(section);
 }
 
 function applyStreamingStateToSection(section) {
+    const shellNode = getStreamingShellNode(section);
     const markdown = getStreamingMarkdownRoot(section);
 
-    section.setAttribute(STREAM_HIDDEN_ATTR, "true");
+    if (!(shellNode instanceof HTMLElement)) {
+        return;
+    }
 
-    if (section.getAttribute(STREAM_FORCE_VISIBLE_ATTR) === "true") {
-        section.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
+    shellNode.setAttribute(STREAM_HIDDEN_ATTR, "true");
+
+    if (shellNode.getAttribute(STREAM_FORCE_VISIBLE_ATTR) === "true") {
+        shellNode.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
         markdown?.removeAttribute(STREAM_MARKDOWN_HIDDEN_ATTR);
         removeRevealControlForSection(section);
         return;
@@ -189,9 +225,9 @@ function applyStreamingStateToSection(section) {
 
     if (markdown) {
         markdown.setAttribute(STREAM_MARKDOWN_HIDDEN_ATTR, "true");
-        section.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
+        shellNode.removeAttribute(STREAM_MARKDOWN_MISSING_ATTR);
     } else {
-        section.setAttribute(STREAM_MARKDOWN_MISSING_ATTR, "true");
+        shellNode.setAttribute(STREAM_MARKDOWN_MISSING_ATTR, "true");
     }
 
     ensureRevealControlForSection(section);
