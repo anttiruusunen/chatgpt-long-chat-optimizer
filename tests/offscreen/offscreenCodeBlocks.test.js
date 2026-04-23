@@ -223,7 +223,7 @@ describe("offscreenCodeBlocks", () => {
         const placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         const remaining = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(2);
         expect(remaining.length).toBe(1);
         expect(remaining[0]).toBe(second);
     });
@@ -240,18 +240,18 @@ describe("offscreenCodeBlocks", () => {
         let placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         let remainingPreBlocks = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(3);
         expect(remainingPreBlocks.length).toBe(0);
-        expect(state.detachedCodeBlocks.size).toBe(1);
+        expect(state.detachedCodeBlocks.size).toBe(3);
 
         refreshObservedCodeBlocks();
 
         placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         remainingPreBlocks = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(3);
         expect(remainingPreBlocks.length).toBe(0);
-        expect(state.detachedCodeBlocks.size).toBe(1);
+        expect(state.detachedCodeBlocks.size).toBe(3);
     });
 
     it("tracks the newest assistant markdown when markdown exists", () => {
@@ -334,10 +334,12 @@ describe("offscreenCodeBlocks", () => {
             },
         ]);
 
+        vi.runOnlyPendingTimers();
+
         const placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         const remainingPreBlocks = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(2);
         expect(remainingPreBlocks.length).toBe(1);
         expect(remainingPreBlocks[0]).toBe(second);
     });
@@ -355,7 +357,7 @@ describe("offscreenCodeBlocks", () => {
         let placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         let remainingPreBlocks = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(2);
         expect(remainingPreBlocks.length).toBe(1);
 
         addResponseActions(assistant);
@@ -366,7 +368,7 @@ describe("offscreenCodeBlocks", () => {
         placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
         remainingPreBlocks = markdown.querySelectorAll("pre");
 
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(2);
         expect(remainingPreBlocks.length).toBe(0);
     });
 
@@ -380,7 +382,7 @@ describe("offscreenCodeBlocks", () => {
         refreshObservedCodeBlocks();
 
         const placeholders = document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`);
-        expect(placeholders.length).toBe(1);
+        expect(placeholders.length).toBe(2);
 
         revealCollapsedCodeBlockFromPlaceholder(placeholders[0]);
 
@@ -396,5 +398,10 @@ describe("offscreenCodeBlocks", () => {
         remainingPreBlocks = markdown.querySelectorAll("pre");
         expect(Array.from(remainingPreBlocks)).toContain(revealedPre);
         expect(revealedPre.dataset.threadOptimizerCodeExpanded).toBe("true");
+
+        const visiblePlaceholders = document.querySelectorAll(
+            `[${CODE_BLOCK_PLACEHOLDER_ATTR}="true"]:not([data-thread-optimizer-code-placeholder-hidden="true"])`
+        );
+        expect(visiblePlaceholders.length).toBe(1);
     });
 });
