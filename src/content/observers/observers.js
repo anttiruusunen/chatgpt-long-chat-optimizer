@@ -1,6 +1,34 @@
 import { state } from "../core/state.js";
-import { getConversationContainer } from "../core/dom.js";
+import { getConversationContainer, isConversationSection } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
+
+function nodeIsOrContainsConversationSection(node) {
+    if (!(node instanceof Element)) {
+        return false;
+    }
+
+    if (isConversationSection(node)) {
+        return true;
+    }
+
+    return Boolean(
+        Array.from(node.querySelectorAll("section")).find((section) =>
+            isConversationSection(section)
+        )
+    );
+}
+
+function nodeLooksLikeTurnMount(node) {
+    if (!(node instanceof Element)) {
+        return false;
+    }
+
+    if (node.hasAttribute("data-turn-id-container")) {
+        return true;
+    }
+
+    return nodeIsOrContainsConversationSection(node);
+}
 
 export function mutationNeedsPrune(mutation, container) {
     if (mutation.type !== "childList") return false;
@@ -8,13 +36,13 @@ export function mutationNeedsPrune(mutation, container) {
     if (mutation.target !== container) return false;
 
     for (const node of mutation.addedNodes) {
-        if (node instanceof Element && node.tagName === "SECTION") {
+        if (nodeLooksLikeTurnMount(node)) {
             return true;
         }
     }
 
     for (const node of mutation.removedNodes) {
-        if (node instanceof Element && node.tagName === "SECTION") {
+        if (nodeLooksLikeTurnMount(node)) {
             return true;
         }
     }
@@ -26,8 +54,8 @@ function summarizeMutations(mutations, container) {
     let childListCount = 0;
     let addedNodeCount = 0;
     let removedNodeCount = 0;
-    let directSectionAdds = 0;
-    let directSectionRemovals = 0;
+    let directTurnAdds = 0;
+    let directTurnRemovals = 0;
     let pruneRelevantMutations = 0;
 
     for (const mutation of mutations) {
@@ -39,14 +67,14 @@ function summarizeMutations(mutations, container) {
 
         if (mutation.target === container) {
             for (const node of mutation.addedNodes) {
-                if (node instanceof Element && node.tagName === "SECTION") {
-                    directSectionAdds += 1;
+                if (nodeLooksLikeTurnMount(node)) {
+                    directTurnAdds += 1;
                 }
             }
 
             for (const node of mutation.removedNodes) {
-                if (node instanceof Element && node.tagName === "SECTION") {
-                    directSectionRemovals += 1;
+                if (nodeLooksLikeTurnMount(node)) {
+                    directTurnRemovals += 1;
                 }
             }
         }
@@ -61,8 +89,8 @@ function summarizeMutations(mutations, container) {
         childListCount,
         addedNodeCount,
         removedNodeCount,
-        directSectionAdds,
-        directSectionRemovals,
+        directTurnAdds,
+        directTurnRemovals,
         pruneRelevantMutations,
     };
 }
@@ -98,8 +126,8 @@ export function handleObservedMutations(
 
         if (shouldConsiderPrune) {
             debugLog("Observers: pruning-relevant mutation batch detected", {
-                directSectionAdds: summary.directSectionAdds,
-                directSectionRemovals: summary.directSectionRemovals,
+                directTurnAdds: summary.directTurnAdds,
+                directTurnRemovals: summary.directTurnRemovals,
                 pruneRelevantMutations: summary.pruneRelevantMutations,
             });
         }
