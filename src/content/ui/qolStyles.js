@@ -41,12 +41,11 @@ section[data-turn="user"] [data-message-author-role="user"] > div {
 }
 
 /*
- * Clamp code blocks / editor content,
- * but keep them in normal block flow so they never visually cover text below.
+ * Base code block flow:
+ * keep code blocks in normal block flow so they never visually cover text below.
+ * For plain code blocks, pre owns the clamp and scrolling.
  */
-section pre,
-section .cm-content,
-section .cm_content {
+section pre {
     display: block;
     position: relative;
     z-index: 0;
@@ -59,13 +58,43 @@ section .cm_content {
     contain: layout paint;
 }
 
+/*
+ * CodeMirror-based blocks:
+ * let the dedicated scroller own the vertical clamp/scroll instead of pre.
+ */
+section pre:has(.cm-editor) {
+    max-height: none;
+    overflow: visible;
+    contain: none;
+}
+
+section pre .cm-editor {
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+section pre .cm-scroller {
+    box-sizing: border-box;
+    max-height: 30vh;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+section pre .cm-content,
+section pre .cm_content {
+    box-sizing: border-box;
+    max-height: none !important;
+    overflow: visible !important;
+    contain: none !important;
+}
+
 /* collapsed live code blocks stay in DOM but should not render */
 section pre[data-thread-optimizer-code-collapsed="true"] {
     display: none !important;
 }
 
 /* detached/collapsed code block placeholder */
-[ data-thread-optimizer-code-placeholder="true" ],
 [data-thread-optimizer-code-placeholder="true"] {
     display: flex;
     align-items: center;
