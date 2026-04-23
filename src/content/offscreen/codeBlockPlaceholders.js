@@ -188,6 +188,9 @@ export function ensurePlaceholderForPre(pre) {
         return null;
     }
 
+    // Reuse only the placeholder already assigned to THIS pre.
+    // This preserves UI stability without letting adjacent code blocks
+    // share placeholder identity.
     const existingId = getPlaceholderIdForPre(pre);
     const existingPlaceholder = existingId
         ? getPlaceholderById(existingId)
@@ -204,18 +207,6 @@ export function ensurePlaceholderForPre(pre) {
         }
 
         return existingPlaceholder;
-    }
-
-    const previousSibling = pre.previousElementSibling;
-    if (
-        previousSibling instanceof HTMLElement &&
-        previousSibling.getAttribute(CODE_BLOCK_PLACEHOLDER_ATTR) === "true"
-    ) {
-        const id = ensurePlaceholderId(previousSibling);
-        setPlaceholderIdForPre(pre, id);
-        updatePlaceholderLabel(previousSibling);
-        setPlaceholderVisibility(previousSibling, true);
-        return previousSibling;
     }
 
     const placeholder = createCodeBlockPlaceholder();
