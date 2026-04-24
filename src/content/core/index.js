@@ -2,7 +2,6 @@ import { state } from "./state.js";
 import { getSettings } from "./settings.js";
 import {
     getConversationContainer,
-    getConversationSections,
 } from "./dom.js";
 import {
     pruneOldSections as pruneOldSectionsBase,
@@ -11,19 +10,12 @@ import {
     enforceSoftPrunedLimit,
 } from "../pruning/prune.js";
 import {
-    ensurePlaceholderState,
     removePlaceholder,
     installStartupPruneMask,
     removeStartupPruneMask,
 } from "../pruning/pruneUi.js";
 import {
-    ensureTopRestoreSentinelState,
-    ensureBottomPruneSentinelState,
-} from "../pruning/pruneSentinels.js";
-import {
-    ensureSectionCssOffscreenMode,
     handleReplyStreamingStarted,
-    scheduleOffscreenRefresh,
     setOffscreenOptimizationEnabled,
 } from "../offscreen/offscreen.js";
 import {
@@ -45,14 +37,10 @@ import {
     isReplyStreaming,
 } from "../streaming/replyTiming.js";
 import {
-    invalidateSentinelObserversForRootChange,
-    refreshTopRestoreSentinelObservation,
-    refreshBottomPruneSentinelObservation,
     disconnectSentinelObservers,
 } from "../pruning/sentinelObservers.js";
 import { ensureQolStyles } from "../ui/qolStyles.js";
 import {
-    syncCssVisibilityWindow,
     clearCssVisibilityWindow,
 } from "../pruning/cssVisibilityWindow.js";
 import { installConversationNavigationWatcher } from "./navigation.js";
@@ -60,13 +48,13 @@ import {
     setDomWriteBatchExecutor,
     scheduleDomWriteBatch,
 } from "./domWriteBatch.js";
+import {
+    configureConversationMaintenance,
+    flushDeferredCssVisibilityWindowSync,
+    scheduleConversationChromeSync,
+    scheduleRefreshPostPruneState,
+} from "./conversationMaintenance.js";
 
-let isPostPruneRefreshScheduled = false;
-let isCssVisibilityWindowSyncDeferred = false;
-let isConversationChromeSyncScheduled = false;
-let pendingConversationChromeSyncForceCss = false;
-let pendingConversationChromeSyncIncludeStreaming = false;
-let pendingConversationChromeSyncReasons = new Set();
 let isBootstrapInitialPruneScheduled = false;
 
 function withDomMutationGuard(fn) {
@@ -87,159 +75,6 @@ function syncFeatureFlagsFromSettings() {
     state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
     state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
     state.featureFlags.streamingSectionHiding = Boolean(state.settings.enableStreamingSectionHiding);
-}
-
-function requestCssVisibilityWindowSync({ force = false, reason = "unknown" } = {}) {
-    if (force || !isReplyStreaming()) {
-        isCssVisibilityWindowSyncDeferred = false;
-        syncCssVisibilityWindow();
-
-        debugLog("Index: synced CSS visibility window", {
-            force,
-            reason,
-        });
-        return;
-    }
-
-    isCssVisibilityWindowSyncDeferred = true;
-
-    debugLog("Index: deferred CSS visibility window sync during active reply", {
-        reason,
-    });
-}
-
-function flushDeferredCssVisibilityWindowSync(reason = "reply-settled") {
-    if (isReplyStreaming()) {
-        return;
-    }
-
-    if (!isCssVisibilityWindowSyncDeferred) {
-        return;
-    }
-
-    isCssVisibilityWindowSyncDeferred = false;
-    syncCssVisibilityWindow();
-
-    debugLog("Index: flushed deferred CSS visibility window sync", {
-        reason,
-    });
-}
-
-function flushPostPruneState() {
-    if (isReplyStreaming()) {
-        disconnectSentinelObservers();
-        scheduleOffscreenRefresh();
-        debugLog("Index: flushed minimal streaming-mode refresh");
-        return;
-    }
-
-    invalidateSentinelObserversForRootChange();
-    scheduleOffscreenRefresh();
-
-    refreshTopRestoreSentinelObservation({
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    refreshBottomPruneSentinelObservation({
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    debugLog("Index: flushed batched post-prune refresh");
-}
-
-function scheduleRefreshPostPruneState() {
-    if (isPostPruneRefreshScheduled) {
-        debugLog("Index: skipped duplicate post-prune refresh schedule");
-        return;
-    }
-
-    isPostPruneRefreshScheduled = true;
-
-    requestAnimationFrame(() => {
-        isPostPruneRefreshScheduled = false;
-        flushPostPruneState();
-    });
-
-    debugLog("Index: scheduled batched post-prune refresh");
-}
-
-function flushConversationChromeSync() {
-    isConversationChromeSyncScheduled = false;
-
-    const forceCss = pendingConversationChromeSyncForceCss;
-    const includeStreaming = pendingConversationChromeSyncIncludeStreaming;
-    const reasons = Array.from(pendingConversationChromeSyncReasons);
-
-    pendingConversationChromeSyncForceCss = false;
-    pendingConversationChromeSyncIncludeStreaming = false;
-    pendingConversationChromeSyncReasons.clear();
-
-    const visibleSections = getConversationSections();
-    const firstVisibleSection = visibleSections[0] ?? null;
-    const lastVisibleSection = visibleSections[visibleSections.length - 1] ?? null;
-
-    if (state.hiddenCount > 0 && firstVisibleSection) {
-        ensurePlaceholderState(firstVisibleSection);
-    } else {
-        removePlaceholder();
-    }
-
-    ensureTopRestoreSentinelState(firstVisibleSection);
-    ensureBottomPruneSentinelState(lastVisibleSection);
-
-    if (includeStreaming && state.featureFlags.streamingSectionHiding) {
-        syncStreamingSectionState();
-    }
-
-    requestCssVisibilityWindowSync({
-        force: forceCss,
-        reason: reasons.join(",") || "conversation-chrome-sync",
-    });
-
-    ensureSectionCssOffscreenMode();
-    scheduleRefreshPostPruneState();
-
-    debugLog("Index: flushed conversation chrome sync batch", {
-        reasons,
-        visibleSections: visibleSections.length,
-        hiddenCount: state.hiddenCount,
-        forceCss,
-        includeStreaming,
-    });
-}
-
-function scheduleConversationChromeSync({
-    reason = "unknown",
-    forceCss = false,
-    includeStreaming = false,
-} = {}) {
-    pendingConversationChromeSyncReasons.add(reason);
-    pendingConversationChromeSyncForceCss =
-        pendingConversationChromeSyncForceCss || forceCss;
-    pendingConversationChromeSyncIncludeStreaming =
-        pendingConversationChromeSyncIncludeStreaming || includeStreaming;
-
-    if (isConversationChromeSyncScheduled) {
-        debugLog("Index: coalesced conversation chrome sync request", {
-            reason,
-            forceCss,
-            includeStreaming,
-        });
-        return;
-    }
-
-    isConversationChromeSyncScheduled = true;
-    scheduleDomWriteBatch(flushConversationChromeSync);
-
-    debugLog("Index: scheduled conversation chrome sync batch", {
-        reason,
-        forceCss,
-        includeStreaming,
-    });
 }
 
 function applySoftPrunedLimitToCurrentState() {
@@ -472,6 +307,11 @@ function waitForContainerAndInitialPrune() {
         runInitialPrune,
     });
 }
+
+configureConversationMaintenance({
+    ensureObserverAttached,
+    withDomMutationGuard,
+});
 
 async function initialize() {
     state.settings = await getSettings();
