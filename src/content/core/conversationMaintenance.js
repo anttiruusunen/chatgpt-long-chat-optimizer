@@ -27,12 +27,16 @@ import { scheduleDomWriteBatch } from "./domWriteBatch.js";
 let ensureObserverAttachedDependency = null;
 let withDomMutationGuardDependency = null;
 
-let isPostPruneRefreshScheduled = false;
+let isConversationMaintenanceScheduled = false;
 let isCssVisibilityWindowSyncDeferred = false;
-let isConversationChromeSyncScheduled = false;
+
+let pendingConversationChromeSync = false;
+let pendingPostPruneRefresh = false;
+
 let pendingConversationChromeSyncForceCss = false;
 let pendingConversationChromeSyncIncludeStreaming = false;
 let pendingConversationChromeSyncReasons = new Set();
+let pendingMaintenanceReasons = new Set();
 
 export function configureConversationMaintenance({
     ensureObserverAttached,
@@ -56,6 +60,24 @@ function getMaintenanceDeps() {
             withDomMutationGuardDependency ?? ((fn) => fn()),
         refreshObservedSections: scheduleRefreshPostPruneState,
     };
+}
+
+function scheduleConversationMaintenance(reason = "unknown") {
+    pendingMaintenanceReasons.add(reason);
+
+    if (isConversationMaintenanceScheduled) {
+        debugLog("Maintenance: coalesced maintenance request", {
+            reason,
+        });
+        return;
+    }
+
+    isConversationMaintenanceScheduled = true;
+    scheduleDomWriteBatch(flushConversationMaintenance);
+
+    debugLog("Maintenance: scheduled maintenance batch", {
+        reason,
+    });
 }
 
 function requestCssVisibilityWindowSync({ force = false, reason = "unknown" } = {}) {
@@ -102,8 +124,14 @@ function flushPostPruneState() {
         return;
     }
 
-    invalidateSentinelObserversForRootChange();
     scheduleOffscreenRefresh();
+
+    if (typeof IntersectionObserver !== "function") {
+        debugLog("Maintenance: skipped sentinel observer refresh because IntersectionObserver is unavailable");
+        return;
+    }
+
+    invalidateSentinelObserversForRootChange();
 
     const deps = getMaintenanceDeps();
 
@@ -113,25 +141,7 @@ function flushPostPruneState() {
     debugLog("Maintenance: flushed batched post-prune refresh");
 }
 
-export function scheduleRefreshPostPruneState() {
-    if (isPostPruneRefreshScheduled) {
-        debugLog("Maintenance: skipped duplicate post-prune refresh schedule");
-        return;
-    }
-
-    isPostPruneRefreshScheduled = true;
-
-    requestAnimationFrame(() => {
-        isPostPruneRefreshScheduled = false;
-        flushPostPruneState();
-    });
-
-    debugLog("Maintenance: scheduled batched post-prune refresh");
-}
-
 function flushConversationChromeSync() {
-    isConversationChromeSyncScheduled = false;
-
     const forceCss = pendingConversationChromeSyncForceCss;
     const includeStreaming = pendingConversationChromeSyncIncludeStreaming;
     const reasons = Array.from(pendingConversationChromeSyncReasons);
@@ -163,7 +173,6 @@ function flushConversationChromeSync() {
     });
 
     ensureSectionCssOffscreenMode();
-    scheduleRefreshPostPruneState();
 
     debugLog("Maintenance: flushed conversation chrome sync batch", {
         reasons,
@@ -174,30 +183,60 @@ function flushConversationChromeSync() {
     });
 }
 
+function flushConversationMaintenance() {
+    isConversationMaintenanceScheduled = false;
+
+    const shouldFlushChromeSync = pendingConversationChromeSync;
+    const shouldFlushPostPruneRefresh =
+        pendingPostPruneRefresh || pendingConversationChromeSync;
+    const reasons = Array.from(pendingMaintenanceReasons);
+
+    pendingConversationChromeSync = false;
+    pendingPostPruneRefresh = false;
+    pendingMaintenanceReasons.clear();
+
+    if (shouldFlushChromeSync) {
+        flushConversationChromeSync();
+    }
+
+    if (shouldFlushPostPruneRefresh) {
+        flushPostPruneState();
+    }
+
+    debugLog("Maintenance: flushed coalesced maintenance batch", {
+        reasons,
+        flushedChromeSync: shouldFlushChromeSync,
+        flushedPostPruneRefresh: shouldFlushPostPruneRefresh,
+    });
+}
+
+export function scheduleRefreshPostPruneState() {
+    if (pendingPostPruneRefresh && isConversationMaintenanceScheduled) {
+        debugLog("Maintenance: skipped duplicate post-prune refresh schedule");
+        return;
+    }
+
+    pendingPostPruneRefresh = true;
+    scheduleConversationMaintenance("post-prune-refresh");
+
+    debugLog("Maintenance: scheduled post-prune refresh");
+}
+
 export function scheduleConversationChromeSync({
     reason = "unknown",
     forceCss = false,
     includeStreaming = false,
 } = {}) {
+    pendingConversationChromeSync = true;
     pendingConversationChromeSyncReasons.add(reason);
     pendingConversationChromeSyncForceCss =
         pendingConversationChromeSyncForceCss || forceCss;
     pendingConversationChromeSyncIncludeStreaming =
         pendingConversationChromeSyncIncludeStreaming || includeStreaming;
 
-    if (isConversationChromeSyncScheduled) {
-        debugLog("Maintenance: coalesced conversation chrome sync request", {
-            reason,
-            forceCss,
-            includeStreaming,
-        });
-        return;
-    }
+    scheduleConversationMaintenance(`conversation-chrome-sync:${reason}`);
 
-    isConversationChromeSyncScheduled = true;
-    scheduleDomWriteBatch(flushConversationChromeSync);
-
-    debugLog("Maintenance: scheduled conversation chrome sync batch", {
+    debugLog("Maintenance: scheduled conversation chrome sync", {
         reason,
         forceCss,
         includeStreaming,
@@ -205,12 +244,14 @@ export function scheduleConversationChromeSync({
 }
 
 export function resetConversationMaintenanceForTests() {
-    isPostPruneRefreshScheduled = false;
+    isConversationMaintenanceScheduled = false;
     isCssVisibilityWindowSyncDeferred = false;
-    isConversationChromeSyncScheduled = false;
+    pendingConversationChromeSync = false;
+    pendingPostPruneRefresh = false;
     pendingConversationChromeSyncForceCss = false;
     pendingConversationChromeSyncIncludeStreaming = false;
     pendingConversationChromeSyncReasons.clear();
+    pendingMaintenanceReasons.clear();
     ensureObserverAttachedDependency = null;
     withDomMutationGuardDependency = null;
 }

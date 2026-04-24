@@ -21,6 +21,14 @@ const refreshTopRestoreSentinelObservationMock = vi.fn();
 const refreshBottomPruneSentinelObservationMock = vi.fn();
 const syncCssVisibilityWindowMock = vi.fn();
 
+const originalIntersectionObserver = globalThis.IntersectionObserver;
+
+class FakeIntersectionObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+}
+
 vi.mock("../../src/content/core/dom.js", () => ({
     getConversationSections: vi.fn(() => conversationSectionsMock),
 }));
@@ -136,12 +144,15 @@ describe("conversationMaintenance", () => {
             ensureObserverAttached: vi.fn(() => true),
             withDomMutationGuard: (fn) => fn(),
         });
+
+        globalThis.IntersectionObserver = FakeIntersectionObserver;
     });
 
     afterEach(() => {
         resetDomWriteBatchForTests();
         resetConversationMaintenanceForTests();
         globalThis.requestAnimationFrame = originalRAF;
+        globalThis.IntersectionObserver = originalIntersectionObserver;
     });
 
     it("coalesces conversation chrome sync requests into one DOM write batch", () => {
@@ -209,6 +220,7 @@ describe("conversationMaintenance", () => {
 
     it("refreshes sentinels and offscreen state during post-prune refresh", () => {
         scheduleRefreshPostPruneState();
+        flushDomWriteBatchNow();
 
         expect(invalidateSentinelObserversForRootChangeMock).toHaveBeenCalledTimes(1);
         expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
@@ -220,6 +232,7 @@ describe("conversationMaintenance", () => {
         isReplyStreamingMock = true;
 
         scheduleRefreshPostPruneState();
+        flushDomWriteBatchNow();
 
         expect(disconnectSentinelObserversMock).toHaveBeenCalledTimes(1);
         expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
