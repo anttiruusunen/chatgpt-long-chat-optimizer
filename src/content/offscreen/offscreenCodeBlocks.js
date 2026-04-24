@@ -36,6 +36,7 @@ import {
     ensureLiveCodeBlockMutationObserver,
     disconnectCodeBlockMutationObserver,
 } from "./codeBlockObservers.js";
+import { scheduleDomWriteBatch } from "../core/domWriteBatch.js";
 
 const CODE_BLOCKS_PROCESSED_ATTR = "data-thread-optimizer-codeblocks-processed";
 const LARGE_CODE_LIVE_ATTR = "data-thread-optimizer-large-code-live";
@@ -190,15 +191,16 @@ function scheduleCodeBlockRefresh() {
     }
 
     state.isCodeBlockRefreshScheduled = true;
+    state.codeBlockRefreshTimer = null;
 
-    state.codeBlockRefreshTimer = setTimeout(() => {
+    scheduleDomWriteBatch(() => {
         try {
             refreshObservedCodeBlocks();
         } finally {
             state.isCodeBlockRefreshScheduled = false;
             state.codeBlockRefreshTimer = null;
         }
-    }, 0);
+    });
 }
 
 function reconcileDetachedCodeBlocks() {
