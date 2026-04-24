@@ -16,6 +16,7 @@ import {
     setPlaceholderVisibility,
     isPlaceholderHidden,
 } from "../../src/content/offscreen/codeBlockPlaceholders.js";
+import { revealCollapsedCodeBlockFromPlaceholder } from "../../src/content/offscreen/codeBlockDetachStore.js";
 
 function makePre(text = "") {
     const pre = document.createElement("pre");
@@ -141,5 +142,14 @@ describe("codeBlockPlaceholders", () => {
         expect(reused).toBe(placeholder);
         expect(isPlaceholderHidden(placeholder)).toBe(false);
         expect(getRevealButtonForPlaceholder(placeholder)).not.toBe(null);
+    });
+
+    it("ignores reveal clicks for stale placeholders without detached entries", () => {
+        const placeholder = document.createElement("div");
+        placeholder.setAttribute("data-thread-optimizer-code-placeholder", "true");
+
+        expect(() => {
+            revealCollapsedCodeBlockFromPlaceholder(placeholder);
+        }).not.toThrow();
     });
 });

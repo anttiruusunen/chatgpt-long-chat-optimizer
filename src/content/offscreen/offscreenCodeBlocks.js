@@ -101,7 +101,9 @@ function getCodeBlocksForSection(section) {
     const result = [];
 
     for (let i = 0; i < codeBlocks.length; i += 1) {
-        result.push(codeBlocks[i]);
+        if (isCodeBlockOptimizationEligible(codeBlocks[i])) {
+            result.push(codeBlocks[i]);
+        }
     }
 
     return result;
@@ -118,7 +120,7 @@ function resetStreamingObserverTracking() {
 }
 
 function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
-    if (!(pre instanceof HTMLPreElement)) {
+    if (!isCodeBlockOptimizationEligible(pre)) {
         return false;
     }
 
@@ -213,7 +215,10 @@ function reconcileDetachedCodeBlocks() {
         }
 
         if (!placeholder.isConnected) {
-            state.detachedCodeBlocks.delete(entry.id);
+            restoreDetachedCodeBlockEntry(entry, {
+                removePlaceholder: true,
+                preserveExpanded: true,
+            });
             continue;
         }
 
@@ -571,4 +576,38 @@ export function refreshObservedCodeBlocks() {
         sectionsProcessed,
         detachedCodeBlocks: state.detachedCodeBlocks.size,
     });
+}
+
+function isCodeBlockOptimizationEligible(pre) {
+    if (!(pre instanceof HTMLPreElement)) {
+        return false;
+    }
+
+    if (!pre.isConnected) {
+        return false;
+    }
+
+    const section = pre.closest('section[data-turn="assistant"]');
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (
+        pre.closest(
+            [
+                '[data-writing-block="true"]',
+                ".writing-block-editor",
+                '.ProseMirror[contenteditable="true"]',
+                '[contenteditable="true"]',
+            ].join(",")
+        )
+    ) {
+        return false;
+    }
+
+    if (!pre.querySelector("code") && !pre.textContent?.trim()) {
+        return false;
+    }
+
+    return true;
 }

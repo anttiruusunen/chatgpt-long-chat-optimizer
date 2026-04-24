@@ -404,4 +404,27 @@ describe("offscreenCodeBlocks", () => {
         );
         expect(visiblePlaceholders.length).toBe(1);
     });
+
+    it("does not collapse code blocks inside writing block editors", () => {
+        const latestAssistant = document.querySelector('[data-turn="assistant"]');
+        const markdown = latestAssistant.querySelector(".markdown");
+
+        markdown.innerHTML = `
+            <div data-writing-block="true">
+                <div class="writing-block-editor">
+                    <div class="ProseMirror" contenteditable="true">
+                        <pre><code>${"x".repeat(120)}</code></pre>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        refreshObservedCodeBlocks();
+
+        expect(
+            latestAssistant.querySelector('[data-thread-optimizer-code-placeholder="true"]')
+        ).toBeNull();
+
+        expect(latestAssistant.querySelector("pre")).not.toBeNull();
+    });
 });
