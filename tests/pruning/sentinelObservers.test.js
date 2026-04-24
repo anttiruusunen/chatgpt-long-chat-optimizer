@@ -58,19 +58,16 @@ class FakeIntersectionObserver {
         this.callback = callback;
         this.options = options;
         this.observed = new Set();
+        this.observe = vi.fn((target) => {
+            this.observed.add(target);
+        });
+        this.unobserve = vi.fn((target) => {
+            this.observed.delete(target);
+        });
+        this.disconnect = vi.fn(() => {
+            this.observed.clear();
+        });
         intersectionObservers.push(this);
-    }
-
-    observe(target) {
-        this.observed.add(target);
-    }
-
-    unobserve(target) {
-        this.observed.delete(target);
-    }
-
-    disconnect() {
-        this.observed.clear();
     }
 
     trigger(entries) {
@@ -272,6 +269,8 @@ beforeEach(() => {
     state.softPrunedSections = [];
     state.topRestoreUserArmed = false;
     state.bottomPruneUserArmed = false;
+    state.topRestoreObservedSentinel = null;
+    state.bottomPruneObservedSentinel = null;
 });
 
 afterEach(() => {
@@ -536,5 +535,70 @@ describe("sentinelObservers", () => {
         await flushTimersStepwise();
 
         expect(repruneOneExchangeFromVisibleProtectedMock).not.toHaveBeenCalled();
+    });
+
+    it("does not reconnect the top observer when root and sentinel are unchanged", () => {
+        buildConversation();
+
+        state.softPrunedSections = [
+            document.createElement("section"),
+            document.createElement("section"),
+        ];
+        state.topRestoreSentinel = makeSentinel();
+        document.body.appendChild(state.topRestoreSentinel);
+
+        const args = {
+            ensureObserverAttached: vi.fn(),
+            withDomMutationGuard: (fn) => fn(),
+            refreshObservedSections: vi.fn(),
+        };
+
+        refreshTopRestoreSentinelObservation(args);
+
+        expect(intersectionObservers.length).toBe(1);
+        expect(intersectionObservers[0].observe).toHaveBeenCalledTimes(1);
+
+        const disconnectCallsAfterFirstRefresh =
+            intersectionObservers[0].disconnect.mock.calls.length;
+
+        refreshTopRestoreSentinelObservation(args);
+
+        expect(intersectionObservers.length).toBe(1);
+        expect(intersectionObservers[0].observe).toHaveBeenCalledTimes(1);
+        expect(intersectionObservers[0].disconnect).toHaveBeenCalledTimes(
+            disconnectCallsAfterFirstRefresh
+        );
+    });
+
+    it("does not reconnect the bottom observer when root and sentinel are unchanged", () => {
+        const { user1, assistant1, scrollWrap } = buildConversation();
+
+        protectedVisibleSectionsMock = [user1, assistant1];
+        scrollWrap.scrollHeight = 1200;
+
+        state.bottomPruneSentinel = makeSentinel();
+        document.body.appendChild(state.bottomPruneSentinel);
+
+        const args = {
+            ensureObserverAttached: vi.fn(),
+            withDomMutationGuard: (fn) => fn(),
+            refreshObservedSections: vi.fn(),
+        };
+
+        refreshBottomPruneSentinelObservation(args);
+
+        expect(intersectionObservers.length).toBe(1);
+        expect(intersectionObservers[0].observe).toHaveBeenCalledTimes(1);
+
+        const disconnectCallsAfterFirstRefresh =
+            intersectionObservers[0].disconnect.mock.calls.length;
+
+        refreshBottomPruneSentinelObservation(args);
+
+        expect(intersectionObservers.length).toBe(1);
+        expect(intersectionObservers[0].observe).toHaveBeenCalledTimes(1);
+        expect(intersectionObservers[0].disconnect).toHaveBeenCalledTimes(
+            disconnectCallsAfterFirstRefresh
+        );
     });
 });

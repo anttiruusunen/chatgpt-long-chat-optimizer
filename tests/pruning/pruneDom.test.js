@@ -4,6 +4,7 @@ import {
     destroySectionForGc,
     softPruneSection,
     restoreSoftPrunedSection,
+    restoreSoftPrunedSections,
     hardEvictSection,
 } from "../../src/content/pruning/pruneDom.js";
 
@@ -134,5 +135,36 @@ describe("pruneDom wrapper-aware behavior", () => {
         const turn = makeWrappedTurn("1", "assistant");
 
         expect(getConversationTurnRoot(turn.section)).toBe(turn.wrapper);
+    });
+
+    it("restores multiple soft-pruned sections before the anchor in order", () => {
+        const container = document.createElement("div");
+
+        const { wrapper: w1, section: s1 } = makeWrappedTurn("1", "user");
+        const { wrapper: w2, section: s2 } = makeWrappedTurn("2", "assistant");
+        const { wrapper: w3, section: s3 } = makeWrappedTurn("3", "user");
+
+        container.appendChild(w1);
+        container.appendChild(w2);
+        container.appendChild(w3);
+        document.body.appendChild(container);
+
+        softPruneSection(s1);
+        softPruneSection(s2);
+
+        expect(container.contains(w1)).toBe(false);
+        expect(container.contains(w2)).toBe(false);
+        expect(container.contains(w3)).toBe(true);
+
+        const restoredCount = restoreSoftPrunedSections(
+            [s1, s2],
+            container,
+            s3
+        );
+
+        expect(restoredCount).toBe(2);
+        expect(Array.from(container.children)).toEqual([w1, w2, w3]);
+        expect(s1.hasAttribute(PRUNED_ATTR)).toBe(false);
+        expect(s2.hasAttribute(PRUNED_ATTR)).toBe(false);
     });
 });
