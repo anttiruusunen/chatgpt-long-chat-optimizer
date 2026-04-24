@@ -35,6 +35,7 @@ import {
     preserveScrollAfterRestore,
     preserveScrollAfterReprune,
 } from "./pruneScroll.js";
+import { deleteSectionMessageViaBridge } from "../bridge/chatStoreBridgeClient.js";
 
 const VISIBLE_EXCHANGES = 1;
 const SECTIONS_PER_EXCHANGE = 2;
@@ -66,7 +67,7 @@ export function enforceSoftPrunedLimit() {
         const evicted = state.softPrunedSections.splice(0, overflowCount);
 
         for (const section of evicted) {
-            hardEvictSection(section);
+            hardEvictSectionWithBridge(section);
         }
 
         state.hardEvictedCount += evicted.length;
@@ -373,7 +374,7 @@ export function pruneOldSections(
         removeBottomPruneSentinel();
 
         for (const section of sectionsToEvictNow) {
-            hardEvictSection(section);
+            hardEvictSectionWithBridge(section);
             evictedCount += 1;
         }
 
@@ -523,4 +524,17 @@ export function runInitialPrune(
             });
         }
     });
+}
+
+function hardEvictSectionWithBridge(section) {
+    const bridgeResult = deleteSectionMessageViaBridge(section);
+
+    debugLog("Prune: recorded hard-evicted section for manual bridge delete", {
+        recorded: bridgeResult.recorded,
+        messageId: bridgeResult.messageId,
+        reason: bridgeResult.reason,
+    });
+
+    hardEvictSection(section);
+    return bridgeResult;
 }

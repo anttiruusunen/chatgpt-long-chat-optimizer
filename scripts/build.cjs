@@ -36,9 +36,32 @@ function copyStaticFiles(src, dest) {
     }
 }
 
+function copyPageBridge(outDir) {
+    const pageSrcDir = path.join(srcDir, "content", "page");
+    const pageOutDir = path.join(outDir, "page");
+
+    if (!fs.existsSync(pageSrcDir)) {
+        return;
+    }
+
+    fs.mkdirSync(pageOutDir, { recursive: true });
+
+    for (const entry of fs.readdirSync(pageSrcDir, { withFileTypes: true })) {
+        if (!entry.isFile()) {
+            continue;
+        }
+
+        fs.copyFileSync(
+            path.join(pageSrcDir, entry.name),
+            path.join(pageOutDir, entry.name)
+        );
+    }
+}
+
 function writeManifestForTarget(target, outDir) {
     const baseManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     const manifest = createManifestForTarget(baseManifest, target);
+
     fs.writeFileSync(
         path.join(outDir, "manifest.json"),
         `${JSON.stringify(manifest, null, 2)}\n`
@@ -50,12 +73,18 @@ function buildTarget(target) {
 
     fs.mkdirSync(outDir, { recursive: true });
     copyStaticFiles(srcDir, outDir);
+    copyPageBridge(outDir);
     writeManifestForTarget(target, outDir);
 
     esbuild.buildSync({
         entryPoints: {
             content: path.join(srcDir, "content", "core", "index.js"),
-            bridgeBootstrap: path.join(srcDir, "content", "bridge", "bridgeBootstrap.js"),
+            bridgeBootstrap: path.join(
+                srcDir,
+                "content",
+                "bridge",
+                "bridgeBootstrap.js"
+            ),
         },
         bundle: true,
         outdir: outDir,
