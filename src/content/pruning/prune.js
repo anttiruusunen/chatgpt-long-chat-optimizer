@@ -28,8 +28,11 @@ import {
 } from "./pruneSentinels.js";
 import {
     hardEvictSection,
+    hardEvictSections,
     softPruneSection,
+    softPruneSections,
     restoreSoftPrunedSection,
+    restoreSoftPrunedSections,
 } from "./pruneDom.js";
 import {
     preserveScrollAfterRestore,
@@ -64,12 +67,8 @@ export function enforceSoftPrunedLimit() {
     if (maxSoftPrunedSections != null && state.softPrunedSections.length > maxSoftPrunedSections) {
         const overflowCount = state.softPrunedSections.length - maxSoftPrunedSections;
         const evicted = state.softPrunedSections.splice(0, overflowCount);
-
-        for (const section of evicted) {
-            hardEvictSection(section);
-        }
-
-        state.hardEvictedCount += evicted.length;
+        const evictedCount = hardEvictSections(evicted);
+        state.hardEvictedCount += evictedCount;
 
         debugLog("Prune: evicted soft-pruned sections from memory", {
             overflowCount,
@@ -121,13 +120,17 @@ export function restoreOneExchangeFromSoftPruned({
         anchorSection = getConversationSections()[0] ?? null;
         anchorTopBefore = anchorSection?.getBoundingClientRect().top ?? null;
 
-        for (const section of sectionsToRestore) {
-            restoreSoftPrunedSection(section, container, anchorSection);
-            markSectionUnpruneable(section);
-            lastRestoredSection = section;
-        }
-
-        restoredSectionsCount = sectionsToRestore.length;
+        restoredSectionsCount = restoreSoftPrunedSections(
+            sectionsToRestore,
+            container,
+            anchorSection,
+            {
+                onRestore: (section) => {
+                    markSectionUnpruneable(section);
+                    lastRestoredSection = section;
+                },
+            }
+        );
         visibleSectionsChanged = restoredSectionsCount > 0;
 
         updateHiddenCounts();
@@ -200,11 +203,10 @@ export function repruneOneExchangeFromVisibleProtected({
 
         for (const section of sectionsToReprune) {
             clearSectionUnpruneable(section);
-            softPruneSection(section);
-            state.softPrunedSections.push(section);
         }
 
-        reprunedSectionsCount = sectionsToReprune.length;
+        reprunedSectionsCount = softPruneSections(sectionsToReprune);
+        state.softPrunedSections.push(...sectionsToReprune);
         visibleSectionsChanged = reprunedSectionsCount > 0;
 
         enforceSoftPrunedLimit();
@@ -265,9 +267,11 @@ export function restoreAllSections({
         removeTopRestoreSentinel();
         removeBottomPruneSentinel();
 
-        for (const section of state.softPrunedSections) {
-            restoreSoftPrunedSection(section, container, firstVisibleSection);
-        }
+        restoreSoftPrunedSections(
+            state.softPrunedSections,
+            container,
+            firstVisibleSection
+        );
 
         visibleSectionsChanged = restoredCount > 0;
         state.softPrunedSections = [];
@@ -372,23 +376,15 @@ export function pruneOldSections(
         removeTopRestoreSentinel();
         removeBottomPruneSentinel();
 
-        for (const section of sectionsToEvictNow) {
-            hardEvictSection(section);
-            evictedCount += 1;
-        }
+        evictedCount = hardEvictSections(sectionsToEvictNow);
+        softPrunedCount = softPruneSections(sectionsToSoftPrune);
 
-        for (const section of sectionsToSoftPrune) {
-            softPruneSection(section);
-            softPrunedCount += 1;
-        }
-
-        for (const section of sectionsToKeepVisible) {
+        const sectionsToRestore = sectionsToKeepVisible.filter((section) => {
             const turnRoot = getConversationTurnRoot(section);
-            if (!turnRoot?.isConnected) {
-                restoreSoftPrunedSection(section, container);
-                restoredCount += 1;
-            }
-        }
+            return !turnRoot?.isConnected;
+        });
+
+        restoredCount = restoreSoftPrunedSections(sectionsToRestore, container);
 
         state.softPrunedSections = [...sectionsToSoftPrune];
         state.hardEvictedCount += evictedCount;
