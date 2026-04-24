@@ -13,6 +13,11 @@ import {
     consumeBottomPruneIntent,
 } from "../pruning/scrollIntent.js";
 
+let latestTopRestoreArgs = null;
+let latestBottomPruneArgs = null;
+let topRestoreIntentListenerInstalled = false;
+let bottomPruneIntentListenerInstalled = false;
+
 function getObserverRoot() {
     return getConversationScrollContainer() ?? null;
 }
@@ -117,6 +122,34 @@ function tryScheduleBottomPrune({
     }, 0);
 }
 
+function ensureTopRestoreIntentListener() {
+    if (topRestoreIntentListenerInstalled) {
+        return;
+    }
+
+    window.addEventListener("thread-optimizer-top-edge-intent", () => {
+        if (latestTopRestoreArgs) {
+            tryScheduleTopRestore(latestTopRestoreArgs);
+        }
+    });
+
+    topRestoreIntentListenerInstalled = true;
+}
+
+function ensureBottomPruneIntentListener() {
+    if (bottomPruneIntentListenerInstalled) {
+        return;
+    }
+
+    window.addEventListener("thread-optimizer-bottom-edge-intent", () => {
+        if (latestBottomPruneArgs) {
+            tryScheduleBottomPrune(latestBottomPruneArgs);
+        }
+    });
+
+    bottomPruneIntentListenerInstalled = true;
+}
+
 export function disconnectSentinelObservers() {
     disconnectTopRestoreObserver();
     disconnectBottomPruneObserver();
@@ -147,19 +180,8 @@ export function invalidateSentinelObserversForRootChange() {
 export function refreshTopRestoreSentinelObservation(args) {
     ensureScrollIntentListener();
 
-    window.removeEventListener(
-        "thread-optimizer-top-edge-intent",
-        state.topRestoreIntentHandler
-    );
-
-    state.topRestoreIntentHandler = () => {
-        tryScheduleTopRestore(args);
-    };
-
-    window.addEventListener(
-        "thread-optimizer-top-edge-intent",
-        state.topRestoreIntentHandler
-    );
+    latestTopRestoreArgs = args;
+    ensureTopRestoreIntentListener();
 
     if (shouldSuspendSentinelAutomation()) {
         disconnectTopRestoreObserver();
@@ -215,19 +237,8 @@ export function refreshTopRestoreSentinelObservation(args) {
 export function refreshBottomPruneSentinelObservation(args) {
     ensureScrollIntentListener();
 
-    window.removeEventListener(
-        "thread-optimizer-bottom-edge-intent",
-        state.bottomPruneIntentHandler
-    );
-
-    state.bottomPruneIntentHandler = () => {
-        tryScheduleBottomPrune(args);
-    };
-
-    window.addEventListener(
-        "thread-optimizer-bottom-edge-intent",
-        state.bottomPruneIntentHandler
-    );
+    latestBottomPruneArgs = args;
+    ensureBottomPruneIntentListener();
 
     if (shouldSuspendSentinelAutomation()) {
         disconnectBottomPruneObserver();
