@@ -38,6 +38,8 @@ export function storeDetachedCodeBlock(pre, placeholder) {
         id,
         pre,
         placeholder,
+        originalParent: pre.parentElement,
+        originalNextSibling: pre.nextSibling,
     });
 
     return id;
@@ -70,6 +72,7 @@ export function restoreDetachedCodeBlockEntry(
 
     if (removePlaceholder) {
         setPlaceholderVisibility(placeholder, false);
+        clearPlaceholderIdForPre(pre);
     }
 
     pre.style.display = "";
@@ -145,4 +148,46 @@ export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
     pre.dataset.threadOptimizerCodeExpanded = "true";
     clearCollapsedCodeBlock(pre, { preserveExpanded: true });
     scheduleRefreshCallback?.();
+}
+
+export function selfHealDetachedCodeBlockEntry(entry) {
+    if (!entry) return null;
+
+    const { pre } = entry;
+
+    if (!(pre instanceof HTMLPreElement)) {
+        state.detachedCodeBlocks.delete(entry.id);
+        return null;
+    }
+
+    const parent =
+        entry.originalParent instanceof HTMLElement && entry.originalParent.isConnected
+            ? entry.originalParent
+            : null;
+
+    if (!(parent instanceof HTMLElement)) {
+        state.detachedCodeBlocks.delete(entry.id);
+        clearPlaceholderIdForPre(pre);
+        return null;
+    }
+
+    const before =
+        entry.originalNextSibling instanceof Node &&
+        entry.originalNextSibling.isConnected &&
+        entry.originalNextSibling.parentElement === parent
+            ? entry.originalNextSibling
+            : null;
+
+    parent.insertBefore(pre, before);
+
+    pre.style.display = "";
+    pre.removeAttribute("data-thread-optimizer-code-collapsed");
+    clearCodeBlockOffscreenOptimization(pre);
+    normalizeRevealedCodeBlockLayout(pre);
+    clearPlaceholderIdForPre(pre);
+    delete pre.dataset.threadOptimizerCodeExpanded;
+
+    state.detachedCodeBlocks.delete(entry.id);
+
+    return pre;
 }

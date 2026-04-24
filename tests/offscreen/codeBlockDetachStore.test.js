@@ -7,9 +7,12 @@ import {
     restoreAllDetachedCodeBlocks,
     clearCollapsedCodeBlock,
     revealCollapsedCodeBlockFromPlaceholder,
+    selfHealDetachedCodeBlockEntry,
 } from "../../src/content/offscreen/codeBlockDetachStore.js";
 import {
+    createCodeBlockPlaceholder,
     ensurePlaceholderForPre,
+    getPlaceholderIdForPre,
     isPlaceholderHidden,
 } from "../../src/content/offscreen/codeBlockPlaceholders.js";
 
@@ -202,5 +205,128 @@ describe("codeBlockDetachStore", () => {
         expect(isPlaceholderHidden(placeholder)).toBe(true);
         expect(pre.dataset.threadOptimizerCodeExpanded).toBe("true");
         expect(scheduleRefreshMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the pre placeholder id when restoring and removing the placeholder", () => {
+        const wrapper = document.createElement("div");
+        const pre = document.createElement("pre");
+        pre.textContent = "const a = 1;";
+
+        const placeholder = createCodeBlockPlaceholder();
+
+        wrapper.appendChild(placeholder);
+        wrapper.appendChild(pre);
+        document.body.appendChild(wrapper);
+
+        storeDetachedCodeBlock(pre, placeholder);
+        pre.remove();
+
+        expect(getPlaceholderIdForPre(pre)).not.toBe(null);
+
+        restoreDetachedCodeBlockEntry(state.detachedCodeBlocks.values().next().value, {
+            removePlaceholder: true,
+            preserveExpanded: true,
+        });
+
+        expect(getPlaceholderIdForPre(pre)).toBe(null);
+    });
+
+    it("self-heals a detached code block when its placeholder is removed", () => {
+        document.body.innerHTML = `
+            <section data-turn="assistant">
+                <div class="markdown"></div>
+            </section>
+        `;
+
+        const markdown = document.querySelector(".markdown");
+        const pre = document.createElement("pre");
+        pre.textContent = "const a = 1;";
+
+        const placeholder = createCodeBlockPlaceholder();
+
+        markdown.appendChild(placeholder);
+        markdown.appendChild(pre);
+
+        storeDetachedCodeBlock(pre, placeholder);
+        pre.remove();
+        placeholder.remove();
+
+        const entry = state.detachedCodeBlocks.values().next().value;
+
+        const healed = selfHealDetachedCodeBlockEntry(entry);
+
+        expect(healed).toBe(pre);
+        expect(markdown.querySelector("pre")).toBe(pre);
+        expect(getPlaceholderIdForPre(pre)).toBe(null);
+        expect(state.detachedCodeBlocks.size).toBe(0);
+    });
+
+    it("self-heals a detached code block before its original next sibling when possible", () => {
+        document.body.innerHTML = `
+            <section data-turn="assistant">
+                <div class="markdown"></div>
+            </section>
+        `;
+
+        const markdown = document.querySelector(".markdown");
+
+        const pre = document.createElement("pre");
+        pre.textContent = "const a = 1;";
+
+        const next = document.createElement("p");
+        next.textContent = "after code";
+
+        const placeholder = createCodeBlockPlaceholder();
+
+        markdown.appendChild(placeholder);
+        markdown.appendChild(pre);
+        markdown.appendChild(next);
+
+        storeDetachedCodeBlock(pre, placeholder);
+        pre.remove();
+        placeholder.remove();
+
+        const entry = state.detachedCodeBlocks.values().next().value;
+
+        selfHealDetachedCodeBlockEntry(entry);
+
+        expect(pre.nextSibling).toBe(next);
+        expect(markdown.contains(pre)).toBe(true);
+    });
+
+    it("does not self-heal into another assistant section when the original parent is gone", () => {
+        document.body.innerHTML = `
+            <section data-turn="assistant">
+                <div class="markdown" id="old-markdown"></div>
+            </section>
+            <section data-turn="assistant">
+                <div class="markdown" id="new-markdown"></div>
+            </section>
+        `;
+
+        const oldMarkdown = document.querySelector("#old-markdown");
+        const newMarkdown = document.querySelector("#new-markdown");
+
+        const pre = document.createElement("pre");
+        pre.textContent = "const old = true;";
+
+        const placeholder = createCodeBlockPlaceholder();
+
+        oldMarkdown.appendChild(placeholder);
+        oldMarkdown.appendChild(pre);
+
+        storeDetachedCodeBlock(pre, placeholder);
+        pre.remove();
+
+        oldMarkdown.remove();
+        placeholder.remove();
+
+        const entry = state.detachedCodeBlocks.values().next().value;
+        const healed = selfHealDetachedCodeBlockEntry(entry);
+
+        expect(healed).toBe(null);
+        expect(newMarkdown.querySelector("pre")).toBe(null);
+        expect(state.detachedCodeBlocks.size).toBe(0);
+        expect(getPlaceholderIdForPre(pre)).toBe(null);
     });
 });

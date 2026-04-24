@@ -30,6 +30,7 @@ import {
     restoreAllDetachedCodeBlocks,
     clearCollapsedCodeBlock,
     revealCollapsedCodeBlockFromPlaceholder,
+    selfHealDetachedCodeBlockEntry,
 } from "./codeBlockDetachStore.js";
 import {
     isStreamingLatestAssistantSection,
@@ -215,10 +216,7 @@ function reconcileDetachedCodeBlocks() {
         }
 
         if (!placeholder.isConnected) {
-            restoreDetachedCodeBlockEntry(entry, {
-                removePlaceholder: true,
-                preserveExpanded: true,
-            });
+            selfHealDetachedCodeBlockEntry(entry);
             continue;
         }
 
