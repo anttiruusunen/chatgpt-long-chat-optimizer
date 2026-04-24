@@ -21,6 +21,24 @@ function shouldSuspendSentinelAutomation() {
     return isReplyStreaming();
 }
 
+function clearTopObservedSentinel() {
+    state.topRestoreObservedSentinel = null;
+}
+
+function clearBottomObservedSentinel() {
+    state.bottomPruneObservedSentinel = null;
+}
+
+function disconnectTopRestoreObserver() {
+    state.topRestoreObserver?.disconnect();
+    clearTopObservedSentinel();
+}
+
+function disconnectBottomPruneObserver() {
+    state.bottomPruneObserver?.disconnect();
+    clearBottomObservedSentinel();
+}
+
 function tryScheduleTopRestore({
     ensureObserverAttached,
     withDomMutationGuard,
@@ -100,8 +118,8 @@ function tryScheduleBottomPrune({
 }
 
 export function disconnectSentinelObservers() {
-    state.topRestoreObserver?.disconnect();
-    state.bottomPruneObserver?.disconnect();
+    disconnectTopRestoreObserver();
+    disconnectBottomPruneObserver();
 }
 
 export function invalidateSentinelObserversForRootChange() {
@@ -111,7 +129,7 @@ export function invalidateSentinelObserversForRootChange() {
         state.topRestoreObserver &&
         state.topRestoreObserverRoot !== nextRoot
     ) {
-        state.topRestoreObserver.disconnect();
+        disconnectTopRestoreObserver();
         state.topRestoreObserver = null;
         state.topRestoreObserverRoot = null;
     }
@@ -120,7 +138,7 @@ export function invalidateSentinelObserversForRootChange() {
         state.bottomPruneObserver &&
         state.bottomPruneObserverRoot !== nextRoot
     ) {
-        state.bottomPruneObserver.disconnect();
+        disconnectBottomPruneObserver();
         state.bottomPruneObserver = null;
         state.bottomPruneObserverRoot = null;
     }
@@ -144,14 +162,14 @@ export function refreshTopRestoreSentinelObservation(args) {
     );
 
     if (shouldSuspendSentinelAutomation()) {
-        state.topRestoreObserver?.disconnect();
+        disconnectTopRestoreObserver();
         return;
     }
 
     const root = getObserverRoot();
 
     if (!state.topRestoreObserver || state.topRestoreObserverRoot !== root) {
-        state.topRestoreObserver?.disconnect();
+        disconnectTopRestoreObserver();
 
         state.topRestoreObserver = new IntersectionObserver(
             (entries) => {
@@ -176,17 +194,22 @@ export function refreshTopRestoreSentinelObservation(args) {
         );
 
         state.topRestoreObserverRoot = root;
-    } else {
-        state.topRestoreObserver.disconnect();
     }
 
     const sentinel = state.topRestoreSentinel;
 
     if (!sentinel?.isConnected || state.softPrunedSections.length <= 0) {
+        disconnectTopRestoreObserver();
         return;
     }
 
+    if (state.topRestoreObservedSentinel === sentinel) {
+        return;
+    }
+
+    disconnectTopRestoreObserver();
     state.topRestoreObserver.observe(sentinel);
+    state.topRestoreObservedSentinel = sentinel;
 }
 
 export function refreshBottomPruneSentinelObservation(args) {
@@ -207,7 +230,7 @@ export function refreshBottomPruneSentinelObservation(args) {
     );
 
     if (shouldSuspendSentinelAutomation()) {
-        state.bottomPruneObserver?.disconnect();
+        disconnectBottomPruneObserver();
         return;
     }
 
@@ -217,7 +240,7 @@ export function refreshBottomPruneSentinelObservation(args) {
         !state.bottomPruneObserver ||
         state.bottomPruneObserverRoot !== root
     ) {
-        state.bottomPruneObserver?.disconnect();
+        disconnectBottomPruneObserver();
 
         state.bottomPruneObserver = new IntersectionObserver(
             (entries) => {
@@ -242,15 +265,20 @@ export function refreshBottomPruneSentinelObservation(args) {
         );
 
         state.bottomPruneObserverRoot = root;
-    } else {
-        state.bottomPruneObserver.disconnect();
     }
 
     const sentinel = state.bottomPruneSentinel;
 
     if (!sentinel?.isConnected || !hasProtectedVisibleSections()) {
+        disconnectBottomPruneObserver();
         return;
     }
 
+    if (state.bottomPruneObservedSentinel === sentinel) {
+        return;
+    }
+
+    disconnectBottomPruneObserver();
     state.bottomPruneObserver.observe(sentinel);
+    state.bottomPruneObservedSentinel = sentinel;
 }
