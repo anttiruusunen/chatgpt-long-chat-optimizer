@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = process.cwd();
+const OUTPUT_DIR = "export";
 const OUTPUT = "project_context_full.txt";
 
 const ROOT_FILES = new Set([
@@ -187,9 +188,12 @@ function main() {
     renderFileContents(files),
   ].join("\n");
 
-  fs.writeFileSync(path.join(ROOT, output), renderedOutput, "utf8");
+  const exportDir = path.join(ROOT, OUTPUT_DIR);
+  fs.mkdirSync(exportDir, { recursive: true });
+
+  fs.writeFileSync(path.join(exportDir, output), renderedOutput, "utf8");
   console.log(
-    `Exported ${files.length} files in mode "${mode}" to ${output}`
+    `Exported ${files.length} files in mode "${mode}" to ${path.join(OUTPUT_DIR, output)}`
   );
 }
 

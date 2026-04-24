@@ -4,18 +4,18 @@
   "main": "build.js",
   "type": "module",
   "scripts": {
-    "build": "node build.cjs",
-    "build:chrome": "node build.cjs --target=chrome",
-    "build:firefox": "node build.cjs --target=firefox",
-    "build:safari": "node build.cjs --target=safari",
+    "build": "node scripts/build.cjs",
+    "build:chrome": "node scripts/build.cjs --target=chrome",
+    "build:firefox": "node scripts/build.cjs --target=firefox",
+    "build:safari": "node scripts/build.cjs --target=safari",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "verify": "npm test && npm run build",
-    "export": "node export-context.cjs",
-    "export:src": "node export-context.cjs src",
-    "export:tests": "node export-context.cjs tests --output testing_context.txt",
-    "export:code": "node export-context.cjs code"
+    "export": "node scripts/export-context.cjs",
+    "export:src": "node scripts/export-context.cjs src",
+    "export:tests": "node scripts/export-context.cjs tests --output testing_context.txt",
+    "export:code": "node scripts/export-context.cjs code"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

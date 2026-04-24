@@ -6,10 +6,11 @@ const {
     getEsbuildTargetForBrowser,
     createManifestForTarget,
     getBrowserDistDir,
-} = require("./scripts/build-utils.cjs");
+} = require("./build-utils.cjs");
 
-const distDir = path.join(__dirname, "dist");
-const srcDir = path.join(__dirname, "src");
+const rootDir = path.resolve(__dirname, "..");
+const distDir = path.join(rootDir, "dist");
+const srcDir = path.join(rootDir, "src");
 const manifestPath = path.join(srcDir, "manifest.json");
 
 function copyStaticFiles(src, dest) {
@@ -19,8 +20,6 @@ function copyStaticFiles(src, dest) {
         const srcPath = path.join(src, entry.name);
         const destPath = path.join(dest, entry.name);
 
-        // Skip JS source folders that are bundled separately,
-        // and skip manifest because it is generated per browser target.
         if (
             (entry.isDirectory() && ["content", "background"].includes(entry.name)) ||
             entry.name === "manifest.json"
