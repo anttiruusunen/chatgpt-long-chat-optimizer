@@ -5,6 +5,7 @@ import {
 } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
+import { scheduleDomWriteBatch } from "../core/domWriteBatch.js";
 import {
     configureCodeBlockOptimization,
     refreshObservedCodeBlocks,
@@ -181,16 +182,16 @@ export function scheduleOffscreenRefresh() {
 
     state.isOffscreenRefreshScheduled = true;
 
-    state.offscreenRefreshTimer = setTimeout(() => {
+    scheduleDomWriteBatch(() => {
         try {
             refreshObservedSections();
         } finally {
             state.isOffscreenRefreshScheduled = false;
             state.offscreenRefreshTimer = null;
         }
-    }, 0);
+    });
 
-    debugLog("Offscreen: scheduled refresh");
+    debugLog("Offscreen: scheduled refresh in DOM write batch");
 }
 
 export function setOffscreenOptimizationEnabled(enabled) {

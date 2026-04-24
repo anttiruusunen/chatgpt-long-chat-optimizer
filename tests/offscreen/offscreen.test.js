@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { flushDomWriteBatchNow } from "../../src/content/core/domWriteBatch.js";
 
 vi.mock("../../src/content/offscreen/offscreenCodeBlocks.js", async () => {
     const actual = await vi.importActual(
@@ -160,7 +161,7 @@ describe("offscreen CSS-driven section mode", () => {
     it("schedule path eventually applies live override", () => {
         setOffscreenOptimizationEnabled(true);
 
-        vi.runAllTimers();
+        flushDomWriteBatchNow();
 
         const latest = getLatestAssistant();
 
