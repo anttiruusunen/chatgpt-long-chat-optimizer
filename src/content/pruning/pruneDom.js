@@ -116,6 +116,7 @@ export function restoreSoftPrunedSections(
     }
 
     const beforeRoot = getRestoreBeforeRoot(beforeNode);
+    const fragment = document.createDocumentFragment();
     let restoredCount = 0;
 
     for (let i = 0; i < sections.length; i += 1) {
@@ -125,10 +126,23 @@ export function restoreSoftPrunedSections(
         const turnRoot = getTurnRoot(section);
 
         section.removeAttribute(PRUNED_ATTR);
-        insertTurnRoot(container, turnRoot, beforeRoot);
+        fragment.appendChild(turnRoot);
 
         restoredCount += 1;
         onRestore?.(section);
+    }
+
+    if (restoredCount === 0) {
+        return 0;
+    }
+
+    if (
+        beforeRoot instanceof Node &&
+        beforeRoot.parentElement === container
+    ) {
+        container.insertBefore(fragment, beforeRoot);
+    } else {
+        container.appendChild(fragment);
     }
 
     return restoredCount;
