@@ -459,20 +459,22 @@ export function resetCodeBlockOptimization({ clearMeasurements = false } = {}) {
     resetStreamingObserverTracking();
     restoreAllDetachedCodeBlocks({ preserveExpanded: true });
 
-    for (let i = 0; i < currentCodeBlocks.length; i += 1) {
-        const pre = currentCodeBlocks[i];
-        clearCodeBlockOffscreenOptimization(pre);
-        clearCollapsedCodeBlock(pre, { preserveExpanded: true });
-        setLargeCodeLiveMarker(pre, false);
+    scheduleDomWriteBatch(() => {
+        for (let i = 0; i < currentCodeBlocks.length; i += 1) {
+            const pre = currentCodeBlocks[i];
+            clearCodeBlockOffscreenOptimization(pre);
+            clearCollapsedCodeBlock(pre, { preserveExpanded: true });
+            setLargeCodeLiveMarker(pre, false);
 
-        if (clearMeasurements) {
-            invalidateCodeBlockHeight(pre);
+            if (clearMeasurements) {
+                invalidateCodeBlockHeight(pre);
+            }
         }
-    }
 
-    for (let i = 0; i < currentSections.length; i += 1) {
-        clearSectionCodeBlocksProcessed(currentSections[i]);
-    }
+        for (let i = 0; i < currentSections.length; i += 1) {
+            clearSectionCodeBlocksProcessed(currentSections[i]);
+        }
+    });
 
     if (state.codeBlockRefreshTimer) {
         clearTimeout(state.codeBlockRefreshTimer);
