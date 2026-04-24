@@ -116,23 +116,6 @@ function resetStreamingObserverTracking() {
     state.streamingCodeBlockLastCount = 0;
 }
 
-function findPreForPlaceholderId(placeholderId) {
-    if (!placeholderId) return null;
-
-    const allPres = document.querySelectorAll("pre");
-    for (let i = 0; i < allPres.length; i += 1) {
-        const pre = allPres[i];
-        if (
-            pre instanceof HTMLPreElement &&
-            pre.dataset.threadOptimizerCodePlaceholderId === String(placeholderId)
-        ) {
-            return pre;
-        }
-    }
-
-    return null;
-}
-
 function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
     if (!(pre instanceof HTMLPreElement)) {
         return false;
@@ -252,6 +235,72 @@ function reconcileDetachedCodeBlocks() {
     }
 }
 
+function getSettledCodeBlockActions(section) {
+    const codeBlocks = getCodeBlocksForSection(section);
+    const actions = [];
+
+    for (let i = 0; i < codeBlocks.length; i += 1) {
+        const pre = codeBlocks[i];
+
+        if (!isLargeCodeBlock(pre)) {
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: false,
+                live: false,
+            });
+            continue;
+        }
+
+        if (pre.dataset.threadOptimizerCodeExpanded === "true") {
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: true,
+                live: true,
+            });
+            continue;
+        }
+
+        actions.push({
+            type: "collapse",
+            pre,
+            detach: true,
+        });
+    }
+
+    return actions;
+}
+
+function applyCodeBlockAction(action) {
+    const { pre } = action;
+
+    if (!(pre instanceof HTMLPreElement)) {
+        return;
+    }
+
+    if (action.type === "clear") {
+        clearCollapsedCodeBlock(pre, {
+            preserveExpanded: Boolean(action.preserveExpanded),
+        });
+        clearCodeBlockOffscreenOptimization(pre);
+        setLargeCodeLiveMarker(pre, Boolean(action.live));
+        return;
+    }
+
+    if (action.type === "collapse") {
+        applyCollapsedCodeBlock(pre, {
+            detach: Boolean(action.detach),
+        });
+    }
+}
+
+function applyCodeBlockActions(actions) {
+    for (let i = 0; i < actions.length; i += 1) {
+        applyCodeBlockAction(actions[i]);
+    }
+}
+
 function processSettledSection(section) {
     const codeBlocks = getCodeBlocksForSection(section);
 
@@ -260,33 +309,18 @@ function processSettledSection(section) {
         return;
     }
 
+    const actions = getSettledCodeBlockActions(section);
+
     clearLiveMarkersForSection(section);
-
-    for (let i = 0; i < codeBlocks.length; i += 1) {
-        const pre = codeBlocks[i];
-
-        if (!isLargeCodeBlock(pre)) {
-            clearCollapsedCodeBlock(pre, { preserveExpanded: false });
-            clearCodeBlockOffscreenOptimization(pre);
-            continue;
-        }
-
-        if (pre.dataset.threadOptimizerCodeExpanded === "true") {
-            clearCollapsedCodeBlock(pre, { preserveExpanded: true });
-            clearCodeBlockOffscreenOptimization(pre);
-            setLargeCodeLiveMarker(pre, true);
-            continue;
-        }
-
-        applyCollapsedCodeBlock(pre, { detach: true });
-    }
+    applyCodeBlockActions(actions);
 
     markSectionCodeBlocksProcessed(section);
 }
 
-function processStreamingSection(section) {
+function getStreamingCodeBlockActions(section) {
     const codeBlocks = getCodeBlocksForSection(section);
     const qualifyingCodeBlocks = [];
+    const actions = [];
 
     for (let i = 0; i < codeBlocks.length; i += 1) {
         if (isLargeCodeBlock(codeBlocks[i])) {
@@ -297,21 +331,34 @@ function processStreamingSection(section) {
     const lastQualifyingStreamingBlock =
         qualifyingCodeBlocks[qualifyingCodeBlocks.length - 1] ?? null;
 
-    clearLiveMarkersForSection(section);
-
     for (let i = 0; i < codeBlocks.length; i += 1) {
         const pre = codeBlocks[i];
 
         if (!isLargeCodeBlock(pre)) {
-            clearCollapsedCodeBlock(pre, { preserveExpanded: false });
-            clearCodeBlockOffscreenOptimization(pre);
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: false,
+                live: false,
+            });
             continue;
         }
 
-        const shouldDetach = pre !== lastQualifyingStreamingBlock;
-        applyCollapsedCodeBlock(pre, { detach: shouldDetach });
+        actions.push({
+            type: "collapse",
+            pre,
+            detach: pre !== lastQualifyingStreamingBlock,
+        });
     }
 
+    return actions;
+}
+
+function processStreamingSection(section) {
+    const actions = getStreamingCodeBlockActions(section);
+
+    clearLiveMarkersForSection(section);
+    applyCodeBlockActions(actions);
     clearSectionCodeBlocksProcessed(section);
 }
 
@@ -439,27 +486,53 @@ export function resetCodeBlockOptimization({ clearMeasurements = false } = {}) {
     });
 }
 
+function clearAllObservedCodeBlocks(sections) {
+    for (let i = 0; i < sections.length; i += 1) {
+        const codeBlocks = getCodeBlocksForSection(sections[i]);
+
+        for (let j = 0; j < codeBlocks.length; j += 1) {
+            clearCodeBlockOffscreenOptimization(codeBlocks[j]);
+            clearCollapsedCodeBlock(codeBlocks[j], {
+                preserveExpanded: false,
+            });
+            setLargeCodeLiveMarker(codeBlocks[j], false);
+        }
+
+        clearSectionCodeBlocksProcessed(sections[i]);
+    }
+}
+
+function processSettledSections(sections) {
+    const sectionsToProcess = [];
+
+    for (let i = 0; i < sections.length; i += 1) {
+        const section = sections[i];
+        if (!(section instanceof HTMLElement)) continue;
+
+        if (areSectionCodeBlocksProcessed(section)) {
+            continue;
+        }
+
+        sectionsToProcess.push(section);
+    }
+
+    for (let i = 0; i < sectionsToProcess.length; i += 1) {
+        processSettledSection(sectionsToProcess[i]);
+    }
+
+    return sectionsToProcess.length;
+}
+
 export function refreshObservedCodeBlocks() {
     ensureCodeBlockRevealClickListener();
     reconcileDetachedCodeBlocks();
 
+    const sections = getConversationSections();
+
     if (!state.featureFlags.largeCodeBlockOptimization) {
         disconnectCodeBlockMutationObserver();
         restoreAllDetachedCodeBlocks({ preserveExpanded: false });
-
-        const sections = getConversationSections();
-        for (let i = 0; i < sections.length; i += 1) {
-            const codeBlocks = getCodeBlocksForSection(sections[i]);
-            for (let j = 0; j < codeBlocks.length; j += 1) {
-                clearCodeBlockOffscreenOptimization(codeBlocks[j]);
-                clearCollapsedCodeBlock(codeBlocks[j], {
-                    preserveExpanded: false,
-                });
-                setLargeCodeLiveMarker(codeBlocks[j], false);
-            }
-            clearSectionCodeBlocksProcessed(sections[i]);
-        }
-
+        clearAllObservedCodeBlocks(sections);
         return;
     }
 
@@ -485,23 +558,13 @@ export function refreshObservedCodeBlocks() {
         return;
     }
 
-    const sections = getConversationSections();
-    for (let i = 0; i < sections.length; i += 1) {
-        const section = sections[i];
-        if (!(section instanceof HTMLElement)) continue;
-
-        if (areSectionCodeBlocksProcessed(section)) {
-            continue;
-        }
-
-        processSettledSection(section);
-    }
+    const sectionsProcessed = processSettledSections(sections);
 
     resetStreamingObserverTracking();
 
     debugLog("Offscreen code blocks: refreshed code block state", {
         mode: "settled",
-        sectionsProcessed: sections.length,
+        sectionsProcessed,
         detachedCodeBlocks: state.detachedCodeBlocks.size,
     });
 }
