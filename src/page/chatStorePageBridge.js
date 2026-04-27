@@ -135,9 +135,7 @@
 
                 const result = original.apply(bridgeRef.__store, args);
 
-                if (result !== undefined) {
-                    frameCache.set(key, result);
-                }
+                frameCache.set(key, result ?? null);
 
                 return result ?? null;
             };
@@ -1520,7 +1518,14 @@
             return installMethodFrameCache({
                 bridge: this,
                 methodNames: "findNodeFromLeaf",
-                keyFn: getCheapCacheKey,
+                keyFn: (methodName, args) => {
+                    const id = args[0];
+
+                    const index = this.__messageIdIndex;
+                    const canonicalId = index?.get(id) ?? id;
+
+                    return `${methodName}:${String(canonicalId)}`;
+                },
                 maxSize,
                 cacheSlot: "__findNodeFromLeafFrameCache",
                 statsSlot: "__findNodeFromLeafFrameCacheStats",
