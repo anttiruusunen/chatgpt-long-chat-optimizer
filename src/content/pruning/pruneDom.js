@@ -37,7 +37,66 @@ function insertTurnRoot(container, turnRoot, beforeRoot = null) {
     container.appendChild(turnRoot);
 }
 
-export function destroySectionForGc(section) {
+function getSectionCodeBlocks(section) {
+    if (!(section instanceof HTMLElement)) {
+        return [];
+    }
+
+    return Array.from(section.querySelectorAll("pre"));
+}
+
+function getSoftPrunePlan(section) {
+    if (!(section instanceof HTMLElement)) {
+        return null;
+    }
+
+    return {
+        section,
+        turnRoot: getTurnRoot(section),
+    };
+}
+
+function applySoftPrunePlan(plan) {
+    if (!plan) {
+        return false;
+    }
+
+    const { section, turnRoot } = plan;
+
+    section.setAttribute(PRUNED_ATTR, "true");
+    section.removeAttribute(UNPRUNEABLE_ATTR);
+
+    detachTurnRoot(turnRoot);
+
+    return true;
+}
+
+function getHardEvictPlan(section) {
+    if (!(section instanceof HTMLElement)) {
+        return null;
+    }
+
+    return {
+        section,
+        turnRoot: getTurnRoot(section),
+        codeBlocks: getSectionCodeBlocks(section),
+    };
+}
+
+function applyHardEvictPlan(plan) {
+    if (!plan) {
+        return false;
+    }
+
+    const { section, turnRoot, codeBlocks } = plan;
+
+    detachTurnRoot(turnRoot);
+    destroySectionForGc(section, { codeBlocks });
+
+    return true;
+}
+
+export function destroySectionForGc(section, { codeBlocks = null } = {}) {
     try {
         state.intersectionObserver?.unobserve(section);
     } catch {}
@@ -48,9 +107,11 @@ export function destroySectionForGc(section) {
 
     state.observedSections?.delete(section);
 
-    const codeBlocks = Array.from(section.querySelectorAll("pre"));
+    const sectionCodeBlocks = Array.isArray(codeBlocks)
+        ? codeBlocks
+        : getSectionCodeBlocks(section);
 
-    for (const pre of codeBlocks) {
+    for (const pre of sectionCodeBlocks) {
         try {
             state.codeBlockIntersectionObserver?.unobserve(pre);
         } catch {}
@@ -75,23 +136,25 @@ export function destroySectionForGc(section) {
 }
 
 export function softPruneSection(section) {
-    const turnRoot = getTurnRoot(section);
-
-    section.setAttribute(PRUNED_ATTR, "true");
-    section.removeAttribute(UNPRUNEABLE_ATTR);
-
-    detachTurnRoot(turnRoot);
+    return applySoftPrunePlan(getSoftPrunePlan(section));
 }
 
 export function softPruneSections(sections) {
-    let prunedCount = 0;
+    const plans = [];
 
     for (let i = 0; i < sections.length; i += 1) {
-        const section = sections[i];
-        if (!(section instanceof HTMLElement)) continue;
+        const plan = getSoftPrunePlan(sections[i]);
+        if (plan) {
+            plans.push(plan);
+        }
+    }
 
-        softPruneSection(section);
-        prunedCount += 1;
+    let prunedCount = 0;
+
+    for (let i = 0; i < plans.length; i += 1) {
+        if (applySoftPrunePlan(plans[i])) {
+            prunedCount += 1;
+        }
     }
 
     return prunedCount;
@@ -149,27 +212,25 @@ export function restoreSoftPrunedSections(
 }
 
 export function hardEvictSection(section) {
-    if (!(section instanceof HTMLElement)) {
-        return false;
-    }
-
-    const turnRoot = getTurnRoot(section);
-
-    detachTurnRoot(turnRoot);
-    destroySectionForGc(section);
-
-    return true;
+    return applyHardEvictPlan(getHardEvictPlan(section));
 }
 
 export function hardEvictSections(sections) {
-    let evictedCount = 0;
+    const plans = [];
 
     for (let i = 0; i < sections.length; i += 1) {
-        const section = sections[i];
-        if (!(section instanceof HTMLElement)) continue;
+        const plan = getHardEvictPlan(sections[i]);
+        if (plan) {
+            plans.push(plan);
+        }
+    }
 
-        hardEvictSection(section);
-        evictedCount += 1;
+    let evictedCount = 0;
+
+    for (let i = 0; i < plans.length; i += 1) {
+        if (applyHardEvictPlan(plans[i])) {
+            evictedCount += 1;
+        }
     }
 
     return evictedCount;
