@@ -210,7 +210,7 @@ export function handleReplyStreamingStarted() {
     applyOffscreenSectionPlan(plan);
 
     reconcileLatestStreamingAssistantCodeBlocksNow();
-    scheduleOffscreenRefresh();
+    scheduleOffscreenRefresh("reply-streaming-started");
     debugLog("Offscreen: reply streaming started");
 }
 
@@ -276,7 +276,7 @@ export function setOffscreenOptimizationEnabled(enabled) {
     const plan = collectOffscreenSectionPlan();
     applyOffscreenSectionPlan(plan);
 
-    scheduleOffscreenRefresh();
+    scheduleOffscreenRefresh("feature-enabled");
     debugLog("Offscreen: feature enabled");
 }
 
