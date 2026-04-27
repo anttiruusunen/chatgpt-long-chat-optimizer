@@ -27,14 +27,62 @@ const statusEl = document.getElementById("status");
 const enableStoreReadOptimizationInput = document.getElementById("enableStoreReadOptimization");
 const logDebugStorePerformanceButton = document.getElementById("logDebugStorePerformance");
 
-let popupStatePollTimer = null;
+const REQUIRED_ELEMENTS = {
+    historyKeptExchangesInput,
+    clearHistoryKeptExchangesButton,
+    enablePruningInput,
+    enableOffscreenOptimizationInput,
+    enableLargeCodeBlockOptimizationInput,
+    enableStreamingSectionHidingInput,
+    enableDebugLoggingInput,
+    hiddenMessagesValueEl,
+    lastReplyTimeValueEl,
+    debugSectionEl,
+    statusEl,
+    enableStoreReadOptimizationInput,
+};
 
-function setStatus(message) {
-    statusEl.textContent = message;
-    clearTimeout(setStatus._timer);
-    setStatus._timer = setTimeout(() => {
-        statusEl.textContent = "";
-    }, 2000);
+let popupStatePollTimer = null;
+let statusTimer = null;
+
+function assertRequiredElements() {
+    const missing = Object.entries(REQUIRED_ELEMENTS)
+        .filter(([, element]) => !element)
+        .map(([name]) => name);
+
+    if (missing.length > 0) {
+        throw new Error(`Popup HTML is missing required elements: ${missing.join(", ")}`);
+    }
+}
+
+function setStatus(message, { timeoutMs = 2000 } = {}) {
+    if (!statusEl) {
+        console.warn("[Thread Optimizer popup]", message);
+        return;
+    }
+
+    statusEl.textContent = message || "";
+
+    if (statusTimer) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+    }
+
+    if (message && timeoutMs > 0) {
+        statusTimer = setTimeout(() => {
+            statusEl.textContent = "";
+            statusTimer = null;
+        }, timeoutMs);
+    }
+}
+
+function setPersistentError(message) {
+    setStatus(message, { timeoutMs: 0 });
+}
+
+function handlePopupError(error, fallbackMessage = "Action failed") {
+    console.error("[Thread Optimizer popup]", error);
+    setStatus(error?.message || fallbackMessage);
 }
 
 function normalizePositiveInt(value) {
@@ -48,12 +96,8 @@ function formatDuration(ms) {
     if (!ms || ms <= 0) return "Not yet";
 
     const totalSeconds = ms / 1000;
-    if (totalSeconds < 10) {
-        return `${totalSeconds.toFixed(2)}s`;
-    }
-    if (totalSeconds < 60) {
-        return `${totalSeconds.toFixed(1)}s`;
-    }
+    if (totalSeconds < 10) return `${totalSeconds.toFixed(2)}s`;
+    if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
 
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = Math.round(totalSeconds % 60);
@@ -84,12 +128,9 @@ function updatePopupStateView(popupState) {
     hiddenMessagesValueEl.textContent =
         popupState.hiddenSections != null ? String(popupState.hiddenSections) : "0";
 
-    if (popupState.replyPending) {
-        lastReplyTimeValueEl.textContent = "Running…";
-        return;
-    }
-
-    lastReplyTimeValueEl.textContent = formatDuration(popupState.lastReplyDurationMs || 0);
+    lastReplyTimeValueEl.textContent = popupState.replyPending
+        ? "Running…"
+        : formatDuration(popupState.lastReplyDurationMs || 0);
 }
 
 async function getActiveTabId() {
@@ -99,6 +140,7 @@ async function getActiveTabId() {
 
 async function sendToActiveTab(message) {
     const tabId = await getActiveTabId();
+
     if (!tabId) {
         return { ok: false, error: "No active tab" };
     }
@@ -123,6 +165,7 @@ async function refreshPopupState({ silent = false } = {}) {
         if (!silent) {
             setStatus(response?.error || "Could not read page state");
         }
+
         return;
     }
 
@@ -133,12 +176,15 @@ function startPopupStatePolling() {
     if (popupStatePollTimer) return;
 
     popupStatePollTimer = setInterval(() => {
-        refreshPopupState({ silent: true }).catch(() => {});
+        refreshPopupState({ silent: true }).catch((error) => {
+            console.debug("[Thread Optimizer popup] polling failed", error);
+        });
     }, 500);
 }
 
 function stopPopupStatePolling() {
     if (!popupStatePollTimer) return;
+
     clearInterval(popupStatePollTimer);
     popupStatePollTimer = null;
 }
@@ -179,118 +225,135 @@ async function saveSettings() {
         return;
     }
 
-    const enablePruning = enablePruningInput.checked;
-    const enableOffscreenOptimization = enableOffscreenOptimizationInput.checked;
-    const enableLargeCodeBlockOptimization = enableLargeCodeBlockOptimizationInput.checked;
-    const enableStreamingSectionHiding = enableStreamingSectionHidingInput.checked;
-    const enableDebugLogging = enableDebugLoggingInput.checked;
-
     const settingsToStore = {
         historyKeptExchanges,
         autoPrune: historyKeptExchanges != null,
-        enablePruning,
-        enableOffscreenOptimization,
-        enableLargeCodeBlockOptimization,
-        enableStreamingSectionHiding,
-        enableDebugLogging,
+        enablePruning: enablePruningInput.checked,
+        enableOffscreenOptimization: enableOffscreenOptimizationInput.checked,
+        enableLargeCodeBlockOptimization: enableLargeCodeBlockOptimizationInput.checked,
+        enableStreamingSectionHiding: enableStreamingSectionHidingInput.checked,
+        enableDebugLogging: enableDebugLoggingInput.checked,
         enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
     };
 
     await storageSyncSet(settingsToStore);
 
-    await sendToActiveTab({
+    const response = await sendToActiveTab({
         action: "settings-updated",
-        historyKeptExchanges,
-        autoPrune: historyKeptExchanges != null,
-        enablePruning,
-        enableOffscreenOptimization,
-        enableLargeCodeBlockOptimization,
-        enableStreamingSectionHiding,
-        enableDebugLogging,
-        enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
+        ...settingsToStore,
     });
+
+    if (!response?.ok) {
+        console.debug("[Thread Optimizer popup] settings saved, page update skipped", response);
+    }
 
     updateFieldStates();
     updateDebugVisibility();
-    await refreshPopupState();
+    await refreshPopupState({ silent: true });
     setStatus("Saved");
 }
 
 async function sendDebugAction(action, successMessage) {
     const response = await sendToActiveTab({ action });
-    if (!response) {
-        setStatus("Content script not available");
+
+    if (response?.ok) {
+        setStatus(successMessage);
         return;
     }
 
-    if (response.ok) {
-        setStatus(successMessage);
-    } else {
-        setStatus(response.error || "Debug action failed");
-    }
+    setStatus(response?.error || "Debug action failed");
 }
 
-historyKeptExchangesInput.addEventListener("input", updateFieldStates);
+function bindEvent(element, eventName, handler) {
+    if (!element) return;
 
-historyKeptExchangesInput.addEventListener("change", async () => {
-    const normalized = normalizePositiveInt(historyKeptExchangesInput.value);
-    if (historyKeptExchangesInput.value !== "" && normalized != null) {
-        historyKeptExchangesInput.value = String(normalized);
-    }
-    await saveSettings();
-});
+    element.addEventListener(eventName, (event) => {
+        Promise.resolve(handler(event)).catch((error) => {
+            handlePopupError(error);
+        });
+    });
+}
 
-enablePruningInput.addEventListener("change", saveSettings);
-enableOffscreenOptimizationInput.addEventListener("change", saveSettings);
-enableLargeCodeBlockOptimizationInput.addEventListener("change", async () => {
-    updateFieldStates();
-    await saveSettings();
-});
-enableStreamingSectionHidingInput.addEventListener("change", saveSettings);
-enableDebugLoggingInput.addEventListener("change", async () => {
-    updateDebugVisibility();
-    await saveSettings();
-});
+function bindEvents() {
+    bindEvent(historyKeptExchangesInput, "input", updateFieldStates);
 
-enableStoreReadOptimizationInput.addEventListener("change", saveSettings);
-logDebugStorePerformanceButton.addEventListener("click", async () => {
-    await sendDebugAction(
-        "log-debug-store-performance",
-        "Logged store cache"
+    bindEvent(historyKeptExchangesInput, "change", async () => {
+        const normalized = normalizePositiveInt(historyKeptExchangesInput.value);
+
+        if (historyKeptExchangesInput.value !== "" && normalized != null) {
+            historyKeptExchangesInput.value = String(normalized);
+        }
+
+        await saveSettings();
+    });
+
+    bindEvent(enablePruningInput, "change", saveSettings);
+    bindEvent(enableOffscreenOptimizationInput, "change", saveSettings);
+
+    bindEvent(enableLargeCodeBlockOptimizationInput, "change", async () => {
+        updateFieldStates();
+        await saveSettings();
+    });
+
+    bindEvent(enableStreamingSectionHidingInput, "change", saveSettings);
+
+    bindEvent(enableDebugLoggingInput, "change", async () => {
+        updateDebugVisibility();
+        await saveSettings();
+    });
+
+    bindEvent(enableStoreReadOptimizationInput, "change", saveSettings);
+
+    bindEvent(clearHistoryKeptExchangesButton, "click", async () => {
+        historyKeptExchangesInput.value = "";
+        updateFieldStates();
+        await saveSettings();
+    });
+
+    bindEvent(logDebugStateButton, "click", () =>
+        sendDebugAction("debug-log-state", "Logged debug state")
     );
-});
 
-clearHistoryKeptExchangesButton.addEventListener("click", async () => {
-    historyKeptExchangesInput.value = "";
-    updateFieldStates();
-    await saveSettings();
-});
+    bindEvent(logDebugBucketsButton, "click", () =>
+        sendDebugAction("debug-log-buckets", "Logged debug buckets")
+    );
 
-logDebugStateButton.addEventListener("click", async () => {
-    await sendDebugAction("log-debug-state", "Logged debug state");
-});
+    bindEvent(logDebugLogicalButton, "click", () =>
+        sendDebugAction("debug-log-logical", "Logged debug logical state")
+    );
 
-logDebugBucketsButton.addEventListener("click", async () => {
-    await sendDebugAction("log-debug-buckets", "Logged debug buckets");
-});
+    bindEvent(logDebugStorePerformanceButton, "click", () =>
+        sendDebugAction("log-debug-store-performance", "Logged store cache")
+    );
 
-logDebugLogicalButton.addEventListener("click", async () => {
-    await sendDebugAction("log-debug-logical", "Logged debug logical state");
-});
+    window.addEventListener("focus", () => {
+        refreshPopupState({ silent: true }).catch((error) => {
+            console.debug("[Thread Optimizer popup] focus refresh failed", error);
+        });
+    });
 
-window.addEventListener("focus", () => {
-    refreshPopupState({ silent: true }).catch(() => {});
-});
-
-window.addEventListener("blur", stopPopupStatePolling);
-window.addEventListener("beforeunload", stopPopupStatePolling);
+    window.addEventListener("blur", stopPopupStatePolling);
+    window.addEventListener("beforeunload", stopPopupStatePolling);
+}
 
 async function init() {
+    assertRequiredElements();
+    bindEvents();
+
+    updatePopupStateView(null);
+
     await loadSettings();
     await refreshPopupState({ silent: true });
     startPopupStatePolling();
 }
 
 init().catch((error) => {
-    setStatus(error?.message || "Failed to initialize popup");
+    console.error("[Thread Optimizer popup] failed to initialize", error);
+
+    try {
+        updatePopupStateView(null);
+        setPersistentError(error?.message || "Failed to initialize popup");
+    } catch {
+        // Last-resort guard: avoid throwing from the crash handler itself.
+    }
 });
