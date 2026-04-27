@@ -118,13 +118,22 @@ function safelyPlacePlaceholder(placeholder, container, beforeNode) {
     }
 }
 
-export function removePlaceholder({ destroy = false } = {}) {
+function collectRemovePlaceholderPlan({ destroy = false } = {}) {
     const placeholder = state.placeholder;
+
+    return {
+        destroy: Boolean(destroy),
+        placeholder,
+        hadVisiblePlaceholder: isPlaceholderVisible(placeholder),
+    };
+}
+
+function applyRemovePlaceholderPlan(plan) {
+    const { placeholder, destroy, hadVisiblePlaceholder } = plan;
+
     if (!(placeholder instanceof HTMLElement)) {
         return false;
     }
-
-    const hadVisiblePlaceholder = isPlaceholderVisible(placeholder);
 
     if (destroy) {
         if (placeholder.isConnected) {
@@ -141,20 +150,57 @@ export function removePlaceholder({ destroy = false } = {}) {
     return hadVisiblePlaceholder;
 }
 
-export function ensurePlaceholderState(firstVisibleSection) {
-    const container = getConversationContainer();
+export function removePlaceholder({ destroy = false } = {}) {
+    const plan = collectRemovePlaceholderPlan({ destroy });
+    return applyRemovePlaceholderPlan(plan);
+}
 
-    if (!container || !firstVisibleSection || state.hiddenCount <= 0) {
-        const hadPlaceholder = isPlaceholderVisible(state.placeholder);
-        removePlaceholder();
-        return hadPlaceholder;
+function collectPlaceholderStatePlan(firstVisibleSection) {
+    const container = getConversationContainer();
+    const shouldRemove =
+        !container || !firstVisibleSection || state.hiddenCount <= 0;
+
+    if (shouldRemove) {
+        return {
+            type: "remove",
+            removePlan: collectRemovePlaceholderPlan(),
+        };
     }
 
-    const expectedLabel = getHiddenLabel(state.hiddenCount);
-
     let placeholder = state.placeholder;
-    if (!(placeholder instanceof HTMLElement)) {
+    const needsCreate = !(placeholder instanceof HTMLElement);
+
+    if (needsCreate) {
         placeholder = createPlaceholder();
+    }
+
+    const beforeNode =
+        getConversationSectionMountNode(firstVisibleSection) || firstVisibleSection;
+
+    return {
+        type: "ensure",
+        container,
+        placeholder,
+        needsCreate,
+        expectedLabel: getHiddenLabel(state.hiddenCount),
+        beforeNode,
+    };
+}
+
+function applyPlaceholderStatePlan(plan) {
+    if (plan.type === "remove") {
+        return applyRemovePlaceholderPlan(plan.removePlan);
+    }
+
+    const {
+        container,
+        placeholder,
+        needsCreate,
+        expectedLabel,
+        beforeNode,
+    } = plan;
+
+    if (needsCreate) {
         state.placeholder = placeholder;
     }
 
@@ -166,9 +212,6 @@ export function ensurePlaceholderState(firstVisibleSection) {
         changed = true;
     }
 
-    const beforeNode =
-        getConversationSectionMountNode(firstVisibleSection) || firstVisibleSection;
-
     if (safelyPlacePlaceholder(placeholder, container, beforeNode)) {
         changed = true;
     }
@@ -178,6 +221,11 @@ export function ensurePlaceholderState(firstVisibleSection) {
     }
 
     return changed;
+}
+
+export function ensurePlaceholderState(firstVisibleSection) {
+    const plan = collectPlaceholderStatePlan(firstVisibleSection);
+    return applyPlaceholderStatePlan(plan);
 }
 
 export function revealContainer(container) {
@@ -192,29 +240,71 @@ function getStartupMaskStyleElement() {
     return document.getElementById(STARTUP_MASK_STYLE_ID);
 }
 
-export function installStartupPruneMask(container, visibleSectionsLimit) {
-    if (!(container instanceof HTMLElement)) return;
-    if (!Number.isFinite(visibleSectionsLimit) || visibleSectionsLimit < 1) return;
+function collectStartupPruneMaskPlan(container, visibleSectionsLimit) {
+    if (!(container instanceof HTMLElement)) {
+        return {
+            shouldApply: false,
+        };
+    }
 
-    removeStartupPruneMask();
+    if (!Number.isFinite(visibleSectionsLimit) || visibleSectionsLimit < 1) {
+        return {
+            shouldApply: false,
+        };
+    }
+
+    const safeVisibleSectionsLimit = Math.floor(visibleSectionsLimit);
+
+    return {
+        shouldApply: true,
+        container,
+        styleText: `
+[${STARTUP_MASK_ATTR}="true"] > section[data-turn]:not(:nth-last-of-type(-n + ${safeVisibleSectionsLimit})),
+[${STARTUP_MASK_ATTR}="true"] > [data-turn-id-container]:not(:nth-last-of-type(-n + ${safeVisibleSectionsLimit})) {
+    display: none !important;
+}
+`,
+    };
+}
+
+function collectRemoveStartupPruneMaskPlan() {
+    return {
+        maskedElements: Array.from(
+            document.querySelectorAll(`[${STARTUP_MASK_ATTR}="true"]`)
+        ),
+        styleEl: getStartupMaskStyleElement(),
+    };
+}
+
+function applyRemoveStartupPruneMaskPlan(plan) {
+    for (let i = 0; i < plan.maskedElements.length; i += 1) {
+        plan.maskedElements[i].removeAttribute(STARTUP_MASK_ATTR);
+    }
+
+    plan.styleEl?.remove();
+}
+
+function applyStartupPruneMaskPlan(plan) {
+    if (!plan.shouldApply) {
+        return;
+    }
+
+    applyRemoveStartupPruneMaskPlan(collectRemoveStartupPruneMaskPlan());
 
     const styleEl = document.createElement("style");
     styleEl.id = STARTUP_MASK_STYLE_ID;
-    styleEl.textContent = `
-[${STARTUP_MASK_ATTR}="true"] > section[data-turn]:not(:nth-last-of-type(-n + ${Math.floor(visibleSectionsLimit)})),
-[${STARTUP_MASK_ATTR}="true"] > [data-turn-id-container]:not(:nth-last-of-type(-n + ${Math.floor(visibleSectionsLimit)})) {
-    display: none !important;
-}
-`;
+    styleEl.textContent = plan.styleText;
 
-    container.setAttribute(STARTUP_MASK_ATTR, "true");
+    plan.container.setAttribute(STARTUP_MASK_ATTR, "true");
     (document.head || document.documentElement).appendChild(styleEl);
 }
 
-export function removeStartupPruneMask() {
-    document
-        .querySelectorAll(`[${STARTUP_MASK_ATTR}="true"]`)
-        .forEach((el) => el.removeAttribute(STARTUP_MASK_ATTR));
+export function installStartupPruneMask(container, visibleSectionsLimit) {
+    const plan = collectStartupPruneMaskPlan(container, visibleSectionsLimit);
+    applyStartupPruneMaskPlan(plan);
+}
 
-    getStartupMaskStyleElement()?.remove();
+export function removeStartupPruneMask() {
+    const plan = collectRemoveStartupPruneMaskPlan();
+    applyRemoveStartupPruneMaskPlan(plan);
 }
