@@ -88,5 +88,4 @@ export function resetUiPipelineSchedulerForTests() {
     pendingTaskNames.clear();
     pendingReasons.clear();
     isUiPipelineScheduled = false;
-    registeredTasks.clear();
 }

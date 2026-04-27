@@ -22,7 +22,12 @@ import {
     disconnectSentinelObservers,
 } from "../pruning/sentinelObservers.js";
 import { syncCssVisibilityWindow } from "../pruning/cssVisibilityWindow.js";
-import { scheduleDomWriteBatch } from "./domWriteBatch.js";
+import {
+    registerUiPipelineTask,
+    scheduleUiPipelineTask,
+} from "./uiPipelineScheduler.js";
+
+const CONVERSATION_MAINTENANCE_TASK = "conversation-maintenance";
 
 let ensureObserverAttachedDependency = null;
 let withDomMutationGuardDependency = null;
@@ -73,7 +78,7 @@ function scheduleConversationMaintenance(reason = "unknown") {
     }
 
     isConversationMaintenanceScheduled = true;
-    scheduleDomWriteBatch(flushConversationMaintenance);
+    scheduleUiPipelineTask(CONVERSATION_MAINTENANCE_TASK, reason);
 
     debugLog("Maintenance: scheduled maintenance batch", {
         reason,
@@ -274,6 +279,10 @@ export function scheduleConversationChromeSync({
         includeStreaming,
     });
 }
+
+registerUiPipelineTask(CONVERSATION_MAINTENANCE_TASK, () => {
+    flushConversationMaintenance();
+});
 
 export function resetConversationMaintenanceForTests() {
     isConversationMaintenanceScheduled = false;
