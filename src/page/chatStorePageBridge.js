@@ -133,18 +133,7 @@
                 const cached = frameCache.get(key);
                 if (cached !== undefined) return cached;
 
-                let finalArgs = args;
-
-                if (methodName === "getBranch" || methodName === "getBranchFromLeaf") {
-                    const id = args[0];
-                    const node = bridgeRef.__resolveNodeFast?.(id);
-
-                    if (node?.id && node.id !== id) {
-                        finalArgs = [node.id, ...args.slice(1)];
-                    }
-                }
-
-                const result = original.apply(bridgeRef.__store, finalArgs);
+                const result = original.apply(bridgeRef.__store, args);
 
                 if (result !== undefined) {
                     frameCache.set(key, result);
@@ -1636,14 +1625,7 @@
             return installMethodFrameCache({
                 bridge: this,
                 methodNames: "findNodeFromLeaf",
-                keyFn: (methodName, args) => {
-                    const id = args[0];
-
-                    const node = this.__resolveNodeFast?.(id);
-                    const canonicalId = node?.id ?? id;
-
-                    return `${methodName}:${canonicalId}`;
-                },
+                keyFn: getCheapCacheKey,
                 maxSize,
                 cacheSlot: "__findNodeFromLeafFrameCache",
                 statsSlot: "__findNodeFromLeafFrameCacheStats",
@@ -1685,14 +1667,7 @@
             return installMethodFrameCache({
                 bridge: this,
                 methodNames: "getLeafFromNode",
-                keyFn: (methodName, args) => {
-                    const id = args[0];
-
-                    const node = this.__resolveNodeFast?.(id);
-                    const canonicalId = node?.id ?? id;
-
-                    return `${methodName}:${canonicalId}`;
-                },
+                keyFn: getCheapCacheKey,
                 maxSize,
                 cacheSlot: "__getLeafFromNodeFrameCache",
                 statsSlot: "__getLeafFromNodeFrameCacheStats",
@@ -1734,7 +1709,6 @@
                 methodNames: ["getBranch", "getBranchFromLeaf"],
                 keyFn: (methodName, args) => {
                     const id = args[0];
-
                     const node = this.__resolveNodeFast?.(id);
                     const canonicalId = node?.id ?? id;
 
@@ -2024,6 +1998,7 @@
         disableStoreReadOptimization({ debug = false } = {}) {
             const result = {
                 profiler: this.uninstallStoreProfiler?.(),
+                resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
                 getLeafFromNodeFrameCache: this.uninstallGetLeafFromNodeFrameCache(),
                 findNodeFromLeafFrameCache: this.uninstallFindNodeFromLeafFrameCache(),
                 nodeFrameCache: this.uninstallExistingNodeFrameCache(),
@@ -2085,6 +2060,15 @@
                 this.__getLeafFromNodeFrameCacheStats.evictions = 0;
                 this.__getLeafFromNodeFrameCacheStats.frameClears = 0;
                 this.__getLeafFromNodeFrameCacheStats.lastClearReason = null;
+            }
+
+            if (this.__resolvedNodeFrameCacheStats) {
+                this.__resolvedNodeFrameCacheStats.hits = 0;
+                this.__resolvedNodeFrameCacheStats.misses = 0;
+                this.__resolvedNodeFrameCacheStats.cached = this.__resolvedNodeFrameCache?.size ?? 0;
+                this.__resolvedNodeFrameCacheStats.evictions = 0;
+                this.__resolvedNodeFrameCacheStats.frameClears = 0;
+                this.__resolvedNodeFrameCacheStats.lastClearReason = null;
             }
 
             this.clearBranchCallSiteStats?.();
