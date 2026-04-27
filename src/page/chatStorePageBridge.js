@@ -63,9 +63,35 @@
         return { get, set, clear, cache };
     }
 
+    const FRAME_CACHE_SLOTS = [
+        ["__existingNodeFrameCache", "__existingNodeFrameCacheStats"],
+        ["__findNodeFromLeafFrameCache", "__findNodeFromLeafFrameCacheStats"],
+        ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
+        ["__branchCache", "__branchCacheStats"],
+        ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
+    ];
+
+    function clearFrameCache(bridge, cacheSlot, statsSlot) {
+        bridge[cacheSlot]?.clear();
+
+        if (bridge[statsSlot]) {
+            bridge[statsSlot].cached = 0;
+        }
+    }
+
+    function resetFrameCacheStats(stats, cache) {
+        if (!stats) return;
+
+        stats.hits = 0;
+        stats.misses = 0;
+        stats.cached = cache?.size ?? 0;
+        stats.evictions = 0;
+        stats.frameClears = 0;
+        stats.lastClearReason = null;
+    }
+
     function uninstallMethodFrameCache({
         bridge,
-        methodNames,
         originalSlot,
         installedFlag,
     }) {
@@ -1413,7 +1439,6 @@
         uninstallExistingNodeFrameCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
-                methodNames: "getNodeIfExists",
                 originalSlot: "__existingNodeFrameCacheOriginal",
                 installedFlag: "__existingNodeFrameCacheInstalled",
             });
@@ -1487,7 +1512,6 @@
         uninstallFindNodeFromLeafFrameCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
-                methodNames: "findNodeFromLeaf",
                 originalSlot: "__findNodeFromLeafFrameCacheOriginal",
                 installedFlag: "__findNodeFromLeafFrameCacheInstalled",
             });
@@ -1564,7 +1588,6 @@
         uninstallGetLeafFromNodeFrameCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
-                methodNames: "getLeafFromNode",
                 originalSlot: "__getLeafFromNodeFrameCacheOriginal",
                 installedFlag: "__getLeafFromNodeFrameCacheInstalled",
             });
@@ -1759,7 +1782,6 @@
         uninstallBranchCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
-                methodNames: ["getBranch", "getBranchFromLeaf"],
                 originalSlot: "__branchCacheOriginals",
                 installedFlag: "__branchCacheInstalled",
             });
@@ -1959,44 +1981,15 @@
                 this.__messageIdIndexStats.fallbackHits = 0;
             }
 
-            for (const [cacheSlot, statsSlot] of [
-                ["__existingNodeFrameCache", "__existingNodeFrameCacheStats"],
-                ["__findNodeFromLeafFrameCache", "__findNodeFromLeafFrameCacheStats"],
-                ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
-            ]) {
-                const stats = this[statsSlot];
-                if (!stats) continue;
-
-                stats.hits = 0;
-                stats.misses = 0;
-                stats.cached = this[cacheSlot]?.size ?? 0;
-                stats.evictions = 0;
-                stats.frameClears = 0;
-                stats.lastClearReason = null;
+            for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+                resetFrameCacheStats(this[statsSlot], this[cacheSlot]);
             }
 
-            if (this.__branchCacheStats) {
-                this.__branchCacheStats.hits = 0;
-                this.__branchCacheStats.misses = 0;
-                this.__branchCacheStats.cached = this.__branchCache?.size ?? 0;
-                this.__branchCacheStats.evictions = 0;
-                this.__branchCacheStats.frameClears = 0;
+            if (ENABLE_BRANCH_CALLSITE_STATS) {
+                this.clearBranchCallSiteStats?.();
             }
 
-            if (this.__resolvedNodeFrameCacheStats) {
-                this.__resolvedNodeFrameCacheStats.hits = 0;
-                this.__resolvedNodeFrameCacheStats.misses = 0;
-                this.__resolvedNodeFrameCacheStats.cached = this.__resolvedNodeFrameCache?.size ?? 0;
-                this.__resolvedNodeFrameCacheStats.evictions = 0;
-                this.__resolvedNodeFrameCacheStats.frameClears = 0;
-                this.__resolvedNodeFrameCacheStats.lastClearReason = null;
-            }
-
-            this.clearBranchCallSiteStats?.();
-
-            return {
-                ok: true,
-            };
+            return { ok: true };
         },
 
         preparePerformanceTest() {
@@ -2098,19 +2091,8 @@
         },
 
         clearStoreReadCache() {
-            this.clearBranchCache();
-
-            for (const [cacheSlot, statsSlot] of [
-                ["__existingNodeFrameCache", "__existingNodeFrameCacheStats"],
-                ["__findNodeFromLeafFrameCache", "__findNodeFromLeafFrameCacheStats"],
-                ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
-                ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
-            ]) {
-                this[cacheSlot]?.clear();
-
-                if (this[statsSlot]) {
-                    this[statsSlot].cached = 0;
-                }
+            for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+                clearFrameCache(this, cacheSlot, statsSlot);
             }
 
             return { ok: true };
