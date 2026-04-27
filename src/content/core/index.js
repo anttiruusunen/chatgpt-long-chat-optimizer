@@ -469,6 +469,10 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 });
 
 function syncStoreReadOptimizationToPageWithRetry(retries = 10) {
+    if (typeof window === "undefined") {
+        return;
+    }
+
     const bridge = window.__threadOptimizerChatStoreBridge;
 
     if (bridge?.__installed) {
