@@ -141,20 +141,34 @@ function flushPostPruneState() {
     debugLog("Maintenance: flushed batched post-prune refresh");
 }
 
-function flushConversationChromeSync() {
-    const forceCss = pendingConversationChromeSyncForceCss;
-    const includeStreaming = pendingConversationChromeSyncIncludeStreaming;
-    const reasons = Array.from(pendingConversationChromeSyncReasons);
-
-    pendingConversationChromeSyncForceCss = false;
-    pendingConversationChromeSyncIncludeStreaming = false;
-    pendingConversationChromeSyncReasons.clear();
-
+function collectConversationChromeSnapshot() {
     const visibleSections = getConversationSections();
-    const firstVisibleSection = visibleSections[0] ?? null;
-    const lastVisibleSection = visibleSections[visibleSections.length - 1] ?? null;
 
-    if (state.hiddenCount > 0 && firstVisibleSection) {
+    return {
+        visibleSections,
+        firstVisibleSection: visibleSections[0] ?? null,
+        lastVisibleSection: visibleSections[visibleSections.length - 1] ?? null,
+        visibleSectionCount: visibleSections.length,
+        hiddenCount: state.hiddenCount,
+    };
+}
+
+function applyConversationChromeSnapshot(
+    snapshot,
+    {
+        forceCss = false,
+        includeStreaming = false,
+        reasons = [],
+    } = {}
+) {
+    const {
+        firstVisibleSection,
+        lastVisibleSection,
+        visibleSectionCount,
+        hiddenCount,
+    } = snapshot;
+
+    if (hiddenCount > 0 && firstVisibleSection) {
         ensurePlaceholderState(firstVisibleSection);
     } else {
         removePlaceholder();
@@ -176,10 +190,28 @@ function flushConversationChromeSync() {
 
     debugLog("Maintenance: flushed conversation chrome sync batch", {
         reasons,
-        visibleSections: visibleSections.length,
-        hiddenCount: state.hiddenCount,
+        visibleSections: visibleSectionCount,
+        hiddenCount,
         forceCss,
         includeStreaming,
+    });
+}
+
+function flushConversationChromeSync() {
+    const forceCss = pendingConversationChromeSyncForceCss;
+    const includeStreaming = pendingConversationChromeSyncIncludeStreaming;
+    const reasons = Array.from(pendingConversationChromeSyncReasons);
+
+    pendingConversationChromeSyncForceCss = false;
+    pendingConversationChromeSyncIncludeStreaming = false;
+    pendingConversationChromeSyncReasons.clear();
+
+    const snapshot = collectConversationChromeSnapshot();
+
+    applyConversationChromeSnapshot(snapshot, {
+        forceCss,
+        includeStreaming,
+        reasons,
     });
 }
 
