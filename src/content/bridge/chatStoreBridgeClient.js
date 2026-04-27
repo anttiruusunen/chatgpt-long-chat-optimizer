@@ -1,3 +1,5 @@
+import { debugLog } from "../core/logger";
+
 const RECORD_SOURCE = "thread-optimizer";
 const RECORD_TYPE = "thread-optimizer:record-pruned-message-id";
 
@@ -26,7 +28,7 @@ export function recordPrunedSectionMessageForManualBridgeDelete(section) {
     const messageId = extractMessageIdFromSection(section);
 
     if (!messageId) {
-        console.warn("[Thread Optimizer] no message id found on pruned section", {
+        debugLog("[Thread Optimizer] no message id found on pruned section", {
             section,
             testId: section instanceof HTMLElement
                 ? section.getAttribute("data-testid")

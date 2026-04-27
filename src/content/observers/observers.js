@@ -173,7 +173,7 @@ export function attachObserverToContainer(container, deps) {
     });
 
     state.observedContainer = container;
-    console.log("[Thread Optimizer] Auto-prune observer attached to conversation container");
+    debugLog("[Thread Optimizer] Auto-prune observer attached to conversation container");
 }
 
 export function ensureObserverAttached(deps) {
