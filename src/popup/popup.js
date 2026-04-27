@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
     enableLargeCodeBlockOptimization: true,
     enableStreamingSectionHiding: true,
     enableDebugLogging: false,
+    enableStoreReadOptimization: false,
 };
 
 const historyKeptExchangesInput = document.getElementById("historyKeptExchanges");
@@ -23,6 +24,8 @@ const logDebugStateButton = document.getElementById("logDebugState");
 const logDebugBucketsButton = document.getElementById("logDebugBuckets");
 const logDebugLogicalButton = document.getElementById("logDebugLogical");
 const statusEl = document.getElementById("status");
+const enableStoreReadOptimizationInput = document.getElementById("enableStoreReadOptimization");
+const logDebugStorePerformanceButton = document.getElementById("logDebugStorePerformance");
 
 let popupStatePollTimer = null;
 
@@ -148,6 +151,7 @@ async function loadSettings() {
         enableLargeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
         enableStreamingSectionHiding: DEFAULT_SETTINGS.enableStreamingSectionHiding,
         enableDebugLogging: DEFAULT_SETTINGS.enableDebugLogging,
+        enableStoreReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
     });
 
     historyKeptExchangesInput.value =
@@ -158,6 +162,7 @@ async function loadSettings() {
     enableLargeCodeBlockOptimizationInput.checked = Boolean(stored.enableLargeCodeBlockOptimization);
     enableStreamingSectionHidingInput.checked = Boolean(stored.enableStreamingSectionHiding);
     enableDebugLoggingInput.checked = Boolean(stored.enableDebugLogging);
+    enableStoreReadOptimizationInput.checked = Boolean(stored.enableStoreReadOptimization);
 
     updateFieldStates();
     updateDebugVisibility();
@@ -188,6 +193,7 @@ async function saveSettings() {
         enableLargeCodeBlockOptimization,
         enableStreamingSectionHiding,
         enableDebugLogging,
+        enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
     };
 
     await storageSyncSet(settingsToStore);
@@ -201,6 +207,7 @@ async function saveSettings() {
         enableLargeCodeBlockOptimization,
         enableStreamingSectionHiding,
         enableDebugLogging,
+        enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
     });
 
     updateFieldStates();
@@ -243,6 +250,14 @@ enableStreamingSectionHidingInput.addEventListener("change", saveSettings);
 enableDebugLoggingInput.addEventListener("change", async () => {
     updateDebugVisibility();
     await saveSettings();
+});
+
+enableStoreReadOptimizationInput.addEventListener("change", saveSettings);
+logDebugStorePerformanceButton.addEventListener("click", async () => {
+    await sendDebugAction(
+        "log-debug-store-performance",
+        "Logged store cache"
+    );
 });
 
 clearHistoryKeptExchangesButton.addEventListener("click", async () => {

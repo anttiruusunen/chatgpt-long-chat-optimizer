@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = {
     enableLargeCodeBlockOptimization: true,
     enableStreamingSectionHiding: true,
     enableDebugLogging: false,
+    enableStoreReadOptimization: false,
 };
 
 if (!window[STATE_KEY]) {
@@ -67,6 +68,7 @@ if (!window[STATE_KEY]) {
             offscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
             largeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
             streamingSectionHiding: DEFAULT_SETTINGS.enableStreamingSectionHiding,
+            storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
         },
 
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,
@@ -87,7 +89,6 @@ if (!window[STATE_KEY]) {
         isApplyingDomChanges: false,
 
         initPollTimer: null,
-        
         offscreenLiveSection: null,
     };
 }

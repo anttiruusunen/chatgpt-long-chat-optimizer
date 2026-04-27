@@ -233,11 +233,21 @@
     </div>
 
     <div class="flagRow">
+        <input id="enableStoreReadOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableStoreReadOptimization">
+            <strong>Optimize ChatGPT store reads</strong>
+            <span>Experimental cache for repeated internal node lookups during long conversations.</span>
+        </label>
+    </div>
+
+    <div class="flagRow">
         <input id="enableDebugLogging" type="checkbox" />
         <label class="flagLabel" for="enableDebugLogging">
             <strong>Enable debug logging</strong>
         </label>
     </div>
+
+    <button id="logDebugStorePerformance" class="debugButton" type="button">Log store cache</button>
 </div>
 
 <div id="debugSection" class="debug" hidden>

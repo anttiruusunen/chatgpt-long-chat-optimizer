@@ -6,6 +6,17 @@ function getHiddenExchangesCount() {
     return Math.floor((Number(state.hiddenCount) || 0) / 2);
 }
 
+function postToPageBridge(type, payload = {}) {
+    window.postMessage(
+        {
+            source: "thread-optimizer",
+            type,
+            ...payload,
+        },
+        window.location.origin
+    );
+}
+
 export function registerRuntimeMessageHandlers({
     pruneOldSections,
     restoreAllSections,
@@ -59,10 +70,17 @@ export function registerRuntimeMessageHandlers({
                 state.settings.enableLargeCodeBlockOptimization = Boolean(message.enableLargeCodeBlockOptimization);
                 state.settings.enableStreamingSectionHiding = Boolean(message.enableStreamingSectionHiding);
                 state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
+                state.settings.enableStoreReadOptimization = Boolean(message.enableStoreReadOptimization);
 
                 state.debugLoggingEnabled = state.settings.enableDebugLogging;
 
                 syncFeatureFlagsFromSettings();
+
+                postToPageBridge("thread-optimizer:set-store-read-optimization", {
+                    enabled: state.featureFlags.storeReadOptimization,
+                    debug: state.debugLoggingEnabled,
+                });
+
                 applySoftPrunedLimitToCurrentState();
 
                 if (previousOffscreenEnabled !== state.featureFlags.offscreenOptimization) {
@@ -125,6 +143,15 @@ export function registerRuntimeMessageHandlers({
             if (message.action === "debug-log-logical") {
                 const payload = globalThis.__THREAD_OPTIMIZER_DEBUG__?.getLogicalSections?.() ?? null;
                 console.log("[Thread Optimizer Debug] Logical sections", payload);
+                sendResponse({ ok: true });
+                return true;
+            }
+
+            if (message.action === "log-debug-store-performance") {
+                postToPageBridge("thread-optimizer:log-store-performance");
+
+                debugLog("Messages: requested store performance debug log");
+
                 sendResponse({ ok: true });
                 return true;
             }
