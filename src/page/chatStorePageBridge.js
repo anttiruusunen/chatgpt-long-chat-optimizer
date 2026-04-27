@@ -63,93 +63,6 @@
         return { get, set, clear, cache };
     }
 
-    function installMethodFrameCache({
-        bridge,
-        methodNames,
-        keyFn,
-        maxSize,
-        cacheSlot,
-        statsSlot,
-        originalSlot,
-        installedFlag,
-        beforeCall,
-    }) {
-        const store = bridge.__store;
-
-        if (!store) {
-            return { ok: false, reason: "store not registered" };
-        }
-
-        if (bridge[installedFlag]) {
-            return {
-                ok: true,
-                alreadyInstalled: true,
-                stats: bridge[statsSlot] ?? null,
-            };
-        }
-
-        const names = Array.isArray(methodNames) ? methodNames : [methodNames];
-
-        const originals = {};
-
-        for (const name of names) {
-            const fn = store[name];
-            if (typeof fn === "function") {
-                originals[name] = fn;
-            }
-        }
-
-        if (Object.keys(originals).length === 0) {
-            return { ok: false, reason: "no valid methods found" };
-        }
-
-        const stats = {
-            hits: 0,
-            misses: 0,
-            cached: 0,
-            evictions: 0,
-            frameClears: 0,
-            maxSize,
-            mode: "frame",
-            lastClearReason: null,
-        };
-
-        const frameCache = createFrameCache({ maxSize, stats });
-
-        bridge[cacheSlot] = frameCache.cache;
-        bridge[statsSlot] = stats;
-        bridge[originalSlot] = originals;
-
-        const bridgeRef = bridge;
-
-        for (const methodName of Object.keys(originals)) {
-            const original = originals[methodName];
-
-            store[methodName] = function (...args) {
-                beforeCall?.(methodName, args);
-
-                const key = keyFn(methodName, args);
-
-                const cached = frameCache.get(key);
-                if (cached !== undefined) return cached;
-
-                const result = original.apply(bridgeRef.__store, args);
-
-                frameCache.set(key, result ?? null);
-
-                return result ?? null;
-            };
-        }
-
-        bridge[installedFlag] = true;
-
-        return {
-            ok: true,
-            installed: true,
-            methods: Object.keys(originals),
-        };
-    }
-
     function uninstallMethodFrameCache({
         bridge,
         methodNames,
@@ -1515,23 +1428,60 @@
         },
 
         installFindNodeFromLeafFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            return installMethodFrameCache({
-                bridge: this,
-                methodNames: "findNodeFromLeaf",
-                keyFn: (methodName, args) => {
-                    const id = args[0];
+            if (!this.__store) {
+                return { ok: false, reason: "store not registered" };
+            }
 
-                    const index = this.__messageIdIndex;
-                    const canonicalId = index?.get(id) ?? id;
+            if (this.__findNodeFromLeafFrameCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__findNodeFromLeafFrameCacheStats,
+                };
+            }
 
-                    return `${methodName}:${String(canonicalId)}`;
-                },
+            const original = this.__store.findNodeFromLeaf;
+            if (typeof original !== "function") {
+                return { ok: false, reason: "findNodeFromLeaf unavailable" };
+            }
+
+            const stats = {
+                hits: 0,
+                misses: 0,
+                cached: 0,
+                evictions: 0,
+                frameClears: 0,
                 maxSize,
-                cacheSlot: "__findNodeFromLeafFrameCache",
-                statsSlot: "__findNodeFromLeafFrameCacheStats",
-                originalSlot: "__findNodeFromLeafFrameCacheOriginal",
-                installedFlag: "__findNodeFromLeafFrameCacheInstalled",
-            });
+                mode: "frame",
+                lastClearReason: null,
+            };
+
+            const frameCache = createFrameCache({ maxSize, stats });
+
+            this.__findNodeFromLeafFrameCache = frameCache.cache;
+            this.__findNodeFromLeafFrameCacheStats = stats;
+            this.__findNodeFromLeafFrameCacheOriginal = { findNodeFromLeaf: original };
+
+            const bridgeRef = this;
+
+            this.__store.findNodeFromLeaf = function cachedFindNodeFromLeaf(id) {
+                const index = bridgeRef.__messageIdIndex;
+                const canonicalId = index?.get(id) ?? id;
+
+                const cached = frameCache.get(canonicalId);
+                if (cached !== undefined) return cached;
+
+                const result = original.call(bridgeRef.__store, id);
+
+                // cache BOTH hits and misses
+                frameCache.set(canonicalId, result ?? null);
+
+                return result ?? null;
+            };
+
+            this.__findNodeFromLeafFrameCacheInstalled = true;
+
+            return { ok: true, installed: true, methods: ["findNodeFromLeaf"] };
         },
 
         uninstallFindNodeFromLeafFrameCache() {
@@ -1552,16 +1502,63 @@
         },
 
         installGetLeafFromNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            return installMethodFrameCache({
-                bridge: this,
-                methodNames: "getLeafFromNode",
-                keyFn: getCheapCacheKey,
+            if (!this.__store) {
+                return { ok: false, reason: "store not registered" };
+            }
+
+            if (this.__getLeafFromNodeFrameCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__getLeafFromNodeFrameCacheStats,
+                };
+            }
+
+            const original = this.__store.getLeafFromNode;
+            if (typeof original !== "function") {
+                return { ok: false, reason: "getLeafFromNode unavailable" };
+            }
+
+            const stats = {
+                hits: 0,
+                misses: 0,
+                cached: 0,
+                evictions: 0,
+                frameClears: 0,
                 maxSize,
-                cacheSlot: "__getLeafFromNodeFrameCache",
-                statsSlot: "__getLeafFromNodeFrameCacheStats",
-                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
-                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-            });
+                mode: "frame",
+                lastClearReason: null,
+            };
+
+            const frameCache = createFrameCache({ maxSize, stats });
+
+            this.__getLeafFromNodeFrameCache = frameCache.cache;
+            this.__getLeafFromNodeFrameCacheStats = stats;
+            this.__getLeafFromNodeFrameCacheOriginal = { getLeafFromNode: original };
+
+            const bridgeRef = this;
+
+            this.__store.getLeafFromNode = function cachedGetLeafFromNode(id) {
+                const key =
+                    typeof id === "string" ||
+                    typeof id === "number" ||
+                    typeof id === "boolean" ||
+                    id == null
+                        ? id
+                        : id.id ?? id.nodeId ?? id.message?.id ?? id;
+
+                const cached = frameCache.get(key);
+                if (cached !== undefined) return cached;
+
+                const result = original.call(bridgeRef.__store, id);
+
+                frameCache.set(key, result ?? null);
+                return result ?? null;
+            };
+
+            this.__getLeafFromNodeFrameCacheInstalled = true;
+
+            return { ok: true, installed: true, methods: ["getLeafFromNode"] };
         },
 
         uninstallGetLeafFromNodeFrameCache() {
@@ -1685,21 +1682,74 @@
         },
 
         installBranchCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            const result = installMethodFrameCache({
-                bridge: this,
-                methodNames: ["getBranch", "getBranchFromLeaf"],
-                keyFn: (methodName, args) => `${methodName}:${String(args[0])}`,
+            if (!this.__store) {
+                return { ok: false, reason: "store not registered" };
+            }
+
+            if (this.__branchCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__branchCacheStats,
+                };
+            }
+
+            const originals = {};
+            for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
+                const original = this.__store[methodName];
+                if (typeof original === "function") {
+                    originals[methodName] = original;
+                }
+            }
+
+            if (Object.keys(originals).length === 0) {
+                return { ok: false, reason: "no branch methods available" };
+            }
+
+            const stats = {
+                hits: 0,
+                misses: 0,
+                cached: 0,
+                evictions: 0,
+                frameClears: 0,
                 maxSize,
-                cacheSlot: "__branchCache",
-                statsSlot: "__branchCacheStats",
-                originalSlot: "__branchCacheOriginals",
-                installedFlag: "__branchCacheInstalled",
-                beforeCall: ENABLE_BRANCH_CALLSITE_STATS
-                    ? (methodName, args) => {
-                        this.recordBranchCallSite(methodName, args);
+                mode: "frame",
+                lastClearReason: null,
+            };
+
+            const frameCache = createFrameCache({ maxSize, stats });
+
+            this.__branchCache = frameCache.cache;
+            this.__branchCacheStats = stats;
+            this.__branchCacheOriginals = originals;
+
+            const bridgeRef = this;
+
+            for (const [methodName, original] of Object.entries(originals)) {
+                this.__store[methodName] = function cachedBranchMethod(id, ...rest) {
+                    if (ENABLE_BRANCH_CALLSITE_STATS) {
+                        bridgeRef.recordBranchCallSite(methodName, [id, ...rest]);
                     }
-                    : null,
-            });
+
+                    const key = `${methodName}:${String(id)}`;
+
+                    const cached = frameCache.get(key);
+                    if (cached !== undefined) return cached;
+
+                    const result = original.call(bridgeRef.__store, id, ...rest);
+
+                    frameCache.set(key, result ?? null);
+                    return result ?? null;
+                };
+            }
+
+            this.__branchCacheInstalled = true;
+
+            const result = {
+                ok: true,
+                installed: true,
+                methods: Object.keys(originals),
+            };
 
             this.__branchCacheLastInstallResult = result;
 
