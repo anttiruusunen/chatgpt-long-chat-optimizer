@@ -14,11 +14,21 @@ export function getVisibleSectionsLimit() {
     return VISIBLE_EXCHANGES * SECTIONS_PER_EXCHANGE;
 }
 
-export function clearCssVisibilityWindow() {
-    const marked = document.querySelectorAll(`section[${OUT_OF_WINDOW_ATTR}="true"]`);
-    for (const section of marked) {
-        section.removeAttribute(OUT_OF_WINDOW_ATTR);
+function collectMarkedOutOfWindowSections() {
+    return Array.from(
+        document.querySelectorAll(`section[${OUT_OF_WINDOW_ATTR}="true"]`)
+    );
+}
+
+function applyClearCssVisibilityWindow(markedSections) {
+    for (let i = 0; i < markedSections.length; i += 1) {
+        markedSections[i].removeAttribute(OUT_OF_WINDOW_ATTR);
     }
+}
+
+export function clearCssVisibilityWindow() {
+    const markedSections = collectMarkedOutOfWindowSections();
+    applyClearCssVisibilityWindow(markedSections);
 }
 
 export function getEligibleVisibleSections(sections = getConversationSections()) {
@@ -39,36 +49,60 @@ export function getCssHiddenSections({
     return eligibleVisibleSections.filter((section) => !visibleWindow.has(section));
 }
 
+function collectCssVisibilityWindowPlan({
+    sections = getConversationSections(),
+    visibleLimit = getVisibleSectionsLimit(),
+} = {}) {
+    const markedSections = collectMarkedOutOfWindowSections();
+    const eligibleVisibleSections = getEligibleVisibleSections(sections);
+    const visibleWindow = new Set(eligibleVisibleSections.slice(-visibleLimit));
+    const sectionsToHide = eligibleVisibleSections.filter(
+        (section) => !visibleWindow.has(section)
+    );
+
+    return {
+        sections,
+        markedSections,
+        eligibleVisibleSections,
+        visibleLimit,
+        sectionsToHide,
+    };
+}
+
+function applyCssVisibilityWindowPlan(plan) {
+    applyClearCssVisibilityWindow(plan.markedSections);
+
+    for (let i = 0; i < plan.sectionsToHide.length; i += 1) {
+        plan.sectionsToHide[i].setAttribute(OUT_OF_WINDOW_ATTR, "true");
+    }
+}
+
 export function syncCssVisibilityWindow() {
-    clearCssVisibilityWindow();
+    const plan = collectCssVisibilityWindowPlan();
+
+    applyClearCssVisibilityWindow(plan.markedSections);
 
     if (!state.featureFlags.pruning) {
         debugLog("CSS visibility window: skipped sync because pruning is disabled");
         return [];
     }
 
-    const sections = getConversationSections();
-    if (sections.length === 0) {
+    if (plan.sections.length === 0) {
         debugLog("CSS visibility window: skipped sync because there are no conversation sections");
         return [];
     }
 
-    const visibleLimit = getVisibleSectionsLimit();
-    const sectionsToHide = getCssHiddenSections({
-        sections,
-        visibleLimit,
+    applyCssVisibilityWindowPlan({
+        ...plan,
+        markedSections: [],
     });
-
-    for (const section of sectionsToHide) {
-        section.setAttribute(OUT_OF_WINDOW_ATTR, "true");
-    }
 
     debugLog("CSS visibility window: synced", {
-        totalSections: sections.length,
-        eligibleVisibleSections: getEligibleVisibleSections(sections).length,
-        visibleLimit,
-        cssHiddenSections: sectionsToHide.length,
+        totalSections: plan.sections.length,
+        eligibleVisibleSections: plan.eligibleVisibleSections.length,
+        visibleLimit: plan.visibleLimit,
+        cssHiddenSections: plan.sectionsToHide.length,
     });
 
-    return sectionsToHide;
+    return plan.sectionsToHide;
 }
