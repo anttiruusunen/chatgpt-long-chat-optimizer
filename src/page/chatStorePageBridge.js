@@ -8,7 +8,6 @@
     const MAX_DISCOVERY_RUNS = 30;
     const DEFAULT_CACHE_MAX_SIZE = 1000;
 
-    const ENABLE_SAMPLE_VALIDATION_DURING_DISCOVERY = false;
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
     const ENABLE_STORE_PROFILER = true;
@@ -325,7 +324,7 @@
         return 0;
     }
 
-    function validateStoreCandidate(store, sampleMessageId = null) {
+    function validateStoreCandidate(store) {
         if (!looksLikeStore(store)) {
             return {
                 ok: false,
@@ -335,29 +334,12 @@
 
         try {
             const info = getStoreInfo(store);
-
-            if (sampleMessageId && ENABLE_SAMPLE_VALIDATION_DURING_DISCOVERY) {
-                const nodeId = store.messageIdToExistingNodeId(sampleMessageId);
-                const node = nodeId ? store.getNodeIfExists(nodeId) : null;
-
-                if (!nodeId || !node) {
-                    return {
-                        ok: false,
-                        reason: "sample message id did not resolve",
-                        info,
-                        sampleMessageId,
-                        sampleNodeId: nodeId ?? null,
-                    };
-                }
-            }
-
             const nodeCount = getStoreNodeCount(store);
 
             return {
                 ok: true,
                 info,
                 nodeCount,
-                sampleMessageId,
             };
         } catch (error) {
             return {
@@ -451,10 +433,7 @@
             if (objectBudget.visitedObjects > limits.maxObjects) break;
 
             if (hasAnyStoreMethodName(current) && looksLikeStore(current)) {
-                const validation = validateStoreCandidate(
-                    current,
-                    window[GLOBAL_KEY]?.getValidationSampleMessageId?.() ?? null
-                );
+                const validation = validateStoreCandidate(current);
 
                 if (validation.ok) {
                     const nodeCount = validation.nodeCount ?? getStoreNodeCount(current);
@@ -575,10 +554,7 @@
                 if (!isObjectLike(candidate)) continue;
 
                 if (hasAnyStoreMethodName(candidate) && looksLikeStore(candidate)) {
-                    const validation = validateStoreCandidate(
-                        candidate,
-                        window[GLOBAL_KEY]?.getValidationSampleMessageId?.() ?? null
-                    );
+                    const validation = validateStoreCandidate(candidate);
 
                     if (validation.ok) {
                         const nodeCount = validation.nodeCount ?? getStoreNodeCount(candidate);
@@ -751,24 +727,6 @@
         __messageIdIndex: null,
         __messageIdIndexStats: null,
 
-        __existingNodeFrameCacheInstalled: false,
-        __existingNodeFrameCacheOriginal: null,
-        __existingNodeFrameCache: null,
-        __existingNodeFrameCacheStats: null,
-        __existingNodeFrameCacheClearScheduled: false,
-
-        __findNodeFromLeafFrameCacheInstalled: false,
-        __findNodeFromLeafFrameCacheOriginal: null,
-        __findNodeFromLeafFrameCache: null,
-        __findNodeFromLeafFrameCacheStats: null,
-        __findNodeFromLeafFrameCacheClearScheduled: false,
-
-        __getLeafFromNodeFrameCacheInstalled: false,
-        __getLeafFromNodeFrameCacheOriginal: null,
-        __getLeafFromNodeFrameCache: null,
-        __getLeafFromNodeFrameCacheStats: null,
-        __getLeafFromNodeFrameCacheClearScheduled: false,
-
         __branchCacheInstalled: false,
         __branchCacheOriginals: null,
         __branchCache: null,
@@ -780,9 +738,6 @@
 
         __branchCallSiteStats: null,
         __branchCallSiteCaptureStacks: false,
-
-        __nodeCallSiteStats: null,
-        __nodeCallSiteSampleRate: 10000,
 
         __discoveryInProgress: false,
         __initTiming: {
@@ -842,10 +797,6 @@
             this.__storeValidationFailed = false;
         },
 
-        getValidationSampleMessageId() {
-            return this.__prunedMessageIds[0] ?? null;
-        },
-
         resetInstalledStoreEnhancements() {
             this.__storeProfilerInstalled = false;
             this.__storeProfilerOriginals = null;
@@ -854,24 +805,6 @@
             this.__messageIdIndexInstalled = false;
             this.__messageIdIndexOriginal = null;
             this.__messageIdIndex = null;
-
-            this.__existingNodeFrameCacheInstalled = false;
-            this.__existingNodeFrameCacheOriginal = null;
-            this.__existingNodeFrameCache = null;
-            this.__existingNodeFrameCacheStats = null;
-            this.__existingNodeFrameCacheClearScheduled = false;
-
-            this.__findNodeFromLeafFrameCacheInstalled = false;
-            this.__findNodeFromLeafFrameCacheOriginal = null;
-            this.__findNodeFromLeafFrameCache = null;
-            this.__findNodeFromLeafFrameCacheStats = null;
-            this.__findNodeFromLeafFrameCacheClearScheduled = false;
-
-            this.__getLeafFromNodeFrameCacheInstalled = false;
-            this.__getLeafFromNodeFrameCacheOriginal = null;
-            this.__getLeafFromNodeFrameCache = null;
-            this.__getLeafFromNodeFrameCacheStats = null;
-            this.__getLeafFromNodeFrameCacheClearScheduled = false;
 
             this.__branchCacheInstalled = false;
             this.__branchCacheOriginals = null;
@@ -890,10 +823,7 @@
         },
 
         registerStore(store, meta = null) {
-            const validation = validateStoreCandidate(
-                store,
-                this.getValidationSampleMessageId()
-            );
+            const validation = validateStoreCandidate(store);
 
             if (!validation.ok) {
                 rejectStore(store, validation.reason);
@@ -1476,48 +1406,6 @@
             };
         },
 
-        installExistingNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            return installMethodFrameCache({
-                bridge: this,
-                methodNames: "getNodeIfExists",
-                keyFn: (_, args) => args[0],
-                maxSize,
-                cacheSlot: "__existingNodeFrameCache",
-                statsSlot: "__existingNodeFrameCacheStats",
-                originalSlot: "__existingNodeFrameCacheOriginal",
-                installedFlag: "__existingNodeFrameCacheInstalled",
-            });
-        },
-
-        uninstallExistingNodeFrameCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                methodNames: "getNodeIfExists",
-                originalSlot: "__existingNodeFrameCacheOriginal",
-                installedFlag: "__existingNodeFrameCacheInstalled",
-            });
-        },
-
-        clearExistingNodeFrameCache() {
-            this.__existingNodeFrameCache?.clear();
-
-            if (this.__existingNodeFrameCacheStats) {
-                this.__existingNodeFrameCacheStats.cached = 0;
-            }
-
-            return {
-                ok: true,
-            };
-        },
-
-        getExistingNodeFrameCacheStats() {
-            return {
-                installed: Boolean(this.__existingNodeFrameCacheInstalled),
-                size: this.__existingNodeFrameCache?.size ?? 0,
-                stats: this.__existingNodeFrameCacheStats ?? null,
-            };
-        },
-
         recordBranchCallSite(methodName, args) {
             if (!this.__branchCallSiteStats) {
                 this.__branchCallSiteStats = {
@@ -1618,88 +1506,6 @@
                 totalCalls: this.__branchCallSiteStats.totalCalls,
                 methods: { ...this.__branchCallSiteStats.methods },
                 topCallSites,
-            };
-        },
-
-        installFindNodeFromLeafFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            return installMethodFrameCache({
-                bridge: this,
-                methodNames: "findNodeFromLeaf",
-                keyFn: getCheapCacheKey,
-                maxSize,
-                cacheSlot: "__findNodeFromLeafFrameCache",
-                statsSlot: "__findNodeFromLeafFrameCacheStats",
-                originalSlot: "__findNodeFromLeafFrameCacheOriginal",
-                installedFlag: "__findNodeFromLeafFrameCacheInstalled",
-            });
-        },
-
-        uninstallFindNodeFromLeafFrameCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                methodNames: "findNodeFromLeaf",
-                originalSlot: "__findNodeFromLeafFrameCacheOriginal",
-                installedFlag: "__findNodeFromLeafFrameCacheInstalled",
-            });
-        },
-
-        clearFindNodeFromLeafFrameCache() {
-            this.__findNodeFromLeafFrameCache?.clear();
-
-            if (this.__findNodeFromLeafFrameCacheStats) {
-                this.__findNodeFromLeafFrameCacheStats.cached = 0;
-            }
-
-            return {
-                ok: true,
-            };
-        },
-
-        getFindNodeFromLeafFrameCacheStats() {
-            return {
-                installed: Boolean(this.__findNodeFromLeafFrameCacheInstalled),
-                size: this.__findNodeFromLeafFrameCache?.size ?? 0,
-                stats: this.__findNodeFromLeafFrameCacheStats ?? null,
-            };
-        },
-
-        installGetLeafFromNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
-            return installMethodFrameCache({
-                bridge: this,
-                methodNames: "getLeafFromNode",
-                keyFn: getCheapCacheKey,
-                maxSize,
-                cacheSlot: "__getLeafFromNodeFrameCache",
-                statsSlot: "__getLeafFromNodeFrameCacheStats",
-                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
-                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-            });
-        },
-
-        uninstallGetLeafFromNodeFrameCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                methodNames: "getLeafFromNode",
-                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
-                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-            });
-        },
-
-        clearGetLeafFromNodeFrameCache() {
-            this.__getLeafFromNodeFrameCache?.clear();
-
-            if (this.__getLeafFromNodeFrameCacheStats) {
-                this.__getLeafFromNodeFrameCacheStats.cached = 0;
-            }
-
-            return { ok: true };
-        },
-
-        getGetLeafFromNodeFrameCacheStats() {
-            return {
-                installed: Boolean(this.__getLeafFromNodeFrameCacheInstalled),
-                size: this.__getLeafFromNodeFrameCache?.size ?? 0,
-                stats: this.__getLeafFromNodeFrameCacheStats ?? null,
             };
         },
 
@@ -1827,100 +1633,6 @@
             return { ok: true, uninstalled: true };
         },
 
-        recordNodeCallSite(methodName, args) {
-            if (!this.__nodeCallSiteStats) {
-                this.__nodeCallSiteStats = {
-                    installed: true,
-                    totalCallsSeen: 0,
-                    sampledCalls: 0,
-                    callSites: {},
-                    maxCallSites: 80,
-                    sampleRate: this.__nodeCallSiteSampleRate,
-                };
-            }
-
-            const stats = this.__nodeCallSiteStats;
-            stats.totalCallsSeen += 1;
-
-            if (stats.totalCallsSeen % stats.sampleRate !== 0) {
-                return;
-            }
-
-            stats.sampledCalls += 1;
-
-            const stackKey = normalizeStack(new Error().stack);
-            const firstArg = args[0];
-
-            const argSummary = {
-                firstArg:
-                    typeof firstArg === "string" ||
-                    typeof firstArg === "number" ||
-                    typeof firstArg === "boolean" ||
-                    firstArg == null
-                        ? firstArg
-                        : typeof firstArg,
-                argCount: args.length,
-            };
-
-            const existing = stats.callSites[stackKey];
-
-            if (existing) {
-                existing.sampledCalls += 1;
-                existing.estimatedCalls = existing.sampledCalls * stats.sampleRate;
-                existing.lastArgs = argSummary;
-                existing.lastSeenAt = Date.now();
-                return;
-            }
-
-            const keys = Object.keys(stats.callSites);
-
-            if (keys.length >= stats.maxCallSites) {
-                const lowestKey = keys.reduce((lowest, key) => {
-                    return stats.callSites[key].sampledCalls < stats.callSites[lowest].sampledCalls
-                        ? key
-                        : lowest;
-                }, keys[0]);
-
-                delete stats.callSites[lowestKey];
-            }
-
-            stats.callSites[stackKey] = {
-                sampledCalls: 1,
-                estimatedCalls: stats.sampleRate,
-                firstArgs: argSummary,
-                lastArgs: argSummary,
-                firstSeenAt: Date.now(),
-                lastSeenAt: Date.now(),
-            };
-        },
-
-        clearNodeCallSiteStats() {
-            this.__nodeCallSiteStats = null;
-            return { ok: true };
-        },
-
-        getNodeCallSiteStats() {
-            if (!this.__nodeCallSiteStats) {
-                return {
-                    installed: false,
-                    totalCallsSeen: 0,
-                    sampledCalls: 0,
-                    topCallSites: [],
-                };
-            }
-
-            return {
-                installed: true,
-                totalCallsSeen: this.__nodeCallSiteStats.totalCallsSeen,
-                sampledCalls: this.__nodeCallSiteStats.sampledCalls,
-                sampleRate: this.__nodeCallSiteStats.sampleRate,
-                topCallSites: Object.entries(this.__nodeCallSiteStats.callSites)
-                    .map(([stack, data]) => ({ stack, ...data }))
-                    .sort((a, b) => b.sampledCalls - a.sampledCalls)
-                    .slice(0, 20),
-            };
-        },
-
         getResolvedNodeFrameCacheStats() {
             return {
                 installed: Boolean(this.__resolvedNodeFrameCacheInstalled),
@@ -1954,9 +1666,6 @@
                     this.wrapMutationForIndexRefresh("prependOptismisticNode"),
                     this.wrapMutationForIndexRefresh("processUpdate"),
                 ],
-                nodeFrameCache: { ok: true, skipped: true, reason: "replaced by resolvedNode cache" },
-                findNodeFromLeafFrameCache: { ok: true, skipped: true },
-                getLeafFromNodeFrameCache: { ok: true, skipped: true },
                 branchCache: this.installBranchCache(),
                 resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
                 profiler: ENABLE_STORE_PROFILER
@@ -1982,9 +1691,6 @@
                 ok: result.ok,
                 installed: {
                     messageIdIndex: result.messageIdIndex?.ok,
-                    nodeFrameCache: result.nodeFrameCache?.ok,
-                    findNodeFromLeafFrameCache: result.findNodeFromLeafFrameCache?.ok,
-                    getLeafFromNodeFrameCache: result.getLeafFromNodeFrameCache?.ok,
                     branchCache: result.branchCache?.ok,
                     resolvedNodeFrameCache: result.resolvedNodeFrameCache?.ok,
                     profiler: result.profiler?.ok,
@@ -1999,9 +1705,6 @@
             const result = {
                 profiler: this.uninstallStoreProfiler?.(),
                 resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
-                getLeafFromNodeFrameCache: this.uninstallGetLeafFromNodeFrameCache(),
-                findNodeFromLeafFrameCache: this.uninstallFindNodeFromLeafFrameCache(),
-                nodeFrameCache: this.uninstallExistingNodeFrameCache(),
                 branchCache: this.uninstallBranchCache(),
                 indexRefreshHooks: this.uninstallIndexRefreshHooks?.(),
                 messageIdIndex: this.uninstallMessageIdIndex(),
@@ -2020,15 +1723,6 @@
         clearPerformanceStats() {
             this.clearStoreProfile?.();
 
-            if (this.__existingNodeFrameCacheStats) {
-                this.__existingNodeFrameCacheStats.hits = 0;
-                this.__existingNodeFrameCacheStats.misses = 0;
-                this.__existingNodeFrameCacheStats.cached = this.__existingNodeFrameCache?.size ?? 0;
-                this.__existingNodeFrameCacheStats.evictions = 0;
-                this.__existingNodeFrameCacheStats.frameClears = 0;
-                this.__existingNodeFrameCacheStats.lastClearReason = null;
-            }
-
             if (this.__messageIdIndexStats) {
                 this.__messageIdIndexStats.hits = 0;
                 this.__messageIdIndexStats.misses = 0;
@@ -2043,25 +1737,6 @@
                 this.__branchCacheStats.frameClears = 0;
             }
 
-            if (this.__findNodeFromLeafFrameCacheStats) {
-                this.__findNodeFromLeafFrameCacheStats.hits = 0;
-                this.__findNodeFromLeafFrameCacheStats.misses = 0;
-                this.__findNodeFromLeafFrameCacheStats.cached = this.__findNodeFromLeafFrameCache?.size ?? 0;
-                this.__findNodeFromLeafFrameCacheStats.evictions = 0;
-                this.__findNodeFromLeafFrameCacheStats.frameClears = 0;
-                this.__findNodeFromLeafFrameCacheStats.lastClearReason = null;
-            }
-
-            if (this.__getLeafFromNodeFrameCacheStats) {
-                this.__getLeafFromNodeFrameCacheStats.hits = 0;
-                this.__getLeafFromNodeFrameCacheStats.misses = 0;
-                this.__getLeafFromNodeFrameCacheStats.cached =
-                    this.__getLeafFromNodeFrameCache?.size ?? 0;
-                this.__getLeafFromNodeFrameCacheStats.evictions = 0;
-                this.__getLeafFromNodeFrameCacheStats.frameClears = 0;
-                this.__getLeafFromNodeFrameCacheStats.lastClearReason = null;
-            }
-
             if (this.__resolvedNodeFrameCacheStats) {
                 this.__resolvedNodeFrameCacheStats.hits = 0;
                 this.__resolvedNodeFrameCacheStats.misses = 0;
@@ -2072,8 +1747,6 @@
             }
 
             this.clearBranchCallSiteStats?.();
-
-            this.clearNodeCallSiteStats?.();
 
             return {
                 ok: true,
@@ -2172,32 +1845,6 @@
             };
         },
 
-        // Backwards-compatible aliases for current popup/debug code.
-        installExistingNodeShortTtlCache(options) {
-            return this.installExistingNodeFrameCache(options);
-        },
-
-        uninstallExistingNodeShortTtlCache() {
-            return this.uninstallExistingNodeFrameCache();
-        },
-
-        clearExistingNodeShortTtlCache() {
-            return this.clearExistingNodeFrameCache();
-        },
-
-        getExistingNodeShortTtlCacheStats() {
-            return this.getExistingNodeFrameCacheStats();
-        },
-
-        getExistingNodeCacheStats() {
-            return {
-                installed: false,
-                size: 0,
-                stats: null,
-                reason: "removed; use getExistingNodeFrameCacheStats",
-            };
-        },
-
         installStoreReadCache() {
             return this.applyStoreReadOptimization({
                 debug: this.__storeReadOptimizationDebug,
@@ -2206,24 +1853,26 @@
         },
 
         clearStoreReadCache() {
-            this.clearExistingNodeFrameCache();
             this.clearBranchCache();
 
-            return {
-                ok: true,
-            };
+            this.__resolvedNodeFrameCache?.clear();
+            if (this.__resolvedNodeFrameCacheStats) {
+                this.__resolvedNodeFrameCacheStats.cached = 0;
+            }
+
+            return { ok: true };
         },
 
         getStoreReadCacheStats() {
             return {
                 installed: Boolean(
                     this.__messageIdIndexInstalled ||
-                    this.__existingNodeFrameCacheInstalled ||
-                    this.__branchCacheInstalled
+                    this.__branchCacheInstalled ||
+                    this.__resolvedNodeFrameCacheInstalled
                 ),
                 messageIdIndex: this.getMessageIdIndexStats(),
-                existingNodeFrameCache: this.getExistingNodeFrameCacheStats(),
                 branchCache: this.getBranchCacheStats(),
+                resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats(),
             };
         },
 
