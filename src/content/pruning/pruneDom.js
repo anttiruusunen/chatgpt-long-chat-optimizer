@@ -149,10 +149,16 @@ export function restoreSoftPrunedSections(
 }
 
 export function hardEvictSection(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
     const turnRoot = getTurnRoot(section);
 
     detachTurnRoot(turnRoot);
     destroySectionForGc(section);
+
+    return true;
 }
 
 export function hardEvictSections(sections) {
