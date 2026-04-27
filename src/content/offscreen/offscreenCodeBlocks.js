@@ -306,20 +306,34 @@ function applyCodeBlockActions(actions) {
     }
 }
 
-function processSettledSection(section) {
+function getSettledCodeBlockPlan(section) {
     const codeBlocks = getCodeBlocksForSection(section);
+    const actions = getSettledCodeBlockActions(section);
+
+    return {
+        section,
+        codeBlocks,
+        actions,
+    };
+}
+
+function applySettledCodeBlockPlan(plan) {
+    const { section, codeBlocks, actions } = plan;
 
     if (codeBlocks.length === 0) {
         markSectionCodeBlocksProcessed(section);
         return;
     }
 
-    const actions = getSettledCodeBlockActions(section);
-
     clearLiveMarkersForSection(section);
     applyCodeBlockActions(actions);
 
     markSectionCodeBlocksProcessed(section);
+}
+
+function processSettledSection(section) {
+    const plan = getSettledCodeBlockPlan(section);
+    applySettledCodeBlockPlan(plan);
 }
 
 function getStreamingCodeBlockActions(section) {
@@ -359,12 +373,29 @@ function getStreamingCodeBlockActions(section) {
     return actions;
 }
 
-function processStreamingSection(section) {
+function getStreamingCodeBlockPlan(section) {
+    const codeBlocks = getCodeBlocksForSection(section);
     const actions = getStreamingCodeBlockActions(section);
 
-    clearLiveMarkersForSection(section);
-    applyCodeBlockActions(actions);
-    clearSectionCodeBlocksProcessed(section);
+    return {
+        section,
+        codeBlocks,
+        actions,
+        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
+        codeBlockCount: codeBlocks.length,
+    };
+}
+
+function applyStreamingCodeBlockPlan(plan) {
+    clearLiveMarkersForSection(plan.section);
+    applyCodeBlockActions(plan.actions);
+    clearSectionCodeBlocksProcessed(plan.section);
+}
+
+function processStreamingSection(section) {
+    const plan = getStreamingCodeBlockPlan(section);
+    applyStreamingCodeBlockPlan(plan);
+    return plan;
 }
 
 function getStreamingSectionToProcess() {
@@ -509,8 +540,8 @@ function clearAllObservedCodeBlocks(sections) {
     }
 }
 
-function processSettledSections(sections) {
-    const sectionsToProcess = [];
+function collectSettledCodeBlockPlans(sections) {
+    const plans = [];
 
     for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i];
@@ -520,14 +551,22 @@ function processSettledSections(sections) {
             continue;
         }
 
-        sectionsToProcess.push(section);
+        plans.push(getSettledCodeBlockPlan(section));
     }
 
-    for (let i = 0; i < sectionsToProcess.length; i += 1) {
-        processSettledSection(sectionsToProcess[i]);
-    }
+    return plans;
+}
 
-    return sectionsToProcess.length;
+function applySettledCodeBlockPlans(plans) {
+    for (let i = 0; i < plans.length; i += 1) {
+        applySettledCodeBlockPlan(plans[i]);
+    }
+}
+
+function processSettledSections(sections) {
+    const plans = collectSettledCodeBlockPlans(sections);
+    applySettledCodeBlockPlans(plans);
+    return plans.length;
 }
 
 export function refreshObservedCodeBlocks() {
@@ -549,13 +588,11 @@ export function refreshObservedCodeBlocks() {
     syncStreamingStructureObserver();
 
     if (replyIsStreaming && streamingSection) {
-        processStreamingSection(streamingSection);
-        state.streamingCodeBlockLastSection = streamingSection;
+        const plan = processStreamingSection(streamingSection);
 
-        const codeBlocks = getCodeBlocksForSection(streamingSection);
-        state.streamingCodeBlockLastPre =
-            codeBlocks[codeBlocks.length - 1] ?? null;
-        state.streamingCodeBlockLastCount = codeBlocks.length;
+        state.streamingCodeBlockLastSection = streamingSection;
+        state.streamingCodeBlockLastPre = plan.lastPre;
+        state.streamingCodeBlockLastCount = plan.codeBlockCount;
 
         debugLog("Offscreen code blocks: refreshed code block state", {
             mode: "streaming",
