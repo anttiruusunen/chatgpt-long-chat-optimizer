@@ -45,6 +45,118 @@ function setCurrentLiveSection(section) {
     state.offscreenLiveSection = section instanceof HTMLElement ? section : null;
 }
 
+function collectSectionCssModePlan() {
+    return {
+        root: getStyleRoot(),
+        enabled: Boolean(state.featureFlags.offscreenOptimization),
+    };
+}
+
+function applySectionCssModePlan(plan) {
+    const { root, enabled } = plan;
+
+    if (!root) return;
+
+    if (enabled) {
+        if (root.getAttribute(OFFSCREEN_ROOT_ATTR) !== "true") {
+            root.setAttribute(OFFSCREEN_ROOT_ATTR, "true");
+        }
+        return;
+    }
+
+    if (root.hasAttribute(OFFSCREEN_ROOT_ATTR)) {
+        root.removeAttribute(OFFSCREEN_ROOT_ATTR);
+    }
+}
+
+function collectLiveSectionPlan() {
+    const previousLiveSection = getCurrentLiveSection();
+    const enabled = Boolean(state.featureFlags.offscreenOptimization);
+    const nextLiveSection = enabled ? getLatestAssistantSection() : null;
+
+    const needsBootstrapCleanup =
+        !previousLiveSection ||
+        !previousLiveSection.isConnected;
+
+    const sectionsToClear =
+        enabled && needsBootstrapCleanup
+            ? getConversationSections().filter(
+                  (section) => section !== nextLiveSection
+              )
+            : [];
+
+    return {
+        enabled,
+        previousLiveSection,
+        nextLiveSection,
+        needsBootstrapCleanup,
+        sectionsToClear,
+        replyStreaming: isReplyStreaming(),
+    };
+}
+
+function applyLiveSectionPlan(plan) {
+    const {
+        enabled,
+        previousLiveSection,
+        nextLiveSection,
+        needsBootstrapCleanup,
+        sectionsToClear,
+        replyStreaming,
+    } = plan;
+
+    if (!enabled) {
+        if (previousLiveSection) {
+            setSectionLiveOverride(previousLiveSection, false);
+        }
+
+        for (let i = 0; i < sectionsToClear.length; i += 1) {
+            setSectionLiveOverride(sectionsToClear[i], false);
+        }
+
+        state.offscreenLiveSection = null;
+        return;
+    }
+
+    for (let i = 0; i < sectionsToClear.length; i += 1) {
+        setSectionLiveOverride(sectionsToClear[i], false);
+    }
+
+    if (previousLiveSection === nextLiveSection && !needsBootstrapCleanup) {
+        if (replyStreaming) {
+            debugLog("Offscreen: latest assistant already pinned live during active reply");
+        }
+        return;
+    }
+
+    if (previousLiveSection && previousLiveSection !== nextLiveSection) {
+        setSectionLiveOverride(previousLiveSection, false);
+    }
+
+    if (nextLiveSection) {
+        setSectionLiveOverride(nextLiveSection, true);
+        setCurrentLiveSection(nextLiveSection);
+    } else {
+        state.offscreenLiveSection = null;
+    }
+
+    if (replyStreaming) {
+        debugLog("Offscreen: updated latest assistant live pin during active reply");
+    }
+}
+
+function collectOffscreenSectionPlan() {
+    return {
+        cssModePlan: collectSectionCssModePlan(),
+        liveSectionPlan: collectLiveSectionPlan(),
+    };
+}
+
+function applyOffscreenSectionPlan(plan) {
+    applySectionCssModePlan(plan.cssModePlan);
+    applyLiveSectionPlan(plan.liveSectionPlan);
+}
+
 function clearCurrentLiveSection() {
     const currentLiveSection = getCurrentLiveSection();
     if (currentLiveSection) {
@@ -64,57 +176,11 @@ function clearStaleLiveOverridesExcept(sectionToKeep) {
 }
 
 function syncSectionCssMode() {
-    const root = getStyleRoot();
-    if (!root) return;
-
-    if (state.featureFlags.offscreenOptimization) {
-        if (root.getAttribute(OFFSCREEN_ROOT_ATTR) !== "true") {
-            root.setAttribute(OFFSCREEN_ROOT_ATTR, "true");
-        }
-    } else if (root.hasAttribute(OFFSCREEN_ROOT_ATTR)) {
-        root.removeAttribute(OFFSCREEN_ROOT_ATTR);
-    }
+    applySectionCssModePlan(collectSectionCssModePlan());
 }
 
 function syncLiveSectionState() {
-    const previousLiveSection = getCurrentLiveSection();
-
-    if (!state.featureFlags.offscreenOptimization) {
-        clearCurrentLiveSection();
-        return;
-    }
-
-    const nextLiveSection = getLatestAssistantSection();
-
-    const needsBootstrapCleanup =
-        !previousLiveSection ||
-        !previousLiveSection.isConnected;
-
-    if (needsBootstrapCleanup) {
-        clearStaleLiveOverridesExcept(nextLiveSection);
-    }
-
-    if (previousLiveSection === nextLiveSection && !needsBootstrapCleanup) {
-        if (isReplyStreaming()) {
-            debugLog("Offscreen: latest assistant already pinned live during active reply");
-        }
-        return;
-    }
-
-    if (previousLiveSection && previousLiveSection !== nextLiveSection) {
-        setSectionLiveOverride(previousLiveSection, false);
-    }
-
-    if (nextLiveSection) {
-        setSectionLiveOverride(nextLiveSection, true);
-        setCurrentLiveSection(nextLiveSection);
-    } else {
-        state.offscreenLiveSection = null;
-    }
-
-    if (isReplyStreaming()) {
-        debugLog("Offscreen: updated latest assistant live pin during active reply");
-    }
+    applyLiveSectionPlan(collectLiveSectionPlan());
 }
 
 export function clearOffscreenOptimization(section) {
@@ -128,15 +194,17 @@ export function clearOffscreenOptimization(section) {
 }
 
 export function ensureSectionCssOffscreenMode() {
-    syncSectionCssMode();
-    syncLiveSectionState();
+    const plan = collectOffscreenSectionPlan();
+    applyOffscreenSectionPlan(plan);
+
     debugLog("Offscreen: section offscreening is CSS-driven");
     return null;
 }
 
 export function handleReplyStreamingStarted() {
-    syncSectionCssMode();
-    syncLiveSectionState();
+    const plan = collectOffscreenSectionPlan();
+    applyOffscreenSectionPlan(plan);
+
     reconcileLatestStreamingAssistantCodeBlocksNow();
     scheduleOffscreenRefresh();
     debugLog("Offscreen: reply streaming started");
@@ -161,8 +229,8 @@ export function resetOffscreenOptimization({ clearMeasurements = false } = {}) {
 }
 
 export function refreshObservedSections() {
-    syncSectionCssMode();
-    syncLiveSectionState();
+    const plan = collectOffscreenSectionPlan();
+    applyOffscreenSectionPlan(plan);
 
     if (!state.featureFlags.offscreenOptimization) {
         resetCodeBlockOptimization();
@@ -197,8 +265,10 @@ export function scheduleOffscreenRefresh() {
 export function setOffscreenOptimizationEnabled(enabled) {
     if (!enabled) {
         state.featureFlags.offscreenOptimization = false;
-        syncSectionCssMode();
-        clearCurrentLiveSection();
+
+        const plan = collectOffscreenSectionPlan();
+        applyOffscreenSectionPlan(plan);
+
         clearStaleLiveOverridesExcept(null);
         resetCodeBlockOptimization({ clearMeasurements: true });
         debugLog("Offscreen: feature disabled");
@@ -206,7 +276,10 @@ export function setOffscreenOptimizationEnabled(enabled) {
     }
 
     state.featureFlags.offscreenOptimization = true;
-    syncSectionCssMode();
+
+    const plan = collectOffscreenSectionPlan();
+    applyOffscreenSectionPlan(plan);
+
     scheduleOffscreenRefresh();
     debugLog("Offscreen: feature enabled");
 }
