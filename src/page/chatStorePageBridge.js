@@ -133,7 +133,18 @@
                 const cached = frameCache.get(key);
                 if (cached !== undefined) return cached;
 
-                const result = original.apply(bridgeRef.__store, args);
+                let finalArgs = args;
+
+                if (methodName === "getBranch" || methodName === "getBranchFromLeaf") {
+                    const id = args[0];
+                    const node = bridgeRef.__resolveNodeFast?.(id);
+
+                    if (node?.id && node.id !== id) {
+                        finalArgs = [node.id, ...args.slice(1)];
+                    }
+                }
+
+                const result = original.apply(bridgeRef.__store, finalArgs);
 
                 if (result !== undefined) {
                     frameCache.set(key, result);
@@ -693,18 +704,29 @@
 
     function resolveNodeCore(bridge, id) {
         const store = bridge.__store;
+        const index = bridge.__messageIdIndex;
         if (!store) return null;
 
         try {
-            // FAST PATH: assume id is already a nodeId
-            let node = store.getNodeIfExists?.(id);
-            if (node) return node;
+            // 🔥 1. index fast-path (covers BOTH messageId + nodeId)
+            if (index?.has(id)) {
+                const nodeId = index.get(id);
+                return store.getNodeIfExists?.(nodeId) ?? null;
+            }
 
-            // FALLBACK: treat as messageId
+            // 🔥 2. fallback → resolve + hydrate
             const nodeId = store.messageIdToExistingNodeId?.call(store, id);
             if (!nodeId) return null;
 
-            return store.getNodeIfExists?.(nodeId) ?? null;
+            const node = store.getNodeIfExists?.(nodeId) ?? null;
+
+            // 🔥 3. backfill index (critical)
+            if (node && index) {
+                index.set(id, nodeId);
+                index.set(nodeId, nodeId);
+            }
+
+            return node;
         } catch {
             return null;
         }
@@ -922,19 +944,16 @@
             return true;
         },
 
-        resolveNodeIdFromMessageId(messageId) {
-            const store = this.__store;
-
-            if (!store) {
+        resolveNodeIdFromMessageId(id) {
+            if (!this.__store) {
                 this.__lastError = "store not registered";
                 return null;
             }
 
             try {
-                const node = this.__resolveNodeFast?.(messageId);
-
+                const node = this.__resolveNodeFast?.(id);
                 this.__lastError = null;
-                return node?.id ?? null;
+                return node ? node.id ?? null : null;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
 
@@ -950,16 +969,14 @@
             }
         },
 
-        getNodeByMessageId(messageId) {
-            const store = this.__store;
-
-            if (!store) {
+        getNodeByMessageId(id) {
+            if (!this.__store) {
                 this.__lastError = "store not registered";
                 return null;
             }
 
             try {
-                const node = this.__resolveNodeFast?.(messageId) ?? null;
+                const node = this.__resolveNodeFast?.(id) ?? null;
                 this.__lastError = null;
                 return node;
             } catch (error) {
@@ -1619,7 +1636,14 @@
             return installMethodFrameCache({
                 bridge: this,
                 methodNames: "findNodeFromLeaf",
-                keyFn: getCheapCacheKey,
+                keyFn: (methodName, args) => {
+                    const id = args[0];
+
+                    const node = this.__resolveNodeFast?.(id);
+                    const canonicalId = node?.id ?? id;
+
+                    return `${methodName}:${canonicalId}`;
+                },
                 maxSize,
                 cacheSlot: "__findNodeFromLeafFrameCache",
                 statsSlot: "__findNodeFromLeafFrameCacheStats",
@@ -1661,7 +1685,14 @@
             return installMethodFrameCache({
                 bridge: this,
                 methodNames: "getLeafFromNode",
-                keyFn: getCheapCacheKey,
+                keyFn: (methodName, args) => {
+                    const id = args[0];
+
+                    const node = this.__resolveNodeFast?.(id);
+                    const canonicalId = node?.id ?? id;
+
+                    return `${methodName}:${canonicalId}`;
+                },
                 maxSize,
                 cacheSlot: "__getLeafFromNodeFrameCache",
                 statsSlot: "__getLeafFromNodeFrameCacheStats",
@@ -1701,7 +1732,14 @@
             const result = installMethodFrameCache({
                 bridge: this,
                 methodNames: ["getBranch", "getBranchFromLeaf"],
-                keyFn: getCheapCacheKey,
+                keyFn: (methodName, args) => {
+                    const id = args[0];
+
+                    const node = this.__resolveNodeFast?.(id);
+                    const canonicalId = node?.id ?? id;
+
+                    return `${methodName}:${canonicalId}`;
+                },
                 maxSize,
                 cacheSlot: "__branchCache",
                 statsSlot: "__branchCacheStats",
@@ -1942,9 +1980,9 @@
                     this.wrapMutationForIndexRefresh("prependOptismisticNode"),
                     this.wrapMutationForIndexRefresh("processUpdate"),
                 ],
-                nodeFrameCache: this.installExistingNodeFrameCache(),
-                findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache(),
-                getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache(),
+                nodeFrameCache: { ok: true, skipped: true, reason: "replaced by resolvedNode cache" },
+                findNodeFromLeafFrameCache: { ok: true, skipped: true },
+                getLeafFromNodeFrameCache: { ok: true, skipped: true },
                 branchCache: this.installBranchCache(),
                 resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
                 profiler: ENABLE_STORE_PROFILER
