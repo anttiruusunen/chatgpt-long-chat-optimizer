@@ -72,6 +72,11 @@ export function restoreDetachedCodeBlockEntry(
 
     if (removePlaceholder) {
         setPlaceholderVisibility(placeholder, false);
+
+        if (placeholder?.isConnected) {
+            placeholder.remove();
+        }
+
         clearPlaceholderIdForPre(pre);
     }
 
@@ -113,6 +118,10 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
 
     const placeholder = getPlaceholderById(getPlaceholderIdForPre(pre));
     setPlaceholderVisibility(placeholder, false);
+
+    if (placeholder?.isConnected) {
+        placeholder.remove();
+    }
 
     pre.style.display = "";
     pre.removeAttribute("data-thread-optimizer-code-collapsed");

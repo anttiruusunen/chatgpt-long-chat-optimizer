@@ -224,7 +224,12 @@ function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
         return false;
     }
 
-    if (pre.dataset.threadOptimizerCodeExpanded === "true") {
+    // New DOM contract: if the code block is already live/expanded,
+    // do not create or show our placeholder.
+    if (
+        pre.hasAttribute(LARGE_CODE_LIVE_ATTR) ||
+        pre.dataset.threadOptimizerCodeExpanded === "true"
+    ) {
         clearCollapsedCodeBlock(pre, { preserveExpanded: true });
         setLargeCodeLiveMarker(pre, true);
         return false;
