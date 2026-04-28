@@ -272,9 +272,12 @@ function ensureCodeBlockRevealClickListener() {
             );
             if (!(placeholder instanceof HTMLElement)) return;
 
-            if (isRevealButtonElement(target)) {
+            const revealButton = target.closest("button");
+
+            if (revealButton && isRevealButtonElement(revealButton)) {
                 event.preventDefault();
                 event.stopPropagation();
+
                 revealCollapsedCodeBlockFromPlaceholder(placeholder);
 
                 const hostSection = placeholder.closest("section");
