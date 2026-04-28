@@ -6,7 +6,7 @@
     const MAX_OBJECTS = 15000;
     const DISCOVERY_RETRY_MS = 1200;
     const MAX_DISCOVERY_RUNS = 30;
-    const DEFAULT_CACHE_MAX_SIZE = 1000;
+    const DEFAULT_CACHE_MAX_SIZE = 5000;
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
@@ -61,6 +61,46 @@
         }
 
         return { get, set, clear, cache };
+    }
+
+    function getVisibleConversationTurnCount() {
+        try {
+            return document.querySelectorAll(
+                'section[data-testid^="conversation-turn-"], section[data-turn]'
+            ).length;
+        } catch {
+            return 0;
+        }
+    }
+
+    function getEstimatedConversationTurnCount() {
+        const visibleTurns = getVisibleConversationTurnCount();
+        const bridge = window[GLOBAL_KEY];
+
+        const pruningEnabled =
+            bridge?.__knownPruningEnabled === true;
+
+        const prunedTurns =
+            pruningEnabled && Number.isFinite(bridge?.__knownPrunedTurnCount)
+                ? bridge.__knownPrunedTurnCount
+                : 0;
+
+        return visibleTurns + prunedTurns;
+    }
+
+    function getExpectedMinimumStoreNodeCount() {
+        const estimatedTurns = getEstimatedConversationTurnCount();
+
+        if (estimatedTurns <= 2) return 1;
+
+        return Math.max(3, Math.floor(estimatedTurns * 0.25));
+    }
+
+    function isStoreGoodEnough(store) {
+        const nodeCount = getStoreNodeCount(store);
+        const minimum = getExpectedMinimumStoreNodeCount();
+
+        return nodeCount >= minimum;
     }
 
     const FRAME_CACHE_SLOTS = [
@@ -194,18 +234,8 @@
             };
         }
 
-        let nodeCount = null;
         let rootId = null;
         let currentLeafId = null;
-
-        try {
-            const nodesValue = store.nodes;
-            if (nodesValue && typeof nodesValue === "object") {
-                nodeCount = Array.isArray(nodesValue)
-                    ? nodesValue.length
-                    : Object.keys(nodesValue).length;
-            }
-        } catch {}
 
         try {
             rootId = safeCall(store.rootId);
@@ -217,7 +247,7 @@
 
         return {
             found: true,
-            nodeCount,
+            nodeCount: getStoreNodeCount(store),
             rootId,
             currentLeafId,
         };
@@ -293,6 +323,14 @@
         try {
             const info = getStoreInfo(store);
             const nodeCount = getStoreNodeCount(store);
+            const minimumNodeCount = getExpectedMinimumStoreNodeCount();
+
+            if (nodeCount < minimumNodeCount) {
+                return {
+                    ok: false,
+                    reason: `node count too small: ${nodeCount} < ${minimumNodeCount}`,
+                };
+            }
 
             return {
                 ok: true,
@@ -401,10 +439,7 @@
                         bestNodeCount = nodeCount;
                     }
 
-                    return {
-                        store: bestStore,
-                        visitedObjects,
-                    };
+                    continue;
                 }
 
                 rejectStore(current, validation.reason);
@@ -479,6 +514,7 @@
         const seenFibers = new WeakSet();
         const fiberQueue = [root];
         const objectBudget = { visitedObjects: 0 };
+
         let visitedFibers = 0;
         let visitedObjects = 0;
         let bestStore = null;
@@ -522,18 +558,10 @@
                             bestNodeCount = nodeCount;
                         }
 
-                        return {
-                            store: candidate,
-                            visitedFibers,
-                            visitedObjects,
-                        };
+                        continue;
                     }
 
                     rejectStore(candidate, validation.reason);
-                }
-
-                if (bestStore) {
-                    continue;
                 }
 
                 const shouldDeepScan =
@@ -549,16 +577,17 @@
                     visitedObjects += scanned.visitedObjects;
 
                     if (scanned.store) {
-                        return {
-                            store: scanned.store,
-                            visitedFibers,
-                            visitedObjects,
-                        };
+                        const nodeCount = getStoreNodeCount(scanned.store);
+
+                        if (nodeCount > bestNodeCount) {
+                            bestStore = scanned.store;
+                            bestNodeCount = nodeCount;
+                        }
                     }
 
                     if (objectBudget.visitedObjects > limits.maxObjects) {
                         return {
-                            store: bestStore ?? null,
+                            store: bestStore,
                             visitedFibers,
                             visitedObjects: objectBudget.visitedObjects,
                         };
@@ -606,25 +635,6 @@
             .join("\n");
     }
 
-    function getCheapCacheKey(methodName, args) {
-        const first = args[0];
-
-        if (
-            first === null ||
-            typeof first === "string" ||
-            typeof first === "number" ||
-            typeof first === "boolean"
-        ) {
-            return `${methodName}:${String(first)}`;
-        }
-
-        if (first && typeof first === "object") {
-            return `${methodName}:object:${first.id ?? first.nodeId ?? first.message?.id ?? "unknown"}`;
-        }
-
-        return `${methodName}:${typeof first}`;
-    }
-
     function resolveNodeCore(bridge, id) {
         const store = bridge.__store;
         const index = bridge.__messageIdIndex;
@@ -652,6 +662,41 @@
         }
     }
 
+    function createPersistentCache({ maxSize, stats }) {
+        const cache = new Map();
+
+        function clear(reason) {
+            cache.clear();
+            stats.cached = 0;
+            stats.clears += 1;
+            stats.lastClearReason = reason;
+        }
+
+        function get(key) {
+            if (cache.has(key)) {
+                stats.hits += 1;
+                return cache.get(key);
+            }
+
+            stats.misses += 1;
+            return undefined;
+        }
+
+        function set(key, value) {
+            cache.set(key, value ?? null);
+
+            if (cache.size > maxSize) {
+                const firstKey = cache.keys().next().value;
+                cache.delete(firstKey);
+                stats.evictions += 1;
+            }
+
+            stats.cached = cache.size;
+        }
+
+        return { get, set, clear, cache };
+    }
+
     const bridge = {
         __installed: true,
         __version: BRIDGE_VERSION,
@@ -669,6 +714,8 @@
         __visitedObjects: 0,
 
         __prunedMessageIds: [],
+        __knownPruningEnabled: false,
+        __knownPrunedTurnCount: 0,
 
         __storeReadOptimizationRequested: true,
         __storeReadOptimizationDebug: false,
@@ -691,6 +738,7 @@
         __findNodeFromLeafFrameCacheOriginal: null,
         __findNodeFromLeafFrameCache: null,
         __findNodeFromLeafFrameCacheStats: null,
+        __findNodeFromLeafCacheController: null,
 
         __getLeafFromNodeFrameCacheInstalled: false,
         __getLeafFromNodeFrameCacheOriginal: null,
@@ -720,6 +768,11 @@
 
         __indexRefreshHooksInstalled: false,
         __indexRefreshHookOriginals: null,
+
+        __storePromotionStableCount: 0,
+        __storePromotionLocked: false,
+        __lastPromotionAttemptAt: 0,
+        __promotionTimer: null,
 
         status() {
             return {
@@ -785,6 +838,7 @@
             this.__findNodeFromLeafFrameCacheOriginal = null;
             this.__findNodeFromLeafFrameCache = null;
             this.__findNodeFromLeafFrameCacheStats = null;
+            this.__findNodeFromLeafCacheController = null;
 
             this.__getLeafFromNodeFrameCacheInstalled = false;
             this.__getLeafFromNodeFrameCacheOriginal = null;
@@ -813,6 +867,17 @@
             if (!validation.ok) {
                 rejectStore(store, validation.reason);
                 this.__lastError = `registerStore rejected candidate: ${validation.reason}`;
+                return false;
+            }
+
+            const currentNodeCount = getStoreNodeCount(this.__store);
+            const nextNodeCount = validation.nodeCount ?? getStoreNodeCount(store);
+
+            if (this.__store && nextNodeCount < currentNodeCount) {
+                console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
+                    currentNodeCount,
+                    nextNodeCount,
+                });
                 return false;
             }
 
@@ -947,6 +1012,23 @@
             };
         },
 
+        setKnownPruningState({ enabled, prunedTurnCount } = {}) {
+            this.__knownPruningEnabled = Boolean(enabled);
+
+            if (Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0) {
+                this.__knownPrunedTurnCount = prunedTurnCount;
+            }
+
+            return {
+                ok: true,
+                enabled: this.__knownPruningEnabled,
+                prunedTurnCount: this.__knownPrunedTurnCount,
+                visibleTurnCount: getVisibleConversationTurnCount(),
+                estimatedTurnCount: getEstimatedConversationTurnCount(),
+                minimumNodeCount: getExpectedMinimumStoreNodeCount(),
+            };
+        },
+
         getPrunedMessageIds() {
             return [...this.__prunedMessageIds];
         },
@@ -1041,6 +1123,47 @@
             return this.discoverNow();
         },
 
+        promoteStoreDiscovery() {
+            this.__lastError = null;
+            return this.discoverNow();
+        },
+
+        maybePromoteStore(reason = "unknown") {
+            if (this.__storePromotionLocked) return true;
+
+            const currentNodeCount = getStoreNodeCount(this.__store);
+
+            // Never lock onto the bootstrap/root-only store.
+            // Keep trying lightweight promotion until a real hydrated store appears.
+            if (this.__store && currentNodeCount <= 1) {
+                const now = Date.now();
+                if (now - this.__lastPromotionAttemptAt < 3000) return false;
+
+                this.__lastPromotionAttemptAt = now;
+                this.promoteStoreDiscovery();
+                return true;
+            }
+
+            if (this.__store && isStoreGoodEnough(this.__store)) {
+                this.__storePromotionStableCount += 1;
+
+                if (this.__storePromotionStableCount >= 3) {
+                    this.__storePromotionLocked = true;
+                    if (this.__promotionTimer) clearInterval(this.__promotionTimer);
+                    this.__promotionTimer = null;
+                }
+
+                return true;
+            }
+
+            const now = Date.now();
+            if (now - this.__lastPromotionAttemptAt < 3000) return false;
+
+            this.__lastPromotionAttemptAt = now;
+            this.promoteStoreDiscovery();
+            return true;
+        },
+
         startDiscoveryLoop() {
             let attempts = 0;
 
@@ -1058,6 +1181,13 @@
 
                 if (this.__store) {
                     console.log(DISCOVERY_LOG_PREFIX, "startup completed", this.getInitTiming());
+
+                    if (!this.__promotionTimer) {
+                        this.__promotionTimer = window.setInterval(() => {
+                            this.maybePromoteStore("startup-promotion");
+                        }, 3000);
+                    }
+
                     return;
                 }
 
@@ -1452,7 +1582,7 @@
             };
         },
 
-        installFindNodeFromLeafFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
+        installFindNodeFromLeafFrameCache({ maxSize = 10000 } = {}) {
             if (!this.__store) {
                 return { ok: false, reason: "store not registered" };
             }
@@ -1475,15 +1605,16 @@
                 misses: 0,
                 cached: 0,
                 evictions: 0,
-                frameClears: 0,
+                clears: 0,
                 maxSize,
-                mode: "frame",
+                mode: "persistent-mutation-invalidated",
                 lastClearReason: null,
             };
 
-            const frameCache = createFrameCache({ maxSize, stats });
+            const persistentCache = createPersistentCache({ maxSize, stats });
 
-            this.__findNodeFromLeafFrameCache = frameCache.cache;
+            this.__findNodeFromLeafCacheController = persistentCache;
+            this.__findNodeFromLeafFrameCache = persistentCache.cache;
             this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = { findNodeFromLeaf: original };
 
@@ -1491,16 +1622,26 @@
 
             this.__store.findNodeFromLeaf = function cachedFindNodeFromLeaf(id) {
                 const index = bridgeRef.__messageIdIndex;
-                const canonicalId = index?.get(id) ?? id;
 
-                const cached = frameCache.get(canonicalId);
+                const canonicalId =
+                    typeof id === "string" ||
+                    typeof id === "number" ||
+                    typeof id === "boolean"
+                        ? index?.get(id) ?? id
+                        : id && typeof id === "object"
+                            ? id.id ?? id.nodeId ?? id.message?.id ?? null
+                            : null;
+
+                if (!canonicalId) {
+                    return original.call(bridgeRef.__store, id);
+                }
+
+                const cached = persistentCache.get(canonicalId);
                 if (cached !== undefined) return cached;
 
                 const result = original.call(bridgeRef.__store, id);
 
-                // cache BOTH hits and misses
-                frameCache.set(canonicalId, result ?? null);
-
+                persistentCache.set(canonicalId, result ?? null);
                 return result ?? null;
             };
 
@@ -1886,12 +2027,12 @@
 
         applyStoreReadOptimization({ debug = false, clearStats = false } = {}) {
             const optimizationStartedAt = performance.now();
-            const discoveryResult = this.hasStore() ? true : this.retryDiscovery();
+            const discoveryResult = this.hasStore() ? true : this.promoteStoreDiscovery();
 
             if (!this.hasStore()) {
                 return {
                     ok: false,
-                    reason: "store not registered after retryDiscovery",
+                    reason: "store not registered after promoteStoreDiscovery",
                     discoveryResult,
                     status: this.status(),
                 };
@@ -1910,7 +2051,9 @@
                     this.wrapMutationForIndexRefresh("processUpdate"),
                 ],
                 nodeFrameCache: this.installExistingNodeFrameCache(),
-                findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache(),
+                findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache({
+                    maxSize: 10000,
+                }),
                 getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache(),
                 branchCache: this.installBranchCache(),
                 resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
@@ -2167,6 +2310,9 @@
             this.__store[methodName] = function indexedMutationWrapper(...args) {
                 const result = original.apply(bridgeRef.__store, args);
 
+                bridgeRef.__findNodeFromLeafCacheController?.clear("store-mutation");
+                bridgeRef.__resolvedNodeFrameCache?.clear?.("store-mutation");
+
                 queueMicrotask(() => {
                     bridgeRef.maybeRebuildMessageIdIndex?.({ minIntervalMs: 250 });
                 });
@@ -2208,6 +2354,19 @@
             const data = event.data;
 
             if (!data || data.source !== "thread-optimizer") {
+                return;
+            }
+
+            if (data.type === "thread-optimizer:set-pruning-state") {
+                bridge.setKnownPruningState({
+                    enabled: data.enabled,
+                    prunedTurnCount: data.prunedTurnCount,
+                });
+
+                if (!isStoreGoodEnough(bridge.__store)) {
+                    bridge.promoteStoreDiscovery();
+                }
+
                 return;
             }
 
