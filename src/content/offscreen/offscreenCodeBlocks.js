@@ -234,8 +234,8 @@ function reconcileDetachedCodeBlocks() {
     }
 }
 
-function getSettledCodeBlockActions(section) {
-    const codeBlocks = getCodeBlocksForSection(section);
+function getSettledCodeBlockActions(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
     const actions = [];
 
     for (let i = 0; i < codeBlocks.length; i += 1) {
@@ -300,14 +300,16 @@ function applyCodeBlockActions(actions) {
     }
 }
 
-function getSettledCodeBlockPlan(section) {
-    const codeBlocks = getCodeBlocksForSection(section);
-    const actions = getSettledCodeBlockActions(section);
+function getSettledCodeBlockPlan(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
+    const actions = getSettledCodeBlockActions(section, codeBlocks);
 
     return {
         section,
         codeBlocks,
         actions,
+        codeBlockCount: codeBlocks.length,
+        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
     };
 }
 
@@ -330,8 +332,8 @@ function processSettledSection(section) {
     applySettledCodeBlockPlan(plan);
 }
 
-function getStreamingCodeBlockActions(section) {
-    const codeBlocks = getCodeBlocksForSection(section);
+function getStreamingCodeBlockActions(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
     const qualifyingCodeBlocks = [];
     const actions = [];
 
@@ -367,16 +369,15 @@ function getStreamingCodeBlockActions(section) {
     return actions;
 }
 
-function getStreamingCodeBlockPlan(section) {
-    const codeBlocks = getCodeBlocksForSection(section);
-    const actions = getStreamingCodeBlockActions(section);
+export function getStreamingCodeBlockPlan(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
 
     return {
         section,
         codeBlocks,
-        actions,
-        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
+        actions: getStreamingCodeBlockActions(section, codeBlocks),
         codeBlockCount: codeBlocks.length,
+        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
     };
 }
 
@@ -386,8 +387,8 @@ function applyStreamingCodeBlockPlan(plan) {
     clearSectionCodeBlocksProcessed(plan.section);
 }
 
-function processStreamingSection(section) {
-    const plan = getStreamingCodeBlockPlan(section);
+function processStreamingSection(section, codeBlocks) {
+    const plan = getStreamingCodeBlockPlan(section, codeBlocks);
     applyStreamingCodeBlockPlan(plan);
     return plan;
 }
@@ -436,15 +437,15 @@ export function reconcileLatestStreamingAssistantCodeBlocksNow() {
     const section = getStreamingSectionToProcess();
     if (!section) return;
 
-    if (!hasAnyCodeBlocks(section)) {
+    const codeBlocks = getCodeBlocksForSection(section);
+    const codeBlockCount = codeBlocks.length;
+
+    if (codeBlockCount === 0) {
         ensureStreamingObserverOnly(section);
-        debugLog("Offscreen code blocks: streaming in text-only phase");
         return;
     }
 
-    const codeBlocks = getCodeBlocksForSection(section);
-    const lastPre = codeBlocks[codeBlocks.length - 1] ?? null;
-    const codeBlockCount = codeBlocks.length;
+    const lastPre = codeBlocks[codeBlockCount - 1];
 
     const shouldProcess =
         section !== state.streamingCodeBlockLastSection ||
@@ -456,7 +457,7 @@ export function reconcileLatestStreamingAssistantCodeBlocksNow() {
         return;
     }
 
-    processStreamingSection(section);
+    processStreamingSection(section, codeBlocks); // pass precomputed list
     state.streamingCodeBlockLastSection = section;
     state.streamingCodeBlockLastPre = lastPre;
     state.streamingCodeBlockLastCount = codeBlockCount;
