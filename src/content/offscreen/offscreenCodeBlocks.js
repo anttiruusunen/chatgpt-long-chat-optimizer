@@ -283,6 +283,13 @@ function ensureCodeBlockRevealClickListener() {
                 event.preventDefault();
                 event.stopPropagation();
 
+                // Do not reveal during streaming.
+                // ChatGPT/React may still be mutating the code block DOM, and restoring
+                // the detached <pre> during that phase can cause the block to disappear.
+                if (isReplyStreaming()) {
+                    return;
+                }
+
                 revealCollapsedCodeBlockFromPlaceholder(placeholder);
 
                 const hostSection = placeholder.closest("section");
@@ -460,10 +467,23 @@ function getStreamingCodeBlockActions(section, providedCodeBlocks) {
             continue;
         }
 
+        if (pre.dataset.threadOptimizerCodeExpanded === "true") {
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: true,
+                live: true,
+            });
+            continue;
+        }
+
+        // During streaming, never detach.
+        // React/ChatGPT may still be reconciling the message DOM.
+        // Detaching + restoring during stream can cause the real <pre> to disappear.
         actions.push({
             type: "collapse",
             pre,
-            detach: pre !== lastQualifyingStreamingBlock,
+            detach: false,
         });
     }
 
