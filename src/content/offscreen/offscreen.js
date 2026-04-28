@@ -5,16 +5,20 @@ import {
 } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
-import { scheduleDomWriteBatch } from "../core/domWriteBatch.js";
 import {
     configureCodeBlockOptimization,
     refreshObservedCodeBlocks,
     resetCodeBlockOptimization,
     reconcileLatestStreamingAssistantCodeBlocksNow,
 } from "./offscreenCodeBlocks.js";
+import {
+    registerUiPipelineTask,
+    scheduleUiPipelineTask,
+} from "../core/uiPipelineScheduler.js";
 
 const OFFSCREEN_ROOT_ATTR = "data-thread-optimizer-sections-offscreen";
 const OFFSCREEN_LIVE_ATTR = "data-thread-optimizer-offscreen-live";
+const OFFSCREEN_REFRESH_TASK = "offscreen-refresh";
 
 function getStyleRoot() {
     return document.documentElement;
@@ -206,7 +210,7 @@ export function handleReplyStreamingStarted() {
     applyOffscreenSectionPlan(plan);
 
     reconcileLatestStreamingAssistantCodeBlocksNow();
-    scheduleOffscreenRefresh();
+    scheduleOffscreenRefresh("reply-streaming-started");
     debugLog("Offscreen: reply streaming started");
 }
 
@@ -242,24 +246,16 @@ export function refreshObservedSections() {
     debugLog("Offscreen: refreshed CSS-driven section state");
 }
 
-export function scheduleOffscreenRefresh() {
+export function scheduleOffscreenRefresh(reason = "unknown") {
     if (state.isOffscreenRefreshScheduled) {
         debugLog("Offscreen: skipped duplicate refresh schedule");
         return;
     }
 
     state.isOffscreenRefreshScheduled = true;
+    scheduleUiPipelineTask(OFFSCREEN_REFRESH_TASK, reason);
 
-    scheduleDomWriteBatch(() => {
-        try {
-            refreshObservedSections();
-        } finally {
-            state.isOffscreenRefreshScheduled = false;
-            state.offscreenRefreshTimer = null;
-        }
-    });
-
-    debugLog("Offscreen: scheduled refresh in DOM write batch");
+    debugLog("Offscreen: scheduled refresh in UI pipeline");
 }
 
 export function setOffscreenOptimizationEnabled(enabled) {
@@ -280,9 +276,18 @@ export function setOffscreenOptimizationEnabled(enabled) {
     const plan = collectOffscreenSectionPlan();
     applyOffscreenSectionPlan(plan);
 
-    scheduleOffscreenRefresh();
+    scheduleOffscreenRefresh("feature-enabled");
     debugLog("Offscreen: feature enabled");
 }
+
+registerUiPipelineTask(OFFSCREEN_REFRESH_TASK, () => {
+    try {
+        refreshObservedSections();
+    } finally {
+        state.isOffscreenRefreshScheduled = false;
+        state.offscreenRefreshTimer = null;
+    }
+});
 
 configureCodeBlockOptimization({
     scheduleRefresh: scheduleOffscreenRefresh,

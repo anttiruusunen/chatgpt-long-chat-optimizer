@@ -38,9 +38,14 @@ import {
     disconnectCodeBlockMutationObserver,
 } from "./codeBlockObservers.js";
 import { scheduleDomWriteBatch } from "../core/domWriteBatch.js";
+import {
+    registerUiPipelineTask,
+    scheduleUiPipelineTask,
+} from "../core/uiPipelineScheduler.js";
 
 const CODE_BLOCKS_PROCESSED_ATTR = "data-thread-optimizer-codeblocks-processed";
 const LARGE_CODE_LIVE_ATTR = "data-thread-optimizer-large-code-live";
+const CODE_BLOCK_REFRESH_TASK = "code-block-refresh";
 
 let codeBlockRevealClickListenerInstalled = false;
 
@@ -188,7 +193,7 @@ function ensureCodeBlockRevealClickListener() {
     codeBlockRevealClickListenerInstalled = true;
 }
 
-function scheduleCodeBlockRefresh() {
+function scheduleCodeBlockRefresh(reason = "unknown") {
     if (state.isCodeBlockRefreshScheduled) {
         return;
     }
@@ -196,14 +201,7 @@ function scheduleCodeBlockRefresh() {
     state.isCodeBlockRefreshScheduled = true;
     state.codeBlockRefreshTimer = null;
 
-    scheduleDomWriteBatch(() => {
-        try {
-            refreshObservedCodeBlocks();
-        } finally {
-            state.isCodeBlockRefreshScheduled = false;
-            state.codeBlockRefreshTimer = null;
-        }
-    });
+    scheduleUiPipelineTask(CODE_BLOCK_REFRESH_TASK, reason);
 }
 
 function reconcileDetachedCodeBlocks() {
@@ -612,6 +610,15 @@ export function refreshObservedCodeBlocks() {
         detachedCodeBlocks: state.detachedCodeBlocks.size,
     });
 }
+
+registerUiPipelineTask(CODE_BLOCK_REFRESH_TASK, () => {
+    try {
+        refreshObservedCodeBlocks();
+    } finally {
+        state.isCodeBlockRefreshScheduled = false;
+        state.codeBlockRefreshTimer = null;
+    }
+});
 
 function isCodeBlockOptimizationEligible(pre) {
     if (!(pre instanceof HTMLPreElement)) {
