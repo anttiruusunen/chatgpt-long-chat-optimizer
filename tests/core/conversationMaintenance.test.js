@@ -14,7 +14,6 @@ const ensureTopRestoreSentinelStateMock = vi.fn();
 const ensureBottomPruneSentinelStateMock = vi.fn();
 const ensureSectionCssOffscreenModeMock = vi.fn();
 const scheduleOffscreenRefreshMock = vi.fn();
-const syncStreamingSectionStateMock = vi.fn();
 const disconnectSentinelObserversMock = vi.fn();
 const invalidateSentinelObserversForRootChangeMock = vi.fn();
 const refreshTopRestoreSentinelObservationMock = vi.fn();
@@ -57,12 +56,6 @@ vi.mock("../../src/content/offscreen/offscreen.js", () => ({
     ),
     scheduleOffscreenRefresh: vi.fn((...args) =>
         scheduleOffscreenRefreshMock(...args)
-    ),
-}));
-
-vi.mock("../../src/content/streaming/streamingSection.js", () => ({
-    syncStreamingSectionState: vi.fn((...args) =>
-        syncStreamingSectionStateMock(...args)
     ),
 }));
 
@@ -120,7 +113,6 @@ describe("conversationMaintenance", () => {
         isReplyStreamingMock = false;
 
         state.hiddenCount = 2;
-        state.featureFlags.streamingSectionHiding = true;
 
         ensurePlaceholderStateMock.mockReset();
         removePlaceholderMock.mockReset();
@@ -128,7 +120,6 @@ describe("conversationMaintenance", () => {
         ensureBottomPruneSentinelStateMock.mockReset();
         ensureSectionCssOffscreenModeMock.mockReset();
         scheduleOffscreenRefreshMock.mockReset();
-        syncStreamingSectionStateMock.mockReset();
         disconnectSentinelObserversMock.mockReset();
         invalidateSentinelObserversForRootChangeMock.mockReset();
         refreshTopRestoreSentinelObservationMock.mockReset();
@@ -183,7 +174,6 @@ describe("conversationMaintenance", () => {
             conversationSectionsMock[1]
         );
 
-        expect(syncStreamingSectionStateMock).toHaveBeenCalledTimes(1);
         expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });

@@ -26,10 +26,6 @@ import {
 } from "../observers/observers.js";
 import { registerRuntimeMessageHandlers } from "./messages.js";
 import { debugLog } from "./logger.js";
-import {
-    setStreamingSectionHidingEnabled,
-    syncStreamingSectionState,
-} from "../streaming/streamingSection.js";
 import { ext } from "../../shared/ext.js";
 import {
     installReplyTimingListeners,
@@ -72,7 +68,6 @@ function syncFeatureFlagsFromSettings() {
     state.featureFlags.pruning = Boolean(state.settings.enablePruning);
     state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
     state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-    state.featureFlags.streamingSectionHiding = Boolean(state.settings.enableStreamingSectionHiding);
     state.featureFlags.storeReadOptimization = Boolean(state.settings.enableStoreReadOptimization);
 }
 
@@ -321,7 +316,6 @@ async function initialize() {
 
     installReplyTimingListeners({
         onReplyStarted: () => {
-            syncStreamingSectionState();
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
@@ -366,7 +360,6 @@ async function initialize() {
         reason: "initialize",
         forceCss: true,
     });
-    setStreamingSectionHidingEnabled(state.featureFlags.streamingSectionHiding);
     ensureReplyCompletionPoll();
 }
 
@@ -376,7 +369,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     let historyKeptChanged = false;
     let offscreenFlagChanged = false;
     let largeCodeBlockFlagChanged = false;
-    let streamingSectionFlagChanged = false;
     let storeReadOptimizationFlagChanged = false;
 
     if (changes.historyKeptExchanges) {
@@ -405,11 +397,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     if (changes.enableDebugLogging) {
         state.settings.enableDebugLogging = Boolean(changes.enableDebugLogging.newValue);
         state.debugLoggingEnabled = state.settings.enableDebugLogging;
-    }
-
-    if (changes.enableStreamingSectionHiding) {
-        state.settings.enableStreamingSectionHiding = Boolean(changes.enableStreamingSectionHiding.newValue);
-        streamingSectionFlagChanged = true;
     }
 
     if (changes.enableStoreReadOptimization) {
@@ -442,10 +429,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         scheduleRefreshPostPruneState();
     }
 
-    if (streamingSectionFlagChanged) {
-        setStreamingSectionHidingEnabled(state.featureFlags.streamingSectionHiding);
-    }
-
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (!state.didInitialPrune) {
             const container = getConversationContainer();
@@ -464,7 +447,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     scheduleConversationChromeSync({
         reason: "storage-changed",
-        includeStreaming: streamingSectionFlagChanged,
+        includeStreaming: true,
     });
 });
 
@@ -503,7 +486,6 @@ registerRuntimeMessageHandlers({
     refreshObservedSections: scheduleRefreshPostPruneState,
     applySoftPrunedLimitToCurrentState,
     setOffscreenOptimizationEnabled,
-    setStreamingSectionHidingEnabled,
     syncFeatureFlagsFromSettings,
 });
 

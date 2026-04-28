@@ -2,7 +2,6 @@ import { state } from "../core/state.js";
 import { getLatestAssistantSection } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import { hasResponseActions } from "../streaming/assistantSignals.js";
-import { syncStreamingSectionState } from "../streaming/streamingSection.js";
 
 function isPreElement(node) {
     return node instanceof HTMLPreElement;
@@ -103,8 +102,6 @@ export function ensureLiveCodeBlockStructureObserver({
     disconnectCodeBlockStructureObserver();
 
     state.codeBlockStructureObserver = new MutationObserver((mutations) => {
-        syncStreamingSectionState();
-
         if (!findRelevantMarkdownMutation(mutations)) {
             return;
         }

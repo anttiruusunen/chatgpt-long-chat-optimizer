@@ -5,7 +5,6 @@ const DEFAULT_SETTINGS = {
     enablePruning: true,
     enableOffscreenOptimization: true,
     enableLargeCodeBlockOptimization: true,
-    enableStreamingSectionHiding: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
 };
@@ -15,7 +14,6 @@ const clearHistoryKeptExchangesButton = document.getElementById("clearHistoryKep
 const enablePruningInput = document.getElementById("enablePruning");
 const enableOffscreenOptimizationInput = document.getElementById("enableOffscreenOptimization");
 const enableLargeCodeBlockOptimizationInput = document.getElementById("enableLargeCodeBlockOptimization");
-const enableStreamingSectionHidingInput = document.getElementById("enableStreamingSectionHiding");
 const enableDebugLoggingInput = document.getElementById("enableDebugLogging");
 const hiddenMessagesValueEl = document.getElementById("hiddenMessagesValue");
 const lastReplyTimeValueEl = document.getElementById("lastReplyTimeValue");
@@ -33,7 +31,6 @@ const REQUIRED_ELEMENTS = {
     enablePruningInput,
     enableOffscreenOptimizationInput,
     enableLargeCodeBlockOptimizationInput,
-    enableStreamingSectionHidingInput,
     enableDebugLoggingInput,
     hiddenMessagesValueEl,
     lastReplyTimeValueEl,
@@ -195,7 +192,6 @@ async function loadSettings() {
         enablePruning: DEFAULT_SETTINGS.enablePruning,
         enableOffscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
         enableLargeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
-        enableStreamingSectionHiding: DEFAULT_SETTINGS.enableStreamingSectionHiding,
         enableDebugLogging: DEFAULT_SETTINGS.enableDebugLogging,
         enableStoreReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
     });
@@ -206,7 +202,6 @@ async function loadSettings() {
     enablePruningInput.checked = Boolean(stored.enablePruning);
     enableOffscreenOptimizationInput.checked = Boolean(stored.enableOffscreenOptimization);
     enableLargeCodeBlockOptimizationInput.checked = Boolean(stored.enableLargeCodeBlockOptimization);
-    enableStreamingSectionHidingInput.checked = Boolean(stored.enableStreamingSectionHiding);
     enableDebugLoggingInput.checked = Boolean(stored.enableDebugLogging);
     enableStoreReadOptimizationInput.checked = Boolean(stored.enableStoreReadOptimization);
 
@@ -231,7 +226,6 @@ async function saveSettings() {
         enablePruning: enablePruningInput.checked,
         enableOffscreenOptimization: enableOffscreenOptimizationInput.checked,
         enableLargeCodeBlockOptimization: enableLargeCodeBlockOptimizationInput.checked,
-        enableStreamingSectionHiding: enableStreamingSectionHidingInput.checked,
         enableDebugLogging: enableDebugLoggingInput.checked,
         enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
     };
@@ -294,8 +288,6 @@ function bindEvents() {
         updateFieldStates();
         await saveSettings();
     });
-
-    bindEvent(enableStreamingSectionHidingInput, "change", saveSettings);
 
     bindEvent(enableDebugLoggingInput, "change", async () => {
         updateDebugVisibility();

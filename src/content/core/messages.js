@@ -25,7 +25,6 @@ export function registerRuntimeMessageHandlers({
     refreshObservedSections,
     applySoftPrunedLimitToCurrentState,
     setOffscreenOptimizationEnabled,
-    setStreamingSectionHidingEnabled,
     syncFeatureFlagsFromSettings,
 }) {
     ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -57,7 +56,6 @@ export function registerRuntimeMessageHandlers({
 
             if (message.action === "settings-updated") {
                 const previousOffscreenEnabled = state.featureFlags.offscreenOptimization;
-                const previousStreamingSectionHidingEnabled = state.featureFlags.streamingSectionHiding;
 
                 state.settings.historyKeptExchanges = Math.max(
                     1,
@@ -68,7 +66,6 @@ export function registerRuntimeMessageHandlers({
                 state.settings.enablePruning = Boolean(message.enablePruning);
                 state.settings.enableOffscreenOptimization = Boolean(message.enableOffscreenOptimization);
                 state.settings.enableLargeCodeBlockOptimization = Boolean(message.enableLargeCodeBlockOptimization);
-                state.settings.enableStreamingSectionHiding = Boolean(message.enableStreamingSectionHiding);
                 state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
                 state.settings.enableStoreReadOptimization = Boolean(message.enableStoreReadOptimization);
 
@@ -87,10 +84,6 @@ export function registerRuntimeMessageHandlers({
                     setOffscreenOptimizationEnabled(state.featureFlags.offscreenOptimization);
                 } else if (state.featureFlags.offscreenOptimization) {
                     refreshObservedSections();
-                }
-
-                if (previousStreamingSectionHidingEnabled !== state.featureFlags.streamingSectionHiding) {
-                    setStreamingSectionHidingEnabled(state.featureFlags.streamingSectionHiding);
                 }
 
                 if (state.settings.autoPrune && state.featureFlags.pruning) {

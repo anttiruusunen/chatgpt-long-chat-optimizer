@@ -13,7 +13,6 @@ import {
     ensureSectionCssOffscreenMode,
     scheduleOffscreenRefresh,
 } from "../offscreen/offscreen.js";
-import { syncStreamingSectionState } from "../streaming/streamingSection.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 import {
     invalidateSentinelObserversForRootChange,
@@ -181,10 +180,6 @@ function applyConversationChromeSnapshot(
 
     ensureTopRestoreSentinelState(firstVisibleSection);
     ensureBottomPruneSentinelState(lastVisibleSection);
-
-    if (includeStreaming && state.featureFlags.streamingSectionHiding) {
-        syncStreamingSectionState();
-    }
 
     requestCssVisibilityWindowSync({
         force: forceCss,

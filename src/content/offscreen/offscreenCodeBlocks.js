@@ -10,10 +10,6 @@ import {
 import { debugLog } from "../core/logger.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 import {
-    getActiveStreamingSection,
-    syncStreamingSectionState,
-} from "../streaming/streamingSection.js";
-import {
     invalidateCodeBlockHeight,
     clearCodeBlockOffscreenOptimization,
 } from "./offscreenShared.js";
@@ -397,12 +393,8 @@ function processStreamingSection(section) {
 }
 
 function getStreamingSectionToProcess() {
-    const stickyActiveStreaming = getActiveStreamingSection();
-    if (stickyActiveStreaming?.isConnected) {
-        return stickyActiveStreaming;
-    }
-
     const latestAssistant = getLatestAssistantSection();
+
     if (
         latestAssistant?.isConnected &&
         isStreamingLatestAssistantSection(latestAssistant)
@@ -428,8 +420,6 @@ function syncStreamingStructureObserver() {
             reconcileLatestStreamingAssistantCodeBlocksNow();
         },
     });
-
-    syncStreamingSectionState();
 }
 
 function ensureStreamingObserverOnly(section) {
@@ -442,8 +432,6 @@ function ensureStreamingObserverOnly(section) {
 export function reconcileLatestStreamingAssistantCodeBlocksNow() {
     if (!state.featureFlags.largeCodeBlockOptimization) return;
     if (!isReplyStreaming()) return;
-
-    syncStreamingSectionState();
 
     const section = getStreamingSectionToProcess();
     if (!section) return;

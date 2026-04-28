@@ -32,7 +32,6 @@ vi.mock("../../src/shared/ext.js", () => ({
         enablePruning: true,
         enableOffscreenOptimization: false,
         enableLargeCodeBlockOptimization: false,
-        enableStreamingSectionHiding: false,
         enableDebugLogging: false,
         largeCodeBlockMinChars: 1,
     })),
@@ -82,11 +81,6 @@ vi.mock("../../src/content/observers/observers.js", () => ({
     ensureObserverAttached: mockRefs.ensureObserverAttachedBase,
     waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPruneBase,
     createObserverDeps: mockRefs.createObserverDeps,
-}));
-
-vi.mock("../../src/content/streaming/streamingSection.js", () => ({
-    setStreamingSectionHidingEnabled: vi.fn(),
-    syncStreamingSectionState: vi.fn(),
 }));
 
 vi.mock("../../src/content/streaming/replyTiming.js", () => ({

@@ -10,7 +10,6 @@ const mockRefs = vi.hoisted(() => ({
     scheduleOffscreenRefresh: vi.fn(),
     syncCssVisibilityWindow: vi.fn(() => []),
     clearCssVisibilityWindow: vi.fn(),
-    syncStreamingSectionState: vi.fn(),
     runInitialPruneBase: vi.fn(),
     attachObserverToContainerBase: vi.fn(),
     ensureObserverAttachedBase: vi.fn(() => true),
@@ -41,7 +40,6 @@ vi.mock("../../src/shared/ext.js", () => ({
         enablePruning: true,
         enableOffscreenOptimization: true,
         enableLargeCodeBlockOptimization: true,
-        enableStreamingSectionHiding: true,
         enableDebugLogging: false,
     })),
 }));
@@ -95,11 +93,6 @@ vi.mock("../../src/content/observers/observers.js", () => ({
     ensureObserverAttached: mockRefs.ensureObserverAttachedBase,
     waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPruneBase,
     createObserverDeps: mockRefs.createObserverDeps,
-}));
-
-vi.mock("../../src/content/streaming/streamingSection.js", () => ({
-    setStreamingSectionHidingEnabled: vi.fn(),
-    syncStreamingSectionState: mockRefs.syncStreamingSectionState,
 }));
 
 vi.mock("../../src/content/streaming/replyTiming.js", () => ({
@@ -157,7 +150,6 @@ describe("dom write batch integration", () => {
         mockRefs.scheduleOffscreenRefresh.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
         mockRefs.clearCssVisibilityWindow.mockClear();
-        mockRefs.syncStreamingSectionState.mockClear();
         mockRefs.runInitialPruneBase.mockClear();
 
         originalRAF = globalThis.requestAnimationFrame;
@@ -187,7 +179,6 @@ describe("dom write batch integration", () => {
         mockRefs.ensureTopRestoreSentinelState.mockClear();
         mockRefs.ensureBottomPruneSentinelState.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
-        mockRefs.syncStreamingSectionState.mockClear();
 
         mockRefs.replyTimingHandlers.onReplySettled?.();
         mockRefs.replyTimingHandlers.onReplySettled?.();
@@ -204,6 +195,5 @@ describe("dom write batch integration", () => {
         expect(mockRefs.ensureTopRestoreSentinelState).toHaveBeenCalledTimes(1);
         expect(mockRefs.ensureBottomPruneSentinelState).toHaveBeenCalledTimes(1);
         expect(mockRefs.syncCssVisibilityWindow).toHaveBeenCalledTimes(1);
-        expect(mockRefs.syncStreamingSectionState).toHaveBeenCalledTimes(1);
     });
 });

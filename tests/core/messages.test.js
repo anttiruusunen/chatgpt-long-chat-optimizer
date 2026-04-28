@@ -49,7 +49,6 @@ describe("core/messages", () => {
         state.featureFlags.pruning = DEFAULT_SETTINGS.enablePruning;
         state.featureFlags.offscreenOptimization = DEFAULT_SETTINGS.enableOffscreenOptimization;
         state.featureFlags.largeCodeBlockOptimization = DEFAULT_SETTINGS.enableLargeCodeBlockOptimization;
-        state.featureFlags.streamingSectionHiding = DEFAULT_SETTINGS.enableStreamingSectionHiding;
 
         state.settings = {
             ...DEFAULT_SETTINGS,
@@ -68,7 +67,6 @@ describe("core/messages", () => {
         const refreshObservedSections = vi.fn();
         const applySoftPrunedLimitToCurrentState = vi.fn();
         const setOffscreenOptimizationEnabled = vi.fn();
-        const setStreamingSectionHidingEnabled = vi.fn();
         const syncFeatureFlagsFromSettings = vi.fn();
 
         registerRuntimeMessageHandlers({
@@ -79,7 +77,6 @@ describe("core/messages", () => {
             refreshObservedSections,
             applySoftPrunedLimitToCurrentState,
             setOffscreenOptimizationEnabled,
-            setStreamingSectionHidingEnabled,
             syncFeatureFlagsFromSettings,
         });
 
@@ -112,7 +109,6 @@ describe("core/messages", () => {
         const refreshObservedSections = vi.fn();
         const applySoftPrunedLimitToCurrentState = vi.fn();
         const setOffscreenOptimizationEnabled = vi.fn();
-        const setStreamingSectionHidingEnabled = vi.fn();
         const syncFeatureFlagsFromSettings = vi.fn();
 
         registerRuntimeMessageHandlers({
@@ -123,7 +119,6 @@ describe("core/messages", () => {
             refreshObservedSections,
             applySoftPrunedLimitToCurrentState,
             setOffscreenOptimizationEnabled,
-            setStreamingSectionHidingEnabled,
             syncFeatureFlagsFromSettings,
         });
 
@@ -147,7 +142,6 @@ describe("core/messages", () => {
 
         state.didInitialPrune = true;
         state.featureFlags.offscreenOptimization = false;
-        state.featureFlags.streamingSectionHiding = false;
 
         const pruneOldSections = vi.fn();
         const restoreAllSections = vi.fn();
@@ -156,12 +150,10 @@ describe("core/messages", () => {
         const refreshObservedSections = vi.fn();
         const applySoftPrunedLimitToCurrentState = vi.fn();
         const setOffscreenOptimizationEnabled = vi.fn();
-        const setStreamingSectionHidingEnabled = vi.fn();
         const syncFeatureFlagsFromSettings = vi.fn(() => {
             state.featureFlags.pruning = Boolean(state.settings.enablePruning);
             state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
             state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-            state.featureFlags.streamingSectionHiding = Boolean(state.settings.enableStreamingSectionHiding);
         });
 
         registerRuntimeMessageHandlers({
@@ -172,7 +164,6 @@ describe("core/messages", () => {
             refreshObservedSections,
             applySoftPrunedLimitToCurrentState,
             setOffscreenOptimizationEnabled,
-            setStreamingSectionHidingEnabled,
             syncFeatureFlagsFromSettings,
         });
 
@@ -186,7 +177,6 @@ describe("core/messages", () => {
                 enablePruning: true,
                 enableOffscreenOptimization: true,
                 enableLargeCodeBlockOptimization: true,
-                enableStreamingSectionHiding: true,
                 enableDebugLogging: true,
             },
             {},
@@ -200,14 +190,12 @@ describe("core/messages", () => {
         expect(state.settings.enablePruning).toBe(true);
         expect(state.settings.enableOffscreenOptimization).toBe(true);
         expect(state.settings.enableLargeCodeBlockOptimization).toBe(true);
-        expect(state.settings.enableStreamingSectionHiding).toBe(true);
         expect(state.settings.enableDebugLogging).toBe(true);
         expect(state.debugLoggingEnabled).toBe(true);
 
         expect(syncFeatureFlagsFromSettings).toHaveBeenCalledTimes(1);
         expect(applySoftPrunedLimitToCurrentState).toHaveBeenCalledTimes(1);
         expect(setOffscreenOptimizationEnabled).toHaveBeenCalledWith(true);
-        expect(setStreamingSectionHidingEnabled).toHaveBeenCalledWith(true);
         expect(scheduleAutoPrune).toHaveBeenCalledTimes(1);
         expect(refreshObservedSections).not.toHaveBeenCalled();
         expect(waitForContainerAndInitialPrune).not.toHaveBeenCalled();
@@ -233,7 +221,6 @@ describe("core/messages", () => {
             refreshObservedSections: vi.fn(),
             applySoftPrunedLimitToCurrentState: vi.fn(),
             setOffscreenOptimizationEnabled: vi.fn(),
-            setStreamingSectionHidingEnabled: vi.fn(),
             syncFeatureFlagsFromSettings: vi.fn(),
         });
 
@@ -268,7 +255,6 @@ describe("core/messages", () => {
             refreshObservedSections: vi.fn(),
             applySoftPrunedLimitToCurrentState: vi.fn(),
             setOffscreenOptimizationEnabled: vi.fn(),
-            setStreamingSectionHidingEnabled: vi.fn(),
             syncFeatureFlagsFromSettings: vi.fn(),
         });
 
@@ -304,7 +290,6 @@ describe("core/messages", () => {
                 refreshObservedSections: vi.fn(),
                 applySoftPrunedLimitToCurrentState: vi.fn(),
                 setOffscreenOptimizationEnabled: vi.fn(),
-                setStreamingSectionHidingEnabled: vi.fn(),
                 syncFeatureFlagsFromSettings: vi.fn(),
             });
 

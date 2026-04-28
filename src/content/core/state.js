@@ -2,7 +2,6 @@ export const STATE_KEY = "__threadOptimizerState";
 export const PRUNED_ATTR = "data-thread-optimizer-pruned";
 export const PLACEHOLDER_ATTR = "data-thread-optimizer-placeholder";
 export const OFFSCREEN_OPT_ATTR = "data-thread-optimizer-offscreen-opt";
-export const STREAMING_SECTION_HIDDEN_ATTR = "data-thread-optimizer-stream-hidden";
 export const CODE_BLOCK_OFFSCREEN_OPT_ATTR = "data-thread-optimizer-code-offscreen-opt";
 export const CODE_BLOCK_COLLAPSED_ATTR = "data-thread-optimizer-code-collapsed";
 export const CODE_BLOCK_PLACEHOLDER_ATTR = "data-thread-optimizer-code-placeholder";
@@ -17,7 +16,6 @@ export const DEFAULT_SETTINGS = {
     enablePruning: true,
     enableOffscreenOptimization: true,
     enableLargeCodeBlockOptimization: true,
-    enableStreamingSectionHiding: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
 };
@@ -67,7 +65,6 @@ if (!window[STATE_KEY]) {
             pruning: DEFAULT_SETTINGS.enablePruning,
             offscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
             largeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
-            streamingSectionHiding: DEFAULT_SETTINGS.enableStreamingSectionHiding,
             storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
         },
 
@@ -102,11 +99,7 @@ if (!Array.isArray(state.softPrunedSections)) {
 }
 
 delete state.removedSections;
-delete state.streamingSectionObserver;
 delete state.observedStreamingSection;
-delete state.streamingSectionTimer;
-delete state.streamingSectionPlaceholderInterval;
-delete state.streamingSectionPlaceholderStartedAt;
 delete state.codeBlockTimer;
 delete state.codeBlockState;
 
