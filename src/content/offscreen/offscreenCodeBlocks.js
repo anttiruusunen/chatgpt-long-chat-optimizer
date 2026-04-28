@@ -108,14 +108,115 @@ function getCodeBlocksForSection(section) {
     return result;
 }
 
-function hasAnyCodeBlocks(section) {
-    return getCodeBlocksForSection(section).length > 0;
-}
-
 function resetStreamingObserverTracking() {
     state.streamingCodeBlockLastSection = null;
     state.streamingCodeBlockLastPre = null;
     state.streamingCodeBlockLastCount = 0;
+    state.streamingCodeBlocks = [];
+}
+
+function getTrackedStreamingCodeBlocks(section) {
+    if (
+        state.streamingCodeBlockLastSection !== section ||
+        !Array.isArray(state.streamingCodeBlocks)
+    ) {
+        state.streamingCodeBlocks = getCodeBlocksForSection(section);
+        state.streamingCodeBlockLastSection = section;
+    }
+
+    state.streamingCodeBlocks = state.streamingCodeBlocks.filter((pre) =>
+        isCodeBlockOptimizationEligible(pre)
+    );
+
+    return state.streamingCodeBlocks;
+}
+
+function syncStreamingCodeBlocksFromFullScan(section) {
+    const codeBlocks = getCodeBlocksForSection(section);
+
+    state.streamingCodeBlocks = codeBlocks;
+
+    return codeBlocks;
+}
+
+function collectPreNodesFromNode(node, out) {
+    if (node instanceof HTMLPreElement) {
+        out.push(node);
+        return;
+    }
+
+    if (node instanceof Element) {
+        const nested = node.querySelectorAll("pre");
+        for (let i = 0; i < nested.length; i += 1) {
+            out.push(nested[i]);
+        }
+    }
+}
+
+function collectPreNodesFromMutations(mutations) {
+    const added = [];
+    const removed = [];
+
+    if (!mutations || typeof mutations[Symbol.iterator] !== "function") {
+        return { added, removed };
+    }
+
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes || []) {
+            collectPreNodesFromNode(node, added);
+        }
+
+        for (const node of mutation.removedNodes || []) {
+            collectPreNodesFromNode(node, removed);
+        }
+    }
+
+    return { added, removed };
+}
+
+function updateStreamingCodeBlocksFromMutations(section, mutations) {
+    const { added, removed } = collectPreNodesFromMutations(mutations);
+
+    if (state.streamingCodeBlockLastSection !== section) {
+        state.streamingCodeBlocks = getCodeBlocksForSection(section);
+        state.streamingCodeBlockLastSection = section;
+    }
+
+    let codeBlocks = Array.isArray(state.streamingCodeBlocks)
+        ? state.streamingCodeBlocks
+        : [];
+
+    if (removed.length > 0) {
+        const removedSet = new Set(removed);
+        codeBlocks = codeBlocks.filter((pre) =>
+            !removedSet.has(pre) && isCodeBlockOptimizationEligible(pre)
+        );
+    } else {
+        codeBlocks = codeBlocks.filter((pre) =>
+            isCodeBlockOptimizationEligible(pre)
+        );
+    }
+
+    for (let i = 0; i < added.length; i += 1) {
+        const pre = added[i];
+
+        if (!isCodeBlockOptimizationEligible(pre)) {
+            continue;
+        }
+
+        if (!codeBlocks.includes(pre)) {
+            codeBlocks.push(pre);
+        }
+    }
+
+    state.streamingCodeBlocks = codeBlocks;
+
+    return {
+        codeBlocks,
+        added,
+        removed,
+        touchedPre: added.length > 0 || removed.length > 0,
+    };
 }
 
 function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
@@ -324,11 +425,6 @@ function applySettledCodeBlockPlan(plan) {
     markSectionCodeBlocksProcessed(section);
 }
 
-function processSettledSection(section) {
-    const plan = getSettledCodeBlockPlan(section);
-    applySettledCodeBlockPlan(plan);
-}
-
 function getStreamingCodeBlockActions(section, providedCodeBlocks) {
     const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
     const qualifyingCodeBlocks = [];
@@ -403,6 +499,13 @@ function getStreamingSectionToProcess() {
     return null;
 }
 
+function updateStreamingTrackingFromPlan(section, plan) {
+    state.streamingCodeBlocks = plan.codeBlocks;
+    state.streamingCodeBlockLastSection = section;
+    state.streamingCodeBlockLastPre = plan.lastPre;
+    state.streamingCodeBlockLastCount = plan.codeBlockCount;
+}
+
 function syncStreamingStructureObserver() {
     const streamingSection = getStreamingSectionToProcess();
 
@@ -414,10 +517,24 @@ function syncStreamingStructureObserver() {
 
     ensureLiveCodeBlockMutationObserver({
         onRelevantStructureChange: (mutations) => {
-            scheduleCodeBlockRefresh();
-            if (mutationTouchesPre(mutations)) {
-                reconcileLatestStreamingAssistantCodeBlocksNow();
+            scheduleCodeBlockRefresh("streaming-codeblock-structure");
+
+            const {
+                codeBlocks,
+                touchedPre,
+            } = updateStreamingCodeBlocksFromMutations(streamingSection, mutations);
+
+            if (!touchedPre) {
+                return;
             }
+
+            if (codeBlocks.length === 0) {
+                ensureStreamingObserverOnly(streamingSection);
+                return;
+            }
+
+            const plan = processStreamingSection(streamingSection, codeBlocks);
+            updateStreamingTrackingFromPlan(streamingSection, plan);
         },
     });
 }
@@ -426,6 +543,7 @@ function ensureStreamingObserverOnly(section) {
     state.streamingCodeBlockLastSection = section;
     state.streamingCodeBlockLastPre = null;
     state.streamingCodeBlockLastCount = 0;
+    state.streamingCodeBlocks = [];
     syncStreamingStructureObserver();
 }
 
@@ -436,7 +554,7 @@ export function reconcileLatestStreamingAssistantCodeBlocksNow() {
     const section = getStreamingSectionToProcess();
     if (!section) return;
 
-    const codeBlocks = getCodeBlocksForSection(section);
+    const codeBlocks = syncStreamingCodeBlocksFromFullScan(section);
     const codeBlockCount = codeBlocks.length;
 
     if (codeBlockCount === 0) {
@@ -456,10 +574,8 @@ export function reconcileLatestStreamingAssistantCodeBlocksNow() {
         return;
     }
 
-    processStreamingSection(section, codeBlocks); // pass precomputed list
-    state.streamingCodeBlockLastSection = section;
-    state.streamingCodeBlockLastPre = lastPre;
-    state.streamingCodeBlockLastCount = codeBlockCount;
+    const plan = processStreamingSection(section, codeBlocks);
+    updateStreamingTrackingFromPlan(section, plan);
 
     syncStreamingStructureObserver();
 }
@@ -574,11 +690,10 @@ export function refreshObservedCodeBlocks() {
     syncStreamingStructureObserver();
 
     if (replyIsStreaming && streamingSection) {
-        const plan = processStreamingSection(streamingSection);
+        const codeBlocks = getTrackedStreamingCodeBlocks(streamingSection);
+        const plan = processStreamingSection(streamingSection, codeBlocks);
 
-        state.streamingCodeBlockLastSection = streamingSection;
-        state.streamingCodeBlockLastPre = plan.lastPre;
-        state.streamingCodeBlockLastCount = plan.codeBlockCount;
+        updateStreamingTrackingFromPlan(streamingSection, plan);
 
         debugLog("Offscreen code blocks: refreshed code block state", {
             mode: "streaming",
@@ -640,32 +755,4 @@ function isCodeBlockOptimizationEligible(pre) {
     }
 
     return true;
-}
-
-function mutationTouchesPre(mutations) {
-    if (!mutations || typeof mutations[Symbol.iterator] !== "function") {
-        return false;
-    }
-
-    for (const mutation of mutations) {
-        for (const node of mutation.addedNodes || []) {
-            if (
-                node instanceof HTMLPreElement ||
-                (node instanceof Element && node.querySelector("pre"))
-            ) {
-                return true;
-            }
-        }
-
-        for (const node of mutation.removedNodes || []) {
-            if (
-                node instanceof HTMLPreElement ||
-                (node instanceof Element && node.querySelector("pre"))
-            ) {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
