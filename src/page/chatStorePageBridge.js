@@ -36,7 +36,13 @@
             if (clearScheduled) return;
             clearScheduled = true;
 
-            requestAnimationFrame(() => clear("raf"));
+            requestAnimationFrame(() => {
+                if (clearScheduled) clear("raf");
+            });
+
+            setTimeout(() => {
+                if (clearScheduled) clear("timeout-fallback");
+            }, 100);
         }
 
         function get(key) {
@@ -50,7 +56,7 @@
         }
 
         function set(key, value) {
-            cache.set(key, value ?? null);
+            cache.set(key, value);
             scheduleClear();
 
             if (cache.size > maxSize) {
@@ -705,7 +711,7 @@
         }
 
         function set(key, value) {
-            cache.set(key, value ?? null);
+            cache.set(key, value);
 
             if (cache.size > maxSize) {
                 const firstKey = cache.keys().next().value;
@@ -1511,11 +1517,24 @@
                     return bridgeRef.__messageIdIndex.get(messageId);
                 }
 
-                bridgeRef.maybeRebuildMessageIdIndex?.({ minIntervalMs: 1000 });
+                bridgeRef.__messageIdIndexStats.missSinceRebuild ??= 0;
+                bridgeRef.__messageIdIndexStats.rebuildSkips ??= 0;
 
-                if (bridgeRef.__messageIdIndex?.has(messageId)) {
-                    bridgeRef.__messageIdIndexStats.hits += 1;
-                    return bridgeRef.__messageIdIndex.get(messageId);
+                bridgeRef.__messageIdIndexStats.missSinceRebuild += 1;
+
+                if (bridgeRef.__messageIdIndexStats.missSinceRebuild >= 500) {
+                    bridgeRef.__messageIdIndexStats.missSinceRebuild = 0;
+
+                    bridgeRef.maybeRebuildMessageIdIndex?.({
+                        minIntervalMs: 1000,
+                    });
+
+                    if (bridgeRef.__messageIdIndex?.has(messageId)) {
+                        bridgeRef.__messageIdIndexStats.hits += 1;
+                        return bridgeRef.__messageIdIndex.get(messageId);
+                    }
+                } else {
+                    bridgeRef.__messageIdIndexStats.rebuildSkips += 1;
                 }
 
                 bridgeRef.__messageIdIndexStats.misses += 1;
@@ -1591,6 +1610,7 @@
             };
 
             const frameCache = createFrameCache({ maxSize, stats });
+            stats.mode = "frame";
 
             this.__existingNodeFrameCache = frameCache.cache;
             this.__existingNodeFrameCacheStats = stats;
@@ -1604,7 +1624,12 @@
 
                 const result = original.call(bridgeRef.__store, id);
 
-                frameCache.set(id, result ?? null);
+                // Critical: do not cache null/undefined for getNodeIfExists.
+                // During render/hydration, missing can become present later.
+                if (result != null) {
+                    frameCache.set(id, result);
+                }
+
                 return result ?? null;
             };
 
@@ -1652,16 +1677,16 @@
                 misses: 0,
                 cached: 0,
                 evictions: 0,
-                clears: 0,
+                frameClears: 0,
                 maxSize,
-                mode: "persistent-mutation-invalidated",
+                mode: "frame",
                 lastClearReason: null,
             };
 
-            const persistentCache = createPersistentCache({ maxSize, stats });
+            const frameCache = createFrameCache({ maxSize, stats });
 
-            this.__findNodeFromLeafCacheController = persistentCache;
-            this.__findNodeFromLeafFrameCache = persistentCache.cache;
+            this.__findNodeFromLeafCacheController = frameCache;
+            this.__findNodeFromLeafFrameCache = frameCache.cache;
             this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = { findNodeFromLeaf: original };
 
@@ -1683,12 +1708,12 @@
                     return original.call(bridgeRef.__store, id);
                 }
 
-                const cached = persistentCache.get(canonicalId);
+                const cached = frameCache.get(canonicalId);
                 if (cached !== undefined) return cached;
 
                 const result = original.call(bridgeRef.__store, id);
 
-                persistentCache.set(canonicalId, result ?? null);
+                frameCache.set(canonicalId, result ?? null);
                 return result ?? null;
             };
 
@@ -2103,7 +2128,7 @@
                 }),
                 getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache(),
                 branchCache: this.installBranchCache(),
-                resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
+                resolvedNodeFrameCache: { ok: true, skipped: true, reason: "temporarily disabled for render test" },
                 profiler: ENABLE_STORE_PROFILER
                     ? this.installStoreProfiler()
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
@@ -2280,9 +2305,24 @@
             });
         },
 
-        clearStoreReadCache() {
+        clearStoreReadCache(reason = "manual") {
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
-                clearFrameCache(this, cacheSlot, statsSlot);
+                const cache = this[cacheSlot];
+                const stats = this[statsSlot];
+
+                cache?.clear();
+
+                if (stats) {
+                    stats.cached = 0;
+
+                    if ("clears" in stats) {
+                        stats.clears += 1;
+                    } else if ("frameClears" in stats) {
+                        stats.frameClears += 1;
+                    }
+
+                    stats.lastClearReason = reason;
+                }
             }
 
             return { ok: true };
@@ -2357,8 +2397,7 @@
             this.__store[methodName] = function indexedMutationWrapper(...args) {
                 const result = original.apply(bridgeRef.__store, args);
 
-                bridgeRef.__findNodeFromLeafCacheController?.clear("store-mutation");
-                bridgeRef.__resolvedNodeFrameCache?.clear?.("store-mutation");
+                bridgeRef.clearStoreReadCache?.("store-mutation");
 
                 queueMicrotask(() => {
                     bridgeRef.maybeRebuildMessageIdIndex?.({ minIntervalMs: 250 });
@@ -2455,6 +2494,18 @@
         },
         false
     );
+
+    function clearCachesOnTabActive() {
+        bridge.clearStoreReadCache?.("tab-active");
+    }
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            clearCachesOnTabActive();
+        }
+    });
+
+    window.addEventListener("focus", clearCachesOnTabActive);
 
     bridge.startDiscoveryLoop();
 })();
