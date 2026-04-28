@@ -149,12 +149,12 @@ export function updatePlaceholderLabel(placeholder) {
             ? placeholder.firstElementChild
             : null;
 
-    if (label) {
+    if (label && label.textContent !== "Code block hidden") {
         label.textContent = "Code block hidden";
     }
 
     const button = getRevealButtonForPlaceholder(placeholder);
-    if (button) {
+    if (button && button.textContent !== "Show code block") {
         button.textContent = "Show code block";
     }
 }
