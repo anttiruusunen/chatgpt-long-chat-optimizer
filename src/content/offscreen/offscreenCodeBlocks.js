@@ -73,10 +73,7 @@ function setLargeCodeLiveMarker(pre, isLive) {
     pre.removeAttribute(LARGE_CODE_LIVE_ATTR);
 }
 
-function clearLiveMarkersForSection(section) {
-    if (!(section instanceof HTMLElement)) return;
-
-    const codeBlocks = section.getElementsByTagName("pre");
+function clearLiveMarkersForCodeBlocks(codeBlocks) {
     for (let i = 0; i < codeBlocks.length; i += 1) {
         setLargeCodeLiveMarker(codeBlocks[i], false);
     }
@@ -321,7 +318,7 @@ function applySettledCodeBlockPlan(plan) {
         return;
     }
 
-    clearLiveMarkersForSection(section);
+    clearLiveMarkersForCodeBlocks(codeBlocks);
     applyCodeBlockActions(actions);
 
     markSectionCodeBlocksProcessed(section);
@@ -382,7 +379,7 @@ export function getStreamingCodeBlockPlan(section, providedCodeBlocks) {
 }
 
 function applyStreamingCodeBlockPlan(plan) {
-    clearLiveMarkersForSection(plan.section);
+    clearLiveMarkersForCodeBlocks(plan.codeBlocks);
     applyCodeBlockActions(plan.actions);
     clearSectionCodeBlocksProcessed(plan.section);
 }
