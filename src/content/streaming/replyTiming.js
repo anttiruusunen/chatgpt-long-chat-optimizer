@@ -3,6 +3,7 @@ import { getLatestAssistantSection } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import {
     hasResponseActions,
+    hasAssistantErrorState,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
 } from "./assistantSignals.js";
@@ -10,10 +11,14 @@ import {
 let onReplyStartedCallback = null;
 let onReplySettledCallback = null;
 
-function latestAssistantHasResponseActions() {
+function latestAssistantHasSettledSignal() {
     const latestAssistant = getLatestAssistantSection();
     if (!latestAssistant) return false;
-    return hasResponseActions(latestAssistant);
+
+    return (
+        hasResponseActions(latestAssistant) ||
+        hasAssistantErrorState(latestAssistant)
+    );
 }
 
 export function isReplyStreaming() {
@@ -69,7 +74,7 @@ export function ensureReplyCompletionPoll() {
             return;
         }
 
-        if (!latestAssistantHasResponseActions()) {
+        if (!latestAssistantHasSettledSignal()) {
             return;
         }
 

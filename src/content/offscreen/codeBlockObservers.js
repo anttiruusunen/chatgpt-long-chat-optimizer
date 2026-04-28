@@ -1,7 +1,10 @@
 import { state } from "../core/state.js";
 import { getLatestAssistantSection } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
-import { hasResponseActions } from "../streaming/assistantSignals.js";
+import {
+    hasResponseActions,
+    hasAssistantErrorState,
+} from "../streaming/assistantSignals.js";
 
 function isPreElement(node) {
     return node instanceof HTMLPreElement;
@@ -25,7 +28,11 @@ export function latestAssistantHasResponseActions() {
 export function isStreamingLatestAssistantSection(section) {
     const latestAssistant = getLatestAssistantSection();
     if (!latestAssistant || section !== latestAssistant) return false;
-    return !latestAssistantHasResponseActions();
+
+    return (
+        !latestAssistantHasResponseActions() &&
+        !hasAssistantErrorState(latestAssistant)
+    );
 }
 
 function getLatestAssistantMarkdownRoot() {
