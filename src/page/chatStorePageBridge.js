@@ -7,6 +7,8 @@
     const DISCOVERY_RETRY_MS = 1200;
     const MAX_DISCOVERY_RUNS = 30;
     const DEFAULT_CACHE_MAX_SIZE = 5000;
+    const PROMOTION_INTERVAL_MS = 10000;
+    const PROMOTION_INITIAL_DELAY_MS = 8000;
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
@@ -285,11 +287,18 @@
     }
 
     function rejectStore(store, reason) {
-        if (isObjectLike(store)) {
+        const reasonText = String(reason || "unknown");
+
+        // Temporary during page hydration. Do NOT permanently reject this object;
+        // it may become the real hydrated store later.
+        const isTemporaryHydrationReject =
+            reasonText.includes("node count too small");
+
+        if (isObjectLike(store) && !isTemporaryHydrationReject) {
             rejectedStores.add(store);
         }
 
-        const reasonKey = String(reason || "unknown");
+        const reasonKey = reasonText;
         const previousCount = rejectedStoreReasons.get(reasonKey) || 0;
         rejectedStoreReasons.set(reasonKey, previousCount + 1);
 
@@ -357,32 +366,45 @@
             roots.push(value);
         };
 
-        const MAX_ELEMENTS_FOR_ROOT_SCAN = 10000;
-        const all = document.body ? document.body.querySelectorAll("*") : document.querySelectorAll("*");
-        const limit = Math.min(all.length, MAX_ELEMENTS_FOR_ROOT_SCAN);
+        const rootCandidates = [
+            document.querySelector("main"),
+            document.querySelector('[role="main"]'),
+            document.querySelector('[data-testid="conversation"]'),
+            document.querySelector('[data-testid^="conversation-turn-"]')?.closest("main"),
+            document.querySelector("#__next"),
+            document.body,
+        ].filter(Boolean);
 
-        for (let i = 0; i < limit; i += 1) {
-            const el = all[i];
+        const seenElements = new WeakSet();
 
-            if (!el || el.nodeType !== 1) continue;
+        for (const rootEl of rootCandidates) {
+            const all = [rootEl, ...rootEl.querySelectorAll("*")];
 
-            const keys = Object.keys(el);
+            for (let i = 0; i < all.length; i += 1) {
+                const el = all[i];
 
-            for (let j = 0; j < keys.length; j += 1) {
-                const key = keys[j];
+                if (!el || el.nodeType !== 1) continue;
+                if (seenElements.has(el)) continue;
+                seenElements.add(el);
 
-                if (
-                    key.charCodeAt(0) !== 95 || // _
-                    (
-                        !key.startsWith("__reactFiber$") &&
-                        !key.startsWith("__reactContainer$") &&
-                        !key.startsWith("__reactInternalInstance$")
-                    )
-                ) {
-                    continue;
+                const keys = Object.keys(el);
+
+                for (let j = 0; j < keys.length; j += 1) {
+                    const key = keys[j];
+
+                    if (
+                        key.charCodeAt(0) !== 95 ||
+                        (
+                            !key.startsWith("__reactFiber$") &&
+                            !key.startsWith("__reactContainer$") &&
+                            !key.startsWith("__reactInternalInstance$")
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    pushRoot(el[key]);
                 }
-
-                pushRoot(el[key]);
             }
         }
 
@@ -1124,8 +1146,16 @@
         },
 
         promoteStoreDiscovery() {
+            // Match the manual fix that works: detach the root-only store first,
+            // then rediscover against the hydrated page.
+            this.clearStore();
             this.__lastError = null;
-            return this.discoverNow();
+
+            window.setTimeout(() => {
+                this.discoverNow();
+            }, 0);
+
+            return true;
         },
 
         maybePromoteStore(reason = "unknown") {
@@ -1133,11 +1163,28 @@
 
             const currentNodeCount = getStoreNodeCount(this.__store);
 
+            if (currentNodeCount > 1) {
+                this.__storePromotionLocked = true;
+
+                if (this.__promotionTimer) {
+                    clearInterval(this.__promotionTimer);
+                    this.__promotionTimer = null;
+                }
+
+                return true;
+            }
+
             // Never lock onto the bootstrap/root-only store.
             // Keep trying lightweight promotion until a real hydrated store appears.
             if (this.__store && currentNodeCount <= 1) {
                 const now = Date.now();
-                if (now - this.__lastPromotionAttemptAt < 3000) return false;
+
+                // Give ChatGPT time to hydrate the real conversation store before rescanning.
+                if (performance.now() - this.__initTiming.installedAt < PROMOTION_INITIAL_DELAY_MS) {
+                    return false;
+                }
+
+                if (now - this.__lastPromotionAttemptAt < PROMOTION_INTERVAL_MS) return false;
 
                 this.__lastPromotionAttemptAt = now;
                 this.promoteStoreDiscovery();
@@ -1185,7 +1232,7 @@
                     if (!this.__promotionTimer) {
                         this.__promotionTimer = window.setInterval(() => {
                             this.maybePromoteStore("startup-promotion");
-                        }, 3000);
+                        }, PROMOTION_INTERVAL_MS);
                     }
 
                     return;
@@ -2364,7 +2411,7 @@
                 });
 
                 if (!isStoreGoodEnough(bridge.__store)) {
-                    bridge.promoteStoreDiscovery();
+                    bridge.retryDiscovery();
                 }
 
                 return;
