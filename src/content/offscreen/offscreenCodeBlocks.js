@@ -413,9 +413,11 @@ function syncStreamingStructureObserver() {
     }
 
     ensureLiveCodeBlockMutationObserver({
-        onRelevantStructureChange: () => {
+        onRelevantStructureChange: (mutations) => {
             scheduleCodeBlockRefresh();
-            reconcileLatestStreamingAssistantCodeBlocksNow();
+            if (mutationTouchesPre(mutations)) {
+                reconcileLatestStreamingAssistantCodeBlocksNow();
+            }
         },
     });
 }
@@ -638,4 +640,32 @@ function isCodeBlockOptimizationEligible(pre) {
     }
 
     return true;
+}
+
+function mutationTouchesPre(mutations) {
+    if (!mutations || typeof mutations[Symbol.iterator] !== "function") {
+        return false;
+    }
+
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes || []) {
+            if (
+                node instanceof HTMLPreElement ||
+                (node instanceof Element && node.querySelector("pre"))
+            ) {
+                return true;
+            }
+        }
+
+        for (const node of mutation.removedNodes || []) {
+            if (
+                node instanceof HTMLPreElement ||
+                (node instanceof Element && node.querySelector("pre"))
+            ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }

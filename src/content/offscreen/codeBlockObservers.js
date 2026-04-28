@@ -106,7 +106,7 @@ export function ensureLiveCodeBlockStructureObserver({
             return;
         }
 
-        onRelevantStructureChange?.();
+        onRelevantStructureChange?.(mutations);
     });
 
     state.codeBlockStructureObserver.observe(root, {
