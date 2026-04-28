@@ -4,15 +4,7 @@ import {
     getConversationContainer,
 } from "./dom.js";
 import {
-    pruneOldSections as pruneOldSectionsBase,
-    restoreAllSections as restoreAllSectionsBase,
-    runInitialPrune as runInitialPruneBase,
-    enforceSoftPrunedLimit,
-} from "../pruning/prune.js";
-import {
     removePlaceholder,
-    installStartupPruneMask,
-    removeStartupPruneMask,
 } from "../pruning/pruneUi.js";
 import {
     handleReplyStreamingStarted,
@@ -35,222 +27,25 @@ import {
     disconnectSentinelObservers,
 } from "../pruning/sentinelObservers.js";
 import { ensureQolStyles } from "../ui/qolStyles.js";
-import {
-    clearCssVisibilityWindow,
-} from "../pruning/cssVisibilityWindow.js";
 import { installConversationNavigationWatcher } from "./navigation.js";
-import {
-    setDomWriteBatchExecutor,
-} from "./domWriteBatch.js";
 import {
     configureConversationMaintenance,
     flushDeferredCssVisibilityWindowSync,
     scheduleConversationChromeSync,
     scheduleRefreshPostPruneState,
 } from "./conversationMaintenance.js";
+import {
+    installDomMutationGuard,
+    withDomMutationGuard,
+} from "./domMutationGuard.js";
+import { syncFeatureFlagsFromSettings } from "./featureFlags.js";
+import {
+    syncPruningStateToPageBridge,
+    syncStoreReadOptimizationToPageWithRetry,
+} from "./pageBridgeSync.js";
+import { createPruneController } from "../pruning/pruneController.js";
 
-let isBootstrapInitialPruneScheduled = false;
-
-function withDomMutationGuard(fn) {
-    state.isApplyingDomChanges = true;
-    try {
-        return fn();
-    } finally {
-        queueMicrotask(() => {
-            state.isApplyingDomChanges = false;
-        });
-    }
-}
-
-setDomWriteBatchExecutor(withDomMutationGuard);
-
-function syncFeatureFlagsFromSettings() {
-    state.featureFlags.pruning = Boolean(state.settings.enablePruning);
-    state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
-    state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-    state.featureFlags.storeReadOptimization = Boolean(state.settings.enableStoreReadOptimization);
-}
-
-function syncPruningStateToPageBridge(retries = 10) {
-    if (typeof window === "undefined") return;
-
-    const bridge = window.__threadOptimizerChatStoreBridge;
-
-    if (bridge?.__installed) {
-        window.postMessage(
-            {
-                source: "thread-optimizer",
-                type: "thread-optimizer:set-pruning-state",
-                enabled: state.featureFlags.pruning === true,
-                prunedTurnCount: state.featureFlags.pruning
-                    ? state.hiddenCount || 0
-                    : 0,
-            },
-            window.location.origin
-        );
-        return;
-    }
-
-    if (retries > 0) {
-        setTimeout(() => {
-            syncPruningStateToPageBridge(retries - 1);
-        }, 200);
-    }
-}
-
-function applySoftPrunedLimitToCurrentState() {
-    withDomMutationGuard(() => {
-        enforceSoftPrunedLimit();
-
-        debugLog("Index: applied soft-pruned limit counts", {
-            totalHiddenCount: state.hiddenCount,
-            softPrunedSections: state.softPrunedSections.length,
-            hardEvictedCount: state.hardEvictedCount,
-            historyKeptExchanges: state.settings.historyKeptExchanges,
-        });
-    });
-
-    scheduleConversationChromeSync({
-        reason: "apply-soft-pruned-limit",
-        includeStreaming: true,
-    });
-}
-
-function restoreAllSections() {
-    clearCssVisibilityWindow();
-
-    const result = restoreAllSectionsBase({
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    scheduleConversationChromeSync({
-        reason: "restore-all-sections",
-        includeStreaming: true,
-    });
-
-    syncPruningStateToPageBridge();
-
-    return result;
-}
-
-function pruneOldSections(historyKeptExchanges = state.settings.historyKeptExchanges, options = {}) {
-    clearCssVisibilityWindow();
-
-    const result = pruneOldSectionsBase(historyKeptExchanges, options, {
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    scheduleConversationChromeSync({
-        reason: "prune-old-sections",
-        includeStreaming: true,
-    });
-
-    syncPruningStateToPageBridge();
-
-    return result;
-}
-
-function getStartupMaskVisibleSectionsLimit() {
-    const safeExchanges = Math.max(1, Number(state.settings.historyKeptExchanges) || 1);
-    return safeExchanges * 2;
-}
-
-function runInitialPrune(container) {
-    return runInitialPruneBase(container, {
-        pruneOldSections,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-        installStartupPruneMask: () => {
-            installStartupPruneMask(container, getStartupMaskVisibleSectionsLimit());
-        },
-        removeStartupPruneMask,
-    });
-}
-
-function bootstrapInitialPruneFromObservedMutation() {
-    if (isBootstrapInitialPruneScheduled) {
-        return;
-    }
-
-    if (!state.featureFlags.pruning || !state.settings.autoPrune || state.didInitialPrune) {
-        return;
-    }
-
-    isBootstrapInitialPruneScheduled = true;
-
-    requestAnimationFrame(() => {
-        isBootstrapInitialPruneScheduled = false;
-
-        if (!state.featureFlags.pruning || !state.settings.autoPrune || state.didInitialPrune) {
-            return;
-        }
-
-        const container = getConversationContainer();
-        if (!container) {
-            waitForContainerAndInitialPrune();
-            return;
-        }
-
-        debugLog("Index: bootstrapping initial prune from observed mutation");
-        runInitialPrune(container);
-    });
-}
-
-function clearPendingAutoPrune() {
-    if (state.debounceTimer) {
-        clearTimeout(state.debounceTimer);
-        state.debounceTimer = null;
-    }
-
-    clearCssVisibilityWindow();
-    state.isAutoPruneScheduled = false;
-}
-
-function scheduleAutoPrune() {
-    if (!state.featureFlags.pruning) return;
-    if (!state.settings.autoPrune) return;
-    if (!state.didInitialPrune) return;
-    if (state.isApplyingDomChanges) return;
-
-    if (state.isAutoPruneScheduled) {
-        debugLog("Index: skipped duplicate auto-prune schedule");
-        return;
-    }
-
-    state.isAutoPruneScheduled = true;
-    scheduleConversationChromeSync({
-        reason: "schedule-auto-prune",
-    });
-
-    state.debounceTimer = setTimeout(() => {
-        try {
-            if (!state.featureFlags.pruning || !state.settings.autoPrune) {
-                debugLog("Index: skipped auto-prune because feature is disabled");
-                return;
-            }
-
-            if (state.isApplyingDomChanges) {
-                debugLog("Index: skipped auto-prune because DOM guard is active");
-                return;
-            }
-
-            pruneOldSections(state.settings.historyKeptExchanges, { showPlaceholder: true });
-        } finally {
-            state.isAutoPruneScheduled = false;
-            state.debounceTimer = null;
-            scheduleConversationChromeSync({
-                reason: "auto-prune-finally",
-            });
-        }
-    }, 300);
-
-    debugLog("Index: scheduled auto-prune", {
-        historyKeptExchanges: state.settings.historyKeptExchanges,
-    });
-}
+installDomMutationGuard();
 
 function resetConversationLifecycleForNavigation() {
     clearPendingAutoPrune();
@@ -313,9 +108,10 @@ function rearmInitialPruneForNavigation(reason) {
 }
 
 const observerDeps = createObserverDeps({
-    scheduleAutoPrune,
+    scheduleAutoPrune: (...args) => scheduleAutoPrune(...args),
     getDidInitialPrune: () => state.didInitialPrune,
-    bootstrapInitialPrune: bootstrapInitialPruneFromObservedMutation,
+    bootstrapInitialPrune: (...args) =>
+        bootstrapInitialPruneFromObservedMutation(...args),
 });
 
 function attachObserverToContainer(container) {
@@ -332,6 +128,22 @@ function waitForContainerAndInitialPrune() {
         runInitialPrune,
     });
 }
+
+const pruneController = createPruneController({
+    ensureObserverAttached,
+    waitForContainerAndInitialPrune,
+    withDomMutationGuard,
+});
+
+const {
+    applySoftPrunedLimitToCurrentState,
+    restoreAllSections,
+    pruneOldSections,
+    runInitialPrune,
+    bootstrapInitialPruneFromObservedMutation,
+    clearPendingAutoPrune,
+    scheduleAutoPrune,
+} = pruneController;
 
 configureConversationMaintenance({
     ensureObserverAttached,
@@ -483,33 +295,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         includeStreaming: true,
     });
 });
-
-function syncStoreReadOptimizationToPageWithRetry(retries = 10) {
-    if (typeof window === "undefined") {
-        return;
-    }
-
-    const bridge = window.__threadOptimizerChatStoreBridge;
-
-    if (bridge?.__installed) {
-        window.postMessage(
-            {
-                source: "thread-optimizer",
-                type: "thread-optimizer:set-store-read-optimization",
-                enabled: state.featureFlags.storeReadOptimization,
-                debug: state.debugLoggingEnabled,
-            },
-            window.location.origin
-        );
-        return;
-    }
-
-    if (retries > 0) {
-        setTimeout(() => {
-            syncStoreReadOptimizationToPageWithRetry(retries - 1);
-        }, 200);
-    }
-}
 
 registerRuntimeMessageHandlers({
     pruneOldSections,
