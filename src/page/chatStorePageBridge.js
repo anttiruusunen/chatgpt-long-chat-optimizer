@@ -47,17 +47,16 @@
             }, 100);
         }
 
+        function has(key) {
+            return cache.has(key);
+        }
+
         function get(key) {
             const value = cache.get(key);
 
-            if (value !== undefined) {
+            if (value !== undefined || cache.has(key)) {
                 stats.hits += 1;
                 return value;
-            }
-
-            if (cache.has(key)) {
-                stats.hits += 1;
-                return value; // handles cached undefined
             }
 
             stats.misses += 1;
@@ -79,7 +78,7 @@
             stats.cached = cache.size;
         }
 
-        return { get, set, clear, cache };
+        return { get, has, set, clear, cache };
     }
 
     function getVisibleConversationTurnCount() {
@@ -1531,7 +1530,7 @@
 
                 stats.missSinceRebuild += 1;
 
-                if (stats.missSinceRebuild >= 500) {
+                if (stats.missSinceRebuild >= 150) {
                     stats.missSinceRebuild = 0;
 
                     bridgeRef.maybeRebuildMessageIdIndex({
@@ -2257,9 +2256,25 @@
                 this.__messageIdIndexStats.hits = 0;
                 this.__messageIdIndexStats.misses = 0;
                 this.__messageIdIndexStats.fallbackHits = 0;
+                this.__messageIdIndexStats.missSinceRebuild = 0;
+                this.__messageIdIndexStats.rebuildSkips = 0;
             }
 
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+                if (cacheSlot === "__branchCache") {
+                    resetFrameCacheStats(
+                        this.__branchCacheStats?.getBranch,
+                        this.__branchCache?.getBranch
+                    );
+
+                    resetFrameCacheStats(
+                        this.__branchCacheStats?.getBranchFromLeaf,
+                        this.__branchCache?.getBranchFromLeaf
+                    );
+
+                    continue;
+                }
+
                 resetFrameCacheStats(this[statsSlot], this[cacheSlot]);
             }
 
@@ -2443,7 +2458,9 @@
         },
 
         maybeRebuildMessageIdIndex({ minIntervalMs = 1000 } = {}) {
-            if (!this.__messageIdIndexInstalled) return { ok: false, reason: "index not installed" };
+            if (!this.__messageIdIndexInstalled) {
+                return { ok: false, reason: "index not installed" };
+            }
 
             const now = Date.now();
             const last = this.__messageIdIndexStats?.lastRebuiltAt ?? 0;
