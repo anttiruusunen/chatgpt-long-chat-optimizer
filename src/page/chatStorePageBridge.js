@@ -1721,7 +1721,7 @@
                 }
 
                 const cached = frameCache.get(canonicalId);
-                if (cached !== undefined) return cached;
+                if (cached !== undefined || frameCache.has(canonicalId)) return cached;
 
                 const store = bridgeRef.__store;
                 const result = original.call(store, id);
@@ -1798,7 +1798,7 @@
                         : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
                 const cached = frameCache.get(key);
-                if (cached !== undefined) return cached;
+                if (cached !== undefined || frameCache.has(key)) return cached;
 
                 const store = bridgeRef.__store;
                 const result = original.call(store, id);
@@ -2008,7 +2008,7 @@
             if (typeof getBranchOriginal === "function") {
                 this.__store.getBranch = function cachedGetBranch(id, ...rest) {
                     const cached = getBranchCache.get(id);
-                    if (cached !== undefined) return cached;
+                    if (cached !== undefined || getBranchCache.has(id)) return cached;
 
                     const store = bridgeRef.__store;
                     const result = getBranchOriginal.call(store, id, ...rest);
@@ -2021,7 +2021,7 @@
             if (typeof getBranchFromLeafOriginal === "function") {
                 this.__store.getBranchFromLeaf = function cachedGetBranchFromLeaf(id, ...rest) {
                     const cached = getBranchFromLeafCache.get(id);
-                    if (cached !== undefined) return cached;
+                    if (cached !== undefined || getBranchFromLeafCache.has(id)) return cached;
 
                     const store = bridgeRef.__store;
                     const result = getBranchFromLeafOriginal.call(store, id, ...rest);
@@ -2112,7 +2112,7 @@
 
             this.__resolveNodeFast = function resolveNodeFast(id) {
                 const cached = frameCache.get(id);
-                if (cached !== undefined) return cached;
+                if (cached !== undefined || frameCache.has(id)) return cached;
 
                 const node = resolveNodeCore(bridgeRef, id);
 
