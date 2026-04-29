@@ -1754,7 +1754,6 @@
 
             const stats = {
                 calls: 0,
-                hits: 0,
                 misses: 0,
                 fallbackCalls: 0,
 
@@ -1765,11 +1764,6 @@
                 sourceKeyFastHits: 0,
                 sourceKeyTrusted: 0,
 
-                uniqueLeafIds: 0,
-                repeatedLeafHits: 0,
-                uniquePredicateSources: 0,
-                repeatedPredicateSourceHits: 0,
-
                 cached: 0,
                 evictions: 0,
                 frameClears: 0,
@@ -1778,13 +1772,10 @@
                 lastClearReason: null,
             };
 
-            const weakCache = new WeakMap();
             const sourceCache = new Map();
             const trustedSourceKeys = new Set();
-            const seenLeafIds = new Map();
-            const seenPredicateSources = new Map();
 
-            this.__findNodeFromLeafFrameCache = weakCache;
+            this.__findNodeFromLeafFrameCache = sourceCache;
             this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = { findNodeFromLeaf: original };
 
@@ -1795,64 +1786,29 @@
 
                 const leafId = rest[0];
 
-                if (leafId != null) {
-                    const previousLeafCount = seenLeafIds.get(leafId) || 0;
-                    seenLeafIds.set(leafId, previousLeafCount + 1);
+                if (typeof predicateFn !== "function" || !leafId) {
+                    stats.fallbackCalls += 1;
+                    return original.call(bridgeRef.__store, predicateFn, ...rest);
+                }
 
-                    if (previousLeafCount === 0) {
-                        stats.uniqueLeafIds += 1;
-                    } else {
-                        stats.repeatedLeafHits += 1;
+                const sourceKey = String(predicateFn).slice(0, 500) + "::" + String(leafId);
+
+                if (trustedSourceKeys.has(sourceKey)) {
+                    const cached = sourceCache.get(sourceKey);
+
+                    if (cached !== undefined) {
+                        stats.sourceKeyFastHits += 1;
+                        return cached === CACHE_MISS ? null : cached;
                     }
                 }
 
-                if (typeof predicateFn !== "function" || !leafId) {
-                    stats.fallbackCalls += 1;
-                    const store = bridgeRef.__store;
-                    return original.call(store, predicateFn, ...rest);
-                }
-
-                const predicateSource = String(predicateFn).slice(0, 500);
-                const sourceKey = predicateSource + "::" + String(leafId);
-
-                const previousPredicateCount = seenPredicateSources.get(predicateSource) || 0;
-                seenPredicateSources.set(predicateSource, previousPredicateCount + 1);
-
-                if (previousPredicateCount === 0) {
-                    stats.uniquePredicateSources += 1;
-                } else {
-                    stats.repeatedPredicateSourceHits += 1;
-                }
-
-                let predicateCache = weakCache.get(predicateFn);
-
-                if (!predicateCache) {
-                    predicateCache = new Map();
-                    weakCache.set(predicateFn, predicateCache);
-                }
-
-                if (predicateCache.has(leafId)) {
-                    stats.hits += 1;
-                    return predicateCache.get(leafId);
-                }
-
-                if (trustedSourceKeys.has(sourceKey) && sourceCache.has(sourceKey)) {
-                    stats.sourceKeyFastHits += 1;
-
-                    const cached = sourceCache.get(sourceKey);
-                    predicateCache.set(leafId, cached);
-
-                    return cached;
-                }
-
-                const store = bridgeRef.__store;
-                const result = original.call(store, predicateFn, ...rest);
-                const normalizedResult = result ?? null;
+                const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                const cachedResult = result ?? CACHE_MISS;
 
                 if (sourceCache.has(sourceKey)) {
                     stats.sourceKeyHits += 1;
 
-                    if (sourceCache.get(sourceKey) === normalizedResult) {
+                    if (sourceCache.get(sourceKey) === cachedResult) {
                         stats.sourceKeyConfirmed += 1;
 
                         if (!trustedSourceKeys.has(sourceKey)) {
@@ -1862,26 +1818,25 @@
                     } else {
                         stats.sourceKeyMismatches += 1;
                         trustedSourceKeys.delete(sourceKey);
-                        sourceCache.set(sourceKey, normalizedResult);
+                        sourceCache.set(sourceKey, cachedResult);
                     }
                 } else {
                     stats.sourceKeyMisses += 1;
-                    sourceCache.set(sourceKey, normalizedResult);
+                    sourceCache.set(sourceKey, cachedResult);
+                    stats.cached = sourceCache.size;
                 }
 
                 stats.misses += 1;
-
-                predicateCache.set(leafId, normalizedResult);
-                stats.cached += 1;
 
                 if (sourceCache.size > maxSize) {
                     const oldestKey = sourceCache.keys().next().value;
                     sourceCache.delete(oldestKey);
                     trustedSourceKeys.delete(oldestKey);
                     stats.evictions += 1;
+                    stats.cached = sourceCache.size;
                 }
 
-                return normalizedResult;
+                return result ?? null;
             };
 
             this.__findNodeFromLeafFrameCacheInstalled = true;
@@ -1900,7 +1855,7 @@
         getFindNodeFromLeafFrameCacheStats() {
             return {
                 installed: Boolean(this.__findNodeFromLeafFrameCacheInstalled),
-                size: this.__findNodeFromLeafFrameCacheStats?.cached ?? 0,
+                size: this.__findNodeFromLeafFrameCache?.size ?? 0,
                 stats: this.__findNodeFromLeafFrameCacheStats ?? null,
             };
         },
