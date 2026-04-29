@@ -176,12 +176,20 @@
     function getNodeDirect(store, nodeId) {
         if (!store || !nodeId) return null;
 
+        const bridge = window[GLOBAL_KEY];
+        const directIndex = bridge?.__nodeIdDirectIndex;
+
+        if (directIndex instanceof Map) {
+            const indexed = directIndex.get(nodeId);
+            if (indexed !== undefined) return indexed ?? null;
+        }
+
         const nodes = store.nodes;
         if (!nodes) return null;
 
-        if (Array.isArray(nodes)) {
-            const bridge = window[GLOBAL_KEY];
+        let node = null;
 
+        if (Array.isArray(nodes)) {
             if (
                 bridge.__nodeIdDirectIndexSource !== nodes ||
                 !(bridge.__nodeIdDirectIndex instanceof Map)
@@ -189,22 +197,26 @@
                 const index = new Map();
 
                 for (let i = 0; i < nodes.length; i += 1) {
-                    const node = nodes[i];
-                    if (node?.id) index.set(node.id, node);
+                    const candidate = nodes[i];
+                    if (candidate?.id) index.set(candidate.id, candidate);
                 }
 
                 bridge.__nodeIdDirectIndex = index;
                 bridge.__nodeIdDirectIndexSource = nodes;
             }
 
-            return bridge.__nodeIdDirectIndex.get(nodeId) ?? null;
+            node = bridge.__nodeIdDirectIndex.get(nodeId) ?? null;
+        } else if (nodes.get) {
+            node = nodes.get(nodeId) ?? null;
+        } else {
+            node = nodes[nodeId] ?? null;
         }
 
-        if (nodes.get) {
-            return nodes.get(nodeId) ?? null;
+        if (node && bridge?.__nodeIdDirectIndex instanceof Map) {
+            bridge.__nodeIdDirectIndex.set(nodeId, node);
         }
 
-        return nodes[nodeId] ?? null;
+        return node;
     }
 
     const objectToString = Object.prototype.toString;
@@ -690,13 +702,29 @@
         if (!store || !id) return null;
 
         const index = bridge.__messageIdIndex;
+        const directIndex = bridge.__nodeIdDirectIndex;
 
         try {
             if (index) {
                 const indexedNodeId = index.get(id);
 
                 if (indexedNodeId !== undefined) {
-                    return getNodeDirect(store, indexedNodeId);
+                    const indexedNode =
+                        directIndex instanceof Map
+                            ? directIndex.get(indexedNodeId)
+                            : undefined;
+
+                    if (indexedNode !== undefined) {
+                        return indexedNode ?? null;
+                    }
+
+                    const node = getNodeDirect(store, indexedNodeId);
+
+                    if (node && directIndex instanceof Map) {
+                        directIndex.set(indexedNodeId, node);
+                    }
+
+                    return node;
                 }
             }
 
@@ -708,9 +736,25 @@
 
             const node = getNodeDirect(store, nodeId);
 
-            if (node && index) {
-                index.set(id, nodeId);
-                index.set(nodeId, nodeId);
+            if (node) {
+                if (index) {
+                    index.set(id, nodeId);
+                    index.set(nodeId, nodeId);
+
+                    const messageId =
+                        node.message?.id ||
+                        node.message?.message_id ||
+                        node.message?.metadata?.message_id ||
+                        null;
+
+                    if (messageId) {
+                        index.set(messageId, nodeId);
+                    }
+                }
+
+                if (directIndex instanceof Map) {
+                    directIndex.set(nodeId, node);
+                }
             }
 
             return node || null;
