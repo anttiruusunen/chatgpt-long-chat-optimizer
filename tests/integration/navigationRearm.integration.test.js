@@ -112,6 +112,15 @@ function createConversationContainer({ anchorId = "4" } = {}) {
     return container;
 }
 
+function dispatchClick(element) {
+    element.dispatchEvent(
+        new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+        })
+    );
+}
+
 async function flush() {
     await Promise.resolve();
     await Promise.resolve();
@@ -191,21 +200,87 @@ describe("navigation rearm integration", () => {
         const link = document.createElement("a");
         link.setAttribute("data-sidebar-item", "true");
         link.href = "/c/chat-from-sidebar";
-        link.addEventListener("click", (event) => {
-            event.preventDefault();
-        });
         document.body.appendChild(link);
 
-        link.dispatchEvent(
-            new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-            })
-        );
+        dispatchClick(link);
 
         vi.advanceTimersByTime(150);
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+    });
+
+    it("rearms initial prune from a Recents conversation link without data-sidebar-item", async () => {
+        createConversationContainer();
+        await import("../../src/content/core/index.js");
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        document.body.innerHTML = "";
+        createConversationContainer();
+
+        const link = document.createElement("a");
+        link.href = "/c/chat-from-recents";
+        link.textContent = "Recents chat";
+        document.body.appendChild(link);
+
+        dispatchClick(link);
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+    });
+
+    it("runs a follow-up rearm after a Recents conversation link click", async () => {
+        createConversationContainer();
+        await import("../../src/content/core/index.js");
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        document.body.innerHTML = "";
+        createConversationContainer();
+
+        const link = document.createElement("a");
+        link.href = "/c/chat-from-recents-followup";
+        link.textContent = "Recents chat followup";
+        document.body.appendChild(link);
+
+        dispatchClick(link);
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+
+        vi.advanceTimersByTime(450);
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not rearm initial prune from a non-conversation link click", async () => {
+        createConversationContainer();
+        await import("../../src/content/core/index.js");
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        document.body.innerHTML = "";
+        createConversationContainer();
+
+        const link = document.createElement("a");
+        link.href = "/settings";
+        link.textContent = "Settings";
+        document.body.appendChild(link);
+
+        dispatchClick(link);
+
+        vi.advanceTimersByTime(1000);
+        await flush();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
     });
 });

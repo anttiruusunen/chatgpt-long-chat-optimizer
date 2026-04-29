@@ -1,6 +1,6 @@
 let navigationWatcherInstalled = false;
 let lastKnownLocationKey = "";
-let scheduledCheckTimer = null;
+let scheduledCheckTimers = new Set();
 let originalPushState = null;
 let originalReplaceState = null;
 let currentNavigationCallback = null;
@@ -10,19 +10,16 @@ function getCurrentLocationKey() {
 }
 
 function clearScheduledCheck() {
-    if (scheduledCheckTimer) {
-        clearTimeout(scheduledCheckTimer);
-        scheduledCheckTimer = null;
+    for (const timer of scheduledCheckTimers) {
+        clearTimeout(timer);
     }
+
+    scheduledCheckTimers.clear();
 }
 
 function scheduleNavigationCheck(reason, { delayMs = 0, alwaysNotify = false } = {}) {
-    if (scheduledCheckTimer) {
-        return;
-    }
-
-    scheduledCheckTimer = setTimeout(() => {
-        scheduledCheckTimer = null;
+    const timer = setTimeout(() => {
+        scheduledCheckTimers.delete(timer);
 
         const nextKey = getCurrentLocationKey();
         const locationChanged = nextKey !== lastKnownLocationKey;
@@ -37,17 +34,39 @@ function scheduleNavigationCheck(reason, { delayMs = 0, alwaysNotify = false } =
             locationKey: nextKey,
         });
     }, delayMs);
+
+    scheduledCheckTimers.add(timer);
+}
+
+function isConversationNavigationLink(element) {
+    if (!(element instanceof HTMLAnchorElement)) {
+        return false;
+    }
+
+    const href = element.getAttribute("href") || "";
+
+    return (
+        element.hasAttribute("data-sidebar-item") ||
+        element.getAttribute("data-sidebar-item") === "true" ||
+        href.startsWith("/c/") ||
+        href.includes("/c/")
+    );
 }
 
 function handleDocumentClick(event) {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
-    const sidebarLink = target.closest('a[data-sidebar-item="true"]');
-    if (!sidebarLink) return;
+    const link = target.closest("a");
+    if (!isConversationNavigationLink(link)) return;
 
-    scheduleNavigationCheck("sidebar-click", {
+    scheduleNavigationCheck("conversation-link-click", {
         delayMs: 150,
+        alwaysNotify: true,
+    });
+
+    scheduleNavigationCheck("conversation-link-click-followup", {
+        delayMs: 600,
         alwaysNotify: true,
     });
 }
