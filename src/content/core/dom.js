@@ -6,6 +6,38 @@ import {
 
 const STRUCTURAL_STOP_TAGS = new Set(["MAIN", "BODY", "HTML"]);
 
+/**
+ * =========================
+ * Cache Layer
+ * =========================
+ */
+
+let domCacheVersion = 0;
+
+let cachedContainer = null;
+let cachedContainerVersion = -1;
+
+let cachedSections = null;
+let cachedSectionsVersion = -1;
+
+const mountNodeCache = new WeakMap();
+
+export function invalidateConversationDomCache() {
+    domCacheVersion += 1;
+
+    cachedContainer = null;
+    cachedContainerVersion = -1;
+
+    cachedSections = null;
+    cachedSectionsVersion = -1;
+}
+
+/**
+ * =========================
+ * Core helpers
+ * =========================
+ */
+
 export function isConversationSection(el) {
     if (!(el instanceof HTMLElement)) return false;
     if (el.tagName !== "SECTION") return false;
@@ -61,11 +93,26 @@ export function getConversationTurnRoot(section) {
     return getConversationSectionMountNode(section);
 }
 
+/**
+ * =========================
+ * Mount node (cached)
+ * =========================
+ */
+
 export function getConversationSectionMountNode(section) {
     if (!isConversationSection(section)) return null;
 
+    const cached = mountNodeCache.get(section);
+    if (cached?.version === domCacheVersion && cached.node?.isConnected) {
+        return cached.node;
+    }
+
     const explicitWrapper = section.closest("[data-turn-id-container]");
     if (explicitWrapper instanceof HTMLElement) {
+        mountNodeCache.set(section, {
+            version: domCacheVersion,
+            node: explicitWrapper,
+        });
         return explicitWrapper;
     }
 
@@ -104,10 +151,29 @@ export function getConversationSectionMountNode(section) {
         current = parent;
     }
 
+    mountNodeCache.set(section, {
+        version: domCacheVersion,
+        node: mountNode,
+    });
+
     return mountNode;
 }
 
+/**
+ * =========================
+ * Container (cached)
+ * =========================
+ */
+
 export function getConversationContainer() {
+    if (
+        cachedContainerVersion === domCacheVersion &&
+        cachedContainer instanceof HTMLElement &&
+        cachedContainer.isConnected
+    ) {
+        return cachedContainer;
+    }
+
     const anchor = getAnchorSection();
     if (!anchor) return null;
 
@@ -118,20 +184,46 @@ export function getConversationContainer() {
     while (current instanceof HTMLElement) {
         const conversationSections = getConversationSectionsWithin(current);
         if (conversationSections.length > 1) {
+            cachedContainer = current;
+            cachedContainerVersion = domCacheVersion;
             return current;
         }
         current = current.parentElement;
     }
 
-    return anchorMountNode.parentElement || null;
+    cachedContainer = anchorMountNode.parentElement || null;
+    cachedContainerVersion = domCacheVersion;
+    return cachedContainer;
 }
 
+/**
+ * =========================
+ * Sections (cached)
+ * =========================
+ */
+
 export function getConversationSections() {
+    if (
+        cachedSectionsVersion === domCacheVersion &&
+        Array.isArray(cachedSections) &&
+        cachedSections.every((section) => section.isConnected)
+    ) {
+        return cachedSections;
+    }
+
     const container = getConversationContainer();
     if (!container) return [];
 
-    return getConversationSectionsWithin(container);
+    cachedSections = getConversationSectionsWithin(container);
+    cachedSectionsVersion = domCacheVersion;
+    return cachedSections;
 }
+
+/**
+ * =========================
+ * Consumers
+ * =========================
+ */
 
 export function getRecentSections(sectionsToKeep) {
     const sections = getConversationSections();
@@ -183,4 +275,8 @@ export function getConversationScrollContainer() {
     }
 
     return document.scrollingElement || document.documentElement;
+}
+
+export function resetConversationDomCacheForTests() {
+    invalidateConversationDomCache();
 }

@@ -4,6 +4,7 @@ import { ensurePlaceholderState, removePlaceholder } from "../../src/content/pru
 import {
     getConversationContainer,
     getConversationSectionMountNode,
+    resetConversationDomCacheForTests,
 } from "../../src/content/core/dom.js";
 import {
     state,
@@ -26,6 +27,7 @@ function makeWrappedTurn(id, turn, { anchor = "false" } = {}) {
 
 describe("prune placeholder placement", () => {
     beforeEach(() => {
+        resetConversationDomCacheForTests();
         document.body.innerHTML = `<main><div id="conversation-host"></div></main>`;
         state.placeholder = null;
         state.hiddenCount = 0;
@@ -36,6 +38,7 @@ describe("prune placeholder placement", () => {
         state.placeholder = null;
         state.hiddenCount = 0;
         document.body.innerHTML = "";
+        resetConversationDomCacheForTests();
     });
 
     it("inserts the placeholder before the first visible wrapper node, not inside it", () => {
@@ -109,10 +112,78 @@ describe("prune placeholder placement", () => {
         expect(placeholder).not.toBeNull();
 
         first.wrapper.remove();
+        resetConversationDomCacheForTests();
 
         const changed = ensurePlaceholderState(first.section);
 
         expect(changed).toBe(true);
         expect(placeholder.hidden).toBe(true);
+    });
+
+    it("recomputes placeholder placement after the first visible wrapper changes", () => {
+        const host = document.getElementById("conversation-host");
+        const first = makeWrappedTurn("1", "user");
+        const second = makeWrappedTurn("2", "assistant");
+        const third = makeWrappedTurn("3", "assistant", { anchor: "true" });
+
+        host.appendChild(first.wrapper);
+        host.appendChild(second.wrapper);
+        host.appendChild(third.wrapper);
+
+        state.hiddenCount = 2;
+        ensurePlaceholderState(first.section);
+
+        const placeholder = state.placeholder;
+        expect(host.children[0]).toBe(placeholder);
+        expect(host.children[1]).toBe(first.wrapper);
+
+        first.wrapper.remove();
+        resetConversationDomCacheForTests();
+
+        const changed = ensurePlaceholderState(second.section);
+
+        expect(changed).toBe(false);
+        expect(placeholder.hidden).toBe(false);
+        expect(host.children[0]).toBe(placeholder);
+        expect(host.children[1]).toBe(second.wrapper);
+    });
+
+    it("does not move the placeholder when it is already before the requested mount node", () => {
+        const host = document.getElementById("conversation-host");
+        const first = makeWrappedTurn("1", "user");
+        const second = makeWrappedTurn("2", "assistant", { anchor: "true" });
+
+        host.appendChild(first.wrapper);
+        host.appendChild(second.wrapper);
+
+        state.hiddenCount = 2;
+
+        expect(ensurePlaceholderState(first.section)).toBe(true);
+
+        const placeholder = state.placeholder;
+
+        expect(ensurePlaceholderState(first.section)).toBe(false);
+        expect(host.children[0]).toBe(placeholder);
+        expect(host.children[1]).toBe(first.wrapper);
+    });
+
+    it("moves the placeholder when a new earlier visible mount node appears", () => {
+        const host = document.getElementById("conversation-host");
+        const first = makeWrappedTurn("1", "user");
+        const second = makeWrappedTurn("2", "assistant", { anchor: "true" });
+
+        host.appendChild(second.wrapper);
+
+        state.hiddenCount = 2;
+        ensurePlaceholderState(second.section);
+
+        const placeholder = state.placeholder;
+
+        host.insertBefore(first.wrapper, second.wrapper);
+        resetConversationDomCacheForTests();
+
+        expect(ensurePlaceholderState(first.section)).toBe(false);
+        expect(host.children[0]).toBe(placeholder);
+        expect(host.children[1]).toBe(first.wrapper);
     });
 });

@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { state } from "../../src/content/core/state.js";
 import {
+    getConversationSections,
+    invalidateConversationDomCache,
+    resetConversationDomCacheForTests,
+} from "../../src/content/core/dom.js";
+import {
     pruneOldSections,
     restoreAllSections,
     restoreOneExchangeFromSoftPruned,
@@ -29,6 +34,7 @@ function makeSection({
 
 function buildConversation(exchangeCount = 6) {
     document.body.innerHTML = "";
+    resetConversationDomCacheForTests();
 
     const page = document.createElement("div");
     const scrollWrap = document.createElement("div");
@@ -60,6 +66,8 @@ function buildConversation(exchangeCount = 6) {
         sections.push(user, assistant);
     }
 
+    resetConversationDomCacheForTests();
+
     return { page, scrollWrap, conversation, sections };
 }
 
@@ -79,21 +87,33 @@ function resetState() {
     state.featureFlags.pruning = true;
 }
 
+function guardedDomWrite(fn) {
+    invalidateConversationDomCache();
+
+    try {
+        return fn();
+    } finally {
+        invalidateConversationDomCache();
+    }
+}
+
 function makeDeps() {
     return {
         ensureObserverAttached: vi.fn(),
-        withDomMutationGuard: (fn) => fn(),
+        withDomMutationGuard: guardedDomWrite,
         refreshObservedSections: vi.fn(),
     };
 }
 
 beforeEach(() => {
+    resetConversationDomCacheForTests();
     document.body.innerHTML = "";
     resetState();
 });
 
 afterEach(() => {
     document.body.innerHTML = "";
+    resetConversationDomCacheForTests();
 });
 
 describe("prune bookkeeping", () => {
@@ -172,6 +192,26 @@ describe("prune bookkeeping", () => {
         expect(remainingVisible).toBe(2);
     });
 
+    it("keeps cached conversation sections accurate across prune, restore, and reprune", () => {
+        buildConversation(6);
+
+        expect(getConversationSections().length).toBe(12);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(getConversationSections().length).toBe(2);
+
+        const restoreResult = restoreOneExchangeFromSoftPruned(makeDeps());
+
+        expect(restoreResult.restoredSectionsCount).toBe(2);
+        expect(getConversationSections().length).toBe(4);
+
+        const repruneResult = repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(repruneResult.reprunedSectionsCount).toBe(2);
+        expect(getConversationSections().length).toBe(2);
+    });
+
     it("enforces soft-pruned limit by hard-evicting overflow", () => {
         buildConversation(8);
 
@@ -209,5 +249,33 @@ describe("prune bookkeeping", () => {
         if (hardEvictedBeforeRestore === 0) {
             expect(placeholder).toBeNull();
         }
+    });
+
+    it("does not reprune when there is no restored protected exchange", () => {
+        buildConversation(4);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const beforeSoftPruned = state.softPrunedSections.length;
+        const beforeHidden = state.hiddenCount;
+
+        const result = repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(result.reprunedSectionsCount).toBe(0);
+        expect(state.softPrunedSections.length).toBe(beforeSoftPruned);
+        expect(state.hiddenCount).toBe(beforeHidden);
+    });
+
+    it("restore and reprune preserve total hidden count", () => {
+        buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const totalHiddenAfterPrune = state.totalHiddenCount;
+
+        restoreOneExchangeFromSoftPruned(makeDeps());
+        repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(state.totalHiddenCount).toBe(totalHiddenAfterPrune);
     });
 });

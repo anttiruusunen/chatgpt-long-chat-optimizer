@@ -1,5 +1,9 @@
 import { state } from "../core/state.js";
-import { getConversationContainer, isConversationSection } from "../core/dom.js";
+import {
+    getConversationContainer,
+    isConversationSection,
+    invalidateConversationDomCache,
+} from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 
 function nodeIsOrContainsConversationSection(node) {
@@ -136,6 +140,8 @@ export function handleObservedMutations(
     if (!shouldConsiderPrune) {
         return;
     }
+
+    invalidateConversationDomCache();
 
     if (!getDidInitialPrune()) {
         bootstrapInitialPrune?.();

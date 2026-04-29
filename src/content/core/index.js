@@ -2,6 +2,7 @@ import { state } from "./state.js";
 import { getSettings } from "./settings.js";
 import {
     getConversationContainer,
+    invalidateConversationDomCache,
 } from "./dom.js";
 import {
     removePlaceholder,
@@ -48,6 +49,7 @@ import { createPruneController } from "../pruning/pruneController.js";
 installDomMutationGuard();
 
 function resetConversationLifecycleForNavigation() {
+    invalidateConversationDomCache();
     clearPendingAutoPrune();
 
     removePlaceholder();
