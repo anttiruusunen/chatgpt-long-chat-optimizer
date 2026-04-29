@@ -19,6 +19,8 @@
         return;
     }
 
+    const CACHE_MISS = Symbol("threadOptimizerCacheMiss");
+
     function createFrameCache({ maxSize, stats }) {
         const cache = new Map();
         let clearScheduled = false;
@@ -47,16 +49,12 @@
             }, 100);
         }
 
-        function has(key) {
-            return cache.has(key);
-        }
-
         function get(key) {
             const value = cache.get(key);
 
-            if (value !== undefined || cache.has(key)) {
+            if (value !== undefined) {
                 stats.hits += 1;
-                return value;
+                return value === CACHE_MISS ? null : value;
             }
 
             stats.misses += 1;
@@ -64,7 +62,7 @@
         }
 
         function set(key, value) {
-            cache.set(key, value);
+            cache.set(key, value === null ? CACHE_MISS : value);
 
             if (!clearScheduled) {
                 scheduleClear();
@@ -78,7 +76,7 @@
             stats.cached = cache.size;
         }
 
-        return { get, has, set, clear, cache };
+        return { get, set, clear, cache };
     }
 
     function getVisibleConversationTurnCount() {
@@ -1721,7 +1719,7 @@
                 }
 
                 const cached = frameCache.get(canonicalId);
-                if (cached !== undefined || frameCache.has(canonicalId)) return cached;
+                if (cached !== undefined) return cached;
 
                 const store = bridgeRef.__store;
                 const result = original.call(store, id);
@@ -1798,7 +1796,7 @@
                         : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
                 const cached = frameCache.get(key);
-                if (cached !== undefined || frameCache.has(key)) return cached;
+                if (cached !== undefined) return cached;
 
                 const store = bridgeRef.__store;
                 const result = original.call(store, id);
@@ -2008,7 +2006,7 @@
             if (typeof getBranchOriginal === "function") {
                 this.__store.getBranch = function cachedGetBranch(id, ...rest) {
                     const cached = getBranchCache.get(id);
-                    if (cached !== undefined || getBranchCache.has(id)) return cached;
+                    if (cached !== undefined) return cached;
 
                     const store = bridgeRef.__store;
                     const result = getBranchOriginal.call(store, id, ...rest);
@@ -2021,7 +2019,7 @@
             if (typeof getBranchFromLeafOriginal === "function") {
                 this.__store.getBranchFromLeaf = function cachedGetBranchFromLeaf(id, ...rest) {
                     const cached = getBranchFromLeafCache.get(id);
-                    if (cached !== undefined || getBranchFromLeafCache.has(id)) return cached;
+                    if (cached !== undefined) return cached;
 
                     const store = bridgeRef.__store;
                     const result = getBranchFromLeafOriginal.call(store, id, ...rest);
@@ -2112,7 +2110,7 @@
 
             this.__resolveNodeFast = function resolveNodeFast(id) {
                 const cached = frameCache.get(id);
-                if (cached !== undefined || frameCache.has(id)) return cached;
+                if (cached !== undefined) return cached;
 
                 const node = resolveNodeCore(bridgeRef, id);
 
