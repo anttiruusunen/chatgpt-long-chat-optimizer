@@ -135,6 +135,7 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
 
 export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
     const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
+
     if (detachedEntry) {
         detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
         restoreDetachedCodeBlockEntry(detachedEntry, {
@@ -148,12 +149,29 @@ export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
     const placeholderId = getPlaceholderId(placeholder);
     if (!placeholderId) return;
 
-    const pre = Array.from(document.querySelectorAll("pre")).find(
+    let pre = Array.from(document.querySelectorAll("pre")).find(
         (candidate) => getPlaceholderIdForPre(candidate) === placeholderId
     );
 
-    if (!(pre instanceof HTMLPreElement)) return;
+    if (!(pre instanceof HTMLPreElement)) {
+        const scope =
+            placeholder.closest("article, [data-message-author-role], section[data-testid^='conversation-turn-'], section[data-turn]") ??
+            document;
 
+        pre = Array.from(scope.querySelectorAll("pre")).find(
+            (candidate) =>
+                candidate instanceof HTMLPreElement &&
+                candidate.hasAttribute("data-thread-optimizer-code-collapsed")
+        );
+    }
+
+    if (!(pre instanceof HTMLPreElement)) {
+        setPlaceholderVisibility(placeholder, false);
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    setPlaceholderIdForPre(pre, placeholderId);
     pre.dataset.threadOptimizerCodeExpanded = "true";
     clearCollapsedCodeBlock(pre, { preserveExpanded: true });
     scheduleRefreshCallback?.();
