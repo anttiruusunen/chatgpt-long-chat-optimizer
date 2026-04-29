@@ -15,11 +15,13 @@ function nodeIsOrContainsConversationSection(node) {
         return true;
     }
 
-    return Boolean(
-        Array.from(node.querySelectorAll("section")).find((section) =>
-            isConversationSection(section)
-        )
-    );
+    for (const section of node.querySelectorAll("section")) {
+        if (isConversationSection(section)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function nodeLooksLikeTurnMount(node) {
