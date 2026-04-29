@@ -24,10 +24,12 @@
         let clearScheduled = false;
 
         function clear(reason) {
-            cache.clear();
-            clearScheduled = false;
+            if (cache.size !== 0) {
+                cache.clear();
+                stats.cached = 0;
+            }
 
-            stats.cached = 0;
+            clearScheduled = false;
             stats.frameClears += 1;
             stats.lastClearReason = reason;
         }
@@ -46,9 +48,16 @@
         }
 
         function get(key) {
+            const value = cache.get(key);
+
+            if (value !== undefined) {
+                stats.hits += 1;
+                return value;
+            }
+
             if (cache.has(key)) {
                 stats.hits += 1;
-                return cache.get(key);
+                return value; // handles cached undefined
             }
 
             stats.misses += 1;
@@ -57,11 +66,13 @@
 
         function set(key, value) {
             cache.set(key, value);
-            scheduleClear();
+
+            if (!clearScheduled) {
+                scheduleClear();
+            }
 
             if (cache.size > maxSize) {
-                const firstKey = cache.keys().next().value;
-                cache.delete(firstKey);
+                cache.delete(cache.keys().next().value);
                 stats.evictions += 1;
             }
 
@@ -169,20 +180,34 @@
         if (!store || !nodeId) return null;
 
         const nodes = store.nodes;
+        if (!nodes) return null;
 
-        if (nodes instanceof Map) {
+        if (Array.isArray(nodes)) {
+            const bridge = window[GLOBAL_KEY];
+
+            if (
+                bridge.__nodeIdDirectIndexSource !== nodes ||
+                !(bridge.__nodeIdDirectIndex instanceof Map)
+            ) {
+                const index = new Map();
+
+                for (let i = 0; i < nodes.length; i += 1) {
+                    const node = nodes[i];
+                    if (node?.id) index.set(node.id, node);
+                }
+
+                bridge.__nodeIdDirectIndex = index;
+                bridge.__nodeIdDirectIndexSource = nodes;
+            }
+
+            return bridge.__nodeIdDirectIndex.get(nodeId) ?? null;
+        }
+
+        if (nodes.get) {
             return nodes.get(nodeId) ?? null;
         }
 
-        if (Array.isArray(nodes)) {
-            return nodes.find((node) => node?.id === nodeId) ?? null;
-        }
-
-        if (nodes && typeof nodes === "object") {
-            return nodes[nodeId] ?? null;
-        }
-
-        return null;
+        return nodes[nodeId] ?? null;
     }
 
     const objectToString = Object.prototype.toString;
@@ -665,16 +690,23 @@
 
     function resolveNodeCore(bridge, id) {
         const store = bridge.__store;
+        if (!store || !id) return null;
+
         const index = bridge.__messageIdIndex;
-        if (!store) return null;
 
         try {
-            if (index?.has(id)) {
-                const nodeId = index.get(id);
-                return getNodeDirect(store, nodeId);
+            if (index) {
+                const indexedNodeId = index.get(id);
+
+                if (indexedNodeId !== undefined) {
+                    return getNodeDirect(store, indexedNodeId);
+                }
             }
 
-            const nodeId = store.messageIdToExistingNodeId?.call(store, id);
+            const resolver = store.messageIdToExistingNodeId;
+            if (typeof resolver !== "function") return null;
+
+            const nodeId = resolver.call(store, id);
             if (!nodeId) return null;
 
             const node = getNodeDirect(store, nodeId);
@@ -684,45 +716,10 @@
                 index.set(nodeId, nodeId);
             }
 
-            return node;
+            return node || null;
         } catch {
             return null;
         }
-    }
-
-    function createPersistentCache({ maxSize, stats }) {
-        const cache = new Map();
-
-        function clear(reason) {
-            cache.clear();
-            stats.cached = 0;
-            stats.clears += 1;
-            stats.lastClearReason = reason;
-        }
-
-        function get(key) {
-            if (cache.has(key)) {
-                stats.hits += 1;
-                return cache.get(key);
-            }
-
-            stats.misses += 1;
-            return undefined;
-        }
-
-        function set(key, value) {
-            cache.set(key, value);
-
-            if (cache.size > maxSize) {
-                const firstKey = cache.keys().next().value;
-                cache.delete(firstKey);
-                stats.evictions += 1;
-            }
-
-            stats.cached = cache.size;
-        }
-
-        return { get, set, clear, cache };
     }
 
     const bridge = {
@@ -801,6 +798,9 @@
         __storePromotionLocked: false,
         __lastPromotionAttemptAt: 0,
         __promotionTimer: null,
+
+        __nodeIdDirectIndex: null,
+        __nodeIdDirectIndexSource: null,
 
         status() {
             return {
@@ -887,6 +887,9 @@
 
             this.__indexRefreshHooksInstalled = false;
             this.__indexRefreshHookOriginals = null;
+
+            this.__nodeIdDirectIndex = null;
+            this.__nodeIdDirectIndexSource = null;
         },
 
         registerStore(store, meta = null) {
@@ -1466,6 +1469,8 @@
                     fallbackHits: 0,
                     rebuilds: 0,
                     lastRebuiltAt: null,
+                    missSinceRebuild: 0,
+                    rebuildSkips: 0,
                 };
             }
 
@@ -1512,37 +1517,45 @@
             const bridgeRef = this;
 
             this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeId(messageId) {
-                if (bridgeRef.__messageIdIndex?.has(messageId)) {
-                    bridgeRef.__messageIdIndexStats.hits += 1;
-                    return bridgeRef.__messageIdIndex.get(messageId);
+                const index = bridgeRef.__messageIdIndex;
+                const stats = bridgeRef.__messageIdIndexStats;
+
+                if (index) {
+                    const indexed = index.get(messageId);
+
+                    if (indexed !== undefined) {
+                        stats.hits += 1;
+                        return indexed;
+                    }
                 }
 
-                bridgeRef.__messageIdIndexStats.missSinceRebuild ??= 0;
-                bridgeRef.__messageIdIndexStats.rebuildSkips ??= 0;
+                stats.missSinceRebuild += 1;
 
-                bridgeRef.__messageIdIndexStats.missSinceRebuild += 1;
+                if (stats.missSinceRebuild >= 500) {
+                    stats.missSinceRebuild = 0;
 
-                if (bridgeRef.__messageIdIndexStats.missSinceRebuild >= 500) {
-                    bridgeRef.__messageIdIndexStats.missSinceRebuild = 0;
-
-                    bridgeRef.maybeRebuildMessageIdIndex?.({
+                    bridgeRef.maybeRebuildMessageIdIndex({
                         minIntervalMs: 1000,
                     });
 
-                    if (bridgeRef.__messageIdIndex?.has(messageId)) {
-                        bridgeRef.__messageIdIndexStats.hits += 1;
-                        return bridgeRef.__messageIdIndex.get(messageId);
+                    const rebuiltIndex = bridgeRef.__messageIdIndex;
+                    const rebuilt = rebuiltIndex?.get(messageId);
+
+                    if (rebuilt !== undefined) {
+                        stats.hits += 1;
+                        return rebuilt;
                     }
                 } else {
-                    bridgeRef.__messageIdIndexStats.rebuildSkips += 1;
+                    stats.rebuildSkips += 1;
                 }
 
-                bridgeRef.__messageIdIndexStats.misses += 1;
+                stats.misses += 1;
 
-                const result = original.apply(bridgeRef.__store, arguments);
+                const store = bridgeRef.__store;
+                const result = original.call(store, messageId);
 
                 if (result) {
-                    bridgeRef.__messageIdIndexStats.fallbackHits += 1;
+                    stats.fallbackHits += 1;
                     bridgeRef.__messageIdIndex.set(messageId, result);
                 }
 
@@ -1610,8 +1623,6 @@
             };
 
             const frameCache = createFrameCache({ maxSize, stats });
-            stats.mode = "frame";
-
             this.__existingNodeFrameCache = frameCache.cache;
             this.__existingNodeFrameCacheStats = stats;
             this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
@@ -1622,7 +1633,8 @@
                 const cached = frameCache.get(id);
                 if (cached !== undefined) return cached;
 
-                const result = original.call(bridgeRef.__store, id);
+                const store = bridgeRef.__store;
+                const result = original.call(store, id);
 
                 // Critical: do not cache null/undefined for getNodeIfExists.
                 // During render/hydration, missing can become present later.
@@ -1705,13 +1717,15 @@
                             : null;
 
                 if (!canonicalId) {
-                    return original.call(bridgeRef.__store, id);
+                    const store = bridgeRef.__store;
+                    return original.call(store, id);
                 }
 
                 const cached = frameCache.get(canonicalId);
                 if (cached !== undefined) return cached;
 
-                const result = original.call(bridgeRef.__store, id);
+                const store = bridgeRef.__store;
+                const result = original.call(store, id);
 
                 frameCache.set(canonicalId, result ?? null);
                 return result ?? null;
@@ -1787,7 +1801,8 @@
                 const cached = frameCache.get(key);
                 if (cached !== undefined) return cached;
 
-                const result = original.call(bridgeRef.__store, id);
+                const store = bridgeRef.__store;
+                const result = original.call(store, id);
 
                 frameCache.set(key, result ?? null);
                 return result ?? null;
@@ -1930,51 +1945,89 @@
                 };
             }
 
+            const getBranchOriginal = this.__store.getBranch;
+            const getBranchFromLeafOriginal = this.__store.getBranchFromLeaf;
+
             const originals = {};
-            for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
-                const original = this.__store[methodName];
-                if (typeof original === "function") {
-                    originals[methodName] = original;
-                }
+            if (typeof getBranchOriginal === "function") {
+                originals.getBranch = getBranchOriginal;
+            }
+            if (typeof getBranchFromLeafOriginal === "function") {
+                originals.getBranchFromLeaf = getBranchFromLeafOriginal;
             }
 
             if (Object.keys(originals).length === 0) {
                 return { ok: false, reason: "no branch methods available" };
             }
 
-            const stats = {
+            const getBranchStats = {
                 hits: 0,
                 misses: 0,
                 cached: 0,
                 evictions: 0,
                 frameClears: 0,
                 maxSize,
-                mode: "frame",
+                mode: "frame:getBranch",
                 lastClearReason: null,
             };
 
-            const frameCache = createFrameCache({ maxSize, stats });
+            const getBranchFromLeafStats = {
+                hits: 0,
+                misses: 0,
+                cached: 0,
+                evictions: 0,
+                frameClears: 0,
+                maxSize,
+                mode: "frame:getBranchFromLeaf",
+                lastClearReason: null,
+            };
 
-            this.__branchCache = frameCache.cache;
-            this.__branchCacheStats = stats;
+            const getBranchCache = createFrameCache({
+                maxSize,
+                stats: getBranchStats,
+            });
+
+            const getBranchFromLeafCache = createFrameCache({
+                maxSize,
+                stats: getBranchFromLeafStats,
+            });
+
+            this.__branchCache = {
+                getBranch: getBranchCache.cache,
+                getBranchFromLeaf: getBranchFromLeafCache.cache,
+            };
+
+            this.__branchCacheStats = {
+                getBranch: getBranchStats,
+                getBranchFromLeaf: getBranchFromLeafStats,
+            };
+
             this.__branchCacheOriginals = originals;
 
             const bridgeRef = this;
 
-            for (const [methodName, original] of Object.entries(originals)) {
-                this.__store[methodName] = function cachedBranchMethod(id, ...rest) {
-                    if (ENABLE_BRANCH_CALLSITE_STATS) {
-                        bridgeRef.recordBranchCallSite(methodName, [id, ...rest]);
-                    }
-
-                    const key = `${methodName}:${String(id)}`;
-
-                    const cached = frameCache.get(key);
+            if (typeof getBranchOriginal === "function") {
+                this.__store.getBranch = function cachedGetBranch(id, ...rest) {
+                    const cached = getBranchCache.get(id);
                     if (cached !== undefined) return cached;
 
-                    const result = original.call(bridgeRef.__store, id, ...rest);
+                    const store = bridgeRef.__store;
+                    const result = getBranchOriginal.call(store, id, ...rest);
 
-                    frameCache.set(key, result ?? null);
+                    getBranchCache.set(id, result ?? null);
+                    return result ?? null;
+                };
+            }
+
+            if (typeof getBranchFromLeafOriginal === "function") {
+                this.__store.getBranchFromLeaf = function cachedGetBranchFromLeaf(id, ...rest) {
+                    const cached = getBranchFromLeafCache.get(id);
+                    if (cached !== undefined) return cached;
+
+                    const store = bridgeRef.__store;
+                    const result = getBranchFromLeafOriginal.call(store, id, ...rest);
+
+                    getBranchFromLeafCache.set(id, result ?? null);
                     return result ?? null;
                 };
             }
@@ -2001,10 +2054,17 @@
         },
 
         clearBranchCache() {
-            this.__branchCache?.clear();
+            const branchCache = this.__branchCache;
 
-            if (this.__branchCacheStats) {
-                this.__branchCacheStats.cached = 0;
+            branchCache?.getBranch?.clear?.();
+            branchCache?.getBranchFromLeaf?.clear?.();
+
+            if (this.__branchCacheStats?.getBranch) {
+                this.__branchCacheStats.getBranch.cached = 0;
+            }
+
+            if (this.__branchCacheStats?.getBranchFromLeaf) {
+                this.__branchCacheStats.getBranchFromLeaf.cached = 0;
             }
 
             return {
@@ -2015,7 +2075,10 @@
         getBranchCacheStats() {
             return {
                 installed: Boolean(this.__branchCacheInstalled),
-                size: this.__branchCache?.size ?? 0,
+                size: {
+                    getBranch: this.__branchCache?.getBranch?.size ?? 0,
+                    getBranchFromLeaf: this.__branchCache?.getBranchFromLeaf?.size ?? 0,
+                },
                 stats: this.__branchCacheStats ?? null,
                 lastInstallResult: this.__branchCacheLastInstallResult ?? null,
             };
@@ -2128,7 +2191,7 @@
                 }),
                 getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache(),
                 branchCache: this.installBranchCache(),
-                resolvedNodeFrameCache: { ok: true, skipped: true, reason: "temporarily disabled for render test" },
+                resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
                 profiler: ENABLE_STORE_PROFILER
                     ? this.installStoreProfiler()
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
@@ -2307,10 +2370,24 @@
 
         clearStoreReadCache(reason = "manual") {
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+                if (cacheSlot === "__branchCache") {
+                    this.clearBranchCache?.();
+
+                    if (this.__branchCacheStats?.getBranch) {
+                        this.__branchCacheStats.getBranch.lastClearReason = reason;
+                    }
+
+                    if (this.__branchCacheStats?.getBranchFromLeaf) {
+                        this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
+                    }
+
+                    continue;
+                }
+
                 const cache = this[cacheSlot];
                 const stats = this[statsSlot];
 
-                cache?.clear();
+                cache?.clear?.();
 
                 if (stats) {
                     stats.cached = 0;
