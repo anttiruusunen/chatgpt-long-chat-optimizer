@@ -842,6 +842,7 @@
 
         __nodeIdDirectIndex: null,
         __nodeIdDirectIndexSource: null,
+        __confirmedExistingNodeIds: null,
 
         status() {
             return {
@@ -931,6 +932,7 @@
 
             this.__nodeIdDirectIndex = null;
             this.__nodeIdDirectIndexSource = null;
+            this.__confirmedExistingNodeIds = null;
         },
 
         registerStore(store, meta = null) {
@@ -1655,6 +1657,10 @@
             const stats = {
                 hits: 0,
                 misses: 0,
+                hintHits: 0,
+                hintConfirmed: 0,
+                confirmedFastHits: 0,
+                fallbackHits: 0,
                 cached: 0,
                 evictions: 0,
                 frameClears: 0,
@@ -1664,6 +1670,8 @@
             };
 
             const frameCache = createFrameCache({ maxSize, stats });
+
+            this.__confirmedExistingNodeIds ??= new Set();
             this.__existingNodeFrameCache = frameCache.cache;
             this.__existingNodeFrameCacheStats = stats;
             this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
@@ -1674,13 +1682,40 @@
                 const cached = frameCache.get(id);
                 if (cached !== undefined) return cached;
 
+                const directIndex = bridgeRef.__nodeIdDirectIndex;
+                const hinted =
+                    directIndex instanceof Map
+                        ? directIndex.get(id)
+                        : undefined;
+
+                if (
+                    hinted !== undefined &&
+                    bridgeRef.__confirmedExistingNodeIds?.has(id)
+                ) {
+                    stats.confirmedFastHits += 1;
+                    frameCache.set(id, hinted);
+                    return hinted;
+                }
+
                 const store = bridgeRef.__store;
                 const result = original.call(store, id);
 
-                // Critical: do not cache null/undefined for getNodeIfExists.
-                // During render/hydration, missing can become present later.
+                if (hinted !== undefined) {
+                    stats.hintHits += 1;
+
+                    if (result === hinted) {
+                        stats.hintConfirmed += 1;
+                        bridgeRef.__confirmedExistingNodeIds?.add(id);
+                    }
+                }
+
                 if (result != null) {
+                    stats.fallbackHits += 1;
                     frameCache.set(id, result);
+
+                    if (result.id && directIndex instanceof Map) {
+                        directIndex.set(result.id, result);
+                    }
                 }
 
                 return result ?? null;
