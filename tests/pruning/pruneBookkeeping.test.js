@@ -278,4 +278,74 @@ describe("prune bookkeeping", () => {
 
         expect(state.totalHiddenCount).toBe(totalHiddenAfterPrune);
     });
+
+    it("moves the placeholder before newly restored sections when restoring one exchange", () => {
+        const { conversation } = buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const placeholder = getPlaceholder();
+        expect(placeholder).not.toBeNull();
+
+        const restoreResult = restoreOneExchangeFromSoftPruned(makeDeps());
+
+        expect(restoreResult.restoredSectionsCount).toBe(2);
+
+        const visibleAfterRestore = getConversationSections();
+        expect(visibleAfterRestore.length).toBe(4);
+
+        const firstVisibleAfterRestore = visibleAfterRestore[0];
+
+        expect(conversation.contains(placeholder)).toBe(true);
+        expect(placeholder.hidden).toBe(false);
+
+        expect(
+            Array.from(conversation.children).indexOf(placeholder)
+        ).toBeLessThan(
+            Array.from(conversation.children).indexOf(firstVisibleAfterRestore)
+        );
+    });
+
+    it("keeps the placeholder aligned after repeated restore-one cycles", () => {
+        state.settings.historyKeptExchanges = 3;
+
+        const { conversation } = buildConversation(8);
+
+        pruneOldSections(3, { showPlaceholder: true }, makeDeps());
+
+        const placeholder = getPlaceholder();
+        expect(placeholder).not.toBeNull();
+
+        const firstRestore = restoreOneExchangeFromSoftPruned(makeDeps());
+        expect(firstRestore.restoredSectionsCount).toBe(2);
+
+        const secondRestore = restoreOneExchangeFromSoftPruned(makeDeps());
+        expect(secondRestore.restoredSectionsCount).toBe(2);
+
+        const visibleSections = getConversationSections();
+        const firstVisibleSection = visibleSections[0];
+
+        expect(conversation.contains(placeholder)).toBe(true);
+        expect(placeholder.hidden).toBe(false);
+
+        expect(
+            Array.from(conversation.children).indexOf(placeholder)
+        ).toBeLessThan(
+            Array.from(conversation.children).indexOf(firstVisibleSection)
+        );
+    });
+
+    it("refreshes cached visible sections after restoreAllSections", () => {
+        buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(getConversationSections().length).toBe(2);
+
+        const result = restoreAllSections(makeDeps());
+
+        expect(result.visibleSectionsChanged).toBe(true);
+        expect(getConversationSections().length).toBe(4);
+        expect(state.softPrunedSections.length).toBe(0);
+    });
 });

@@ -7,6 +7,7 @@ import {
     getConversationSections,
     getConversationScrollContainer,
     getConversationTurnRoot,
+    invalidateConversationDomCache,
 } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import {
@@ -169,6 +170,8 @@ export function restoreOneExchangeFromSoftPruned({
             }
         );
 
+        invalidateConversationDomCache();
+
         visibleSectionsChanged = restoredSectionsCount > 0;
         updateHiddenCounts();
 
@@ -244,6 +247,7 @@ export function repruneOneExchangeFromVisibleProtected({
         }
 
         reprunedSectionsCount = softPruneSections(sectionsToReprune);
+        invalidateConversationDomCache();
         state.softPrunedSections.push(...sectionsToReprune);
         visibleSectionsChanged = reprunedSectionsCount > 0;
 
@@ -311,6 +315,8 @@ export function restoreAllSections({
             container,
             firstVisibleSectionBeforeRestore
         );
+
+        invalidateConversationDomCache();
 
         visibleSectionsChanged = restoredCount > 0;
         state.softPrunedSections = [];
@@ -428,6 +434,7 @@ export function pruneOldSections(
         });
 
         restoredCount = restoreSoftPrunedSections(sectionsToRestore, container);
+        invalidateConversationDomCache();
 
         state.softPrunedSections = [...sectionsToSoftPrune];
         state.hardEvictedCount += evictedCount;
