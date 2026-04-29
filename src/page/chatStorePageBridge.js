@@ -1657,7 +1657,7 @@
                 evictions: 0,
                 frameClears: 0,
                 maxSize,
-                mode: "frame",
+                mode: "frame+confirmed-direct-index",
                 lastClearReason: null,
             };
 
