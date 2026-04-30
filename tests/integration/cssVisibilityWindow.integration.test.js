@@ -207,6 +207,9 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
+
+        await flush();
+        vi.runOnlyPendingTimers();
         await flush();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;

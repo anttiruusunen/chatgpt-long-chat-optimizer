@@ -3,15 +3,9 @@ import {
     installConversationNavigationWatcher,
     resetConversationNavigationWatcherForTests,
 } from "../../src/content/core/navigation.js";
-
-function dispatchClick(element) {
-    element.dispatchEvent(
-        new MouseEvent("click", {
-            bubbles: true,
-            cancelable: true,
-        })
-    );
-}
+import {
+    dispatchClick,
+} from "../utils/domEvents.js";
 
 describe("navigation watcher", () => {
     let callback;

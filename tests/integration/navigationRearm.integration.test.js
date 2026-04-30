@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+    dispatchClick,
+} from "../utils/domEvents.js";
 
 const mockRefs = vi.hoisted(() => ({
     registeredHandlers: null,
@@ -110,15 +113,6 @@ function createConversationContainer({ anchorId = "4" } = {}) {
     }
 
     return container;
-}
-
-function dispatchClick(element) {
-    element.dispatchEvent(
-        new MouseEvent("click", {
-            bubbles: true,
-            cancelable: true,
-        })
-    );
 }
 
 async function flush() {

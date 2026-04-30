@@ -91,9 +91,13 @@ function rearmInitialPruneForNavigation(reason) {
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (hasContainer) {
-            runInitialPrune(getConversationContainer());
+            runInitialPrune(getConversationContainer(), {
+                useStartupMask: false,
+            });
         } else {
-            waitForContainerAndInitialPrune();
+            waitForContainerAndInitialPrune({
+                useStartupMask: false,
+            });
         }
         return;
     }
@@ -124,10 +128,10 @@ function ensureObserverAttached() {
     return ensureObserverAttachedBase(observerDeps);
 }
 
-function waitForContainerAndInitialPrune() {
+function waitForContainerAndInitialPrune(options = {}) {
     return waitForContainerAndInitialPruneBase({
         attachObserverToContainer,
-        runInitialPrune,
+        runInitialPrune: (container) => runInitialPrune(container, options),
     });
 }
 

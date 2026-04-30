@@ -86,15 +86,27 @@ export function createPruneController({
         return result;
     }
 
-    function runInitialPrune(container) {
-        return runInitialPruneBase(container, {
-            pruneOldSections,
-            refreshObservedSections: scheduleRefreshPostPruneState,
-            installStartupPruneMask: () => {
-                installStartupPruneMask(container, getStartupMaskVisibleSectionsLimit());
+    function runInitialPrune(container, options = {}) {
+        const { useStartupMask = true } = options;
+
+        return runInitialPruneBase(
+            container,
+            {
+                pruneOldSections,
+                refreshObservedSections: scheduleRefreshPostPruneState,
+                installStartupPruneMask: useStartupMask
+                    ? () => {
+                        installStartupPruneMask(container, getStartupMaskVisibleSectionsLimit());
+                    }
+                    : null,
+                removeStartupPruneMask: useStartupMask
+                    ? removeStartupPruneMask
+                    : null,
             },
-            removeStartupPruneMask,
-        });
+            {
+                useStartupMask,
+            }
+        );
     }
 
     function bootstrapInitialPruneFromObservedMutation() {

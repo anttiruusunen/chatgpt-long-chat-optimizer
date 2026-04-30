@@ -505,15 +505,20 @@ export function runInitialPrune(
         refreshObservedSections,
         installStartupPruneMask,
         removeStartupPruneMask,
-    }
+    },
+    {
+        useStartupMask = true,
+    } = {}
 ) {
     if (!state.featureFlags.pruning) return;
     if (!state.settings.autoPrune || state.didInitialPrune) {
         return;
     }
 
-    installStartupPruneMask?.();
-    hideContainer(container);
+    if (useStartupMask) {
+        installStartupPruneMask?.();
+        hideContainer(container);
+    }
 
     requestAnimationFrame(() => {
         try {
@@ -533,6 +538,7 @@ export function runInitialPrune(
             debugLog("Prune: initial prune completed", {
                 ...result,
                 placeholderChanged,
+                useStartupMask,
             });
 
             if (!result?.visibleSectionsChanged) {
@@ -541,6 +547,31 @@ export function runInitialPrune(
         } catch (error) {
             console.error("[Thread Optimizer] Initial prune failed", error);
         } finally {
+            if (!useStartupMask) {
+                const latestContainer = getConversationContainer();
+                if (latestContainer) {
+                    const {
+                        firstVisibleSection,
+                        lastVisibleSection,
+                    } = getFirstAndLastVisibleSections();
+
+                    ensurePlaceholderState(firstVisibleSection);
+                    ensureTopRestoreSentinelState(firstVisibleSection);
+                    ensureBottomPruneSentinelState(lastVisibleSection);
+                    refreshObservedSections();
+
+                    debugLog("Prune: post-initial stabilization refresh completed without startup mask", {
+                        hasContainer: Boolean(latestContainer),
+                        hasFirstVisibleSection: Boolean(firstVisibleSection),
+                        hasLastVisibleSection: Boolean(lastVisibleSection),
+                        softPrunedSections: state.softPrunedSections.length,
+                        totalHiddenCount: state.totalHiddenCount,
+                        useStartupMask,
+                    });
+                }
+                return;
+            }
+
             requestAnimationFrame(() => {
                 revealContainer(container);
 
@@ -568,6 +599,7 @@ export function runInitialPrune(
                         hasLastVisibleSection: Boolean(lastVisibleSection),
                         softPrunedSections: state.softPrunedSections.length,
                         totalHiddenCount: state.totalHiddenCount,
+                        useStartupMask,
                     });
                 });
             });
