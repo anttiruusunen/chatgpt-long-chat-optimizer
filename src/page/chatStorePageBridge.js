@@ -2403,8 +2403,6 @@
                 maxCallSites: 80,
             };
 
-            const stats = this.__branchCallSiteStats;
-
             stats.totalCalls += 1;
             stats.methods[methodName] = (stats.methods[methodName] || 0) + 1;
 
