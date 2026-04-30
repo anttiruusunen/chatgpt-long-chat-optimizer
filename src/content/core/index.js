@@ -27,7 +27,10 @@ import {
 import {
     disconnectSentinelObservers,
 } from "../pruning/sentinelObservers.js";
-import { ensureQolStyles } from "../ui/qolStyles.js";
+import {
+    ensureQolStyles,
+    syncCodeBlockScrollbarStyles,
+} from "../ui/qolStyles.js";
 import { installConversationNavigationWatcher } from "./navigation.js";
 import {
     configureConversationMaintenance,
@@ -237,6 +240,7 @@ async function initialize() {
     state.debugLoggingEnabled = Boolean(state.settings.enableDebugLogging);
     syncFeatureFlagsFromSettings();
     ensureQolStyles();
+    syncCodeBlockScrollbarStyles();
     syncStoreReadOptimizationToPageWithRetry();
     syncPruningStateToPageBridge();
 
@@ -296,6 +300,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     let offscreenFlagChanged = false;
     let largeCodeBlockFlagChanged = false;
     let storeReadOptimizationFlagChanged = false;
+    let qolSettingsChanged = false;
 
     if (changes.historyKeptExchanges) {
         state.settings.historyKeptExchanges = changes.historyKeptExchanges.newValue;
@@ -330,7 +335,17 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         storeReadOptimizationFlagChanged = true;
     }
 
+    if (changes.enableCodeBlockScrollbars) {
+        state.settings.enableCodeBlockScrollbars = Boolean(changes.enableCodeBlockScrollbars.newValue);
+        syncCodeBlockScrollbarStyles();
+    }
+
     syncFeatureFlagsFromSettings();
+
+    if (qolSettingsChanged) {
+        syncQolSettingsToDocument();
+    }
+
     syncPruningStateToPageBridge();
 
     if (storeReadOptimizationFlagChanged || changes.enableDebugLogging) {

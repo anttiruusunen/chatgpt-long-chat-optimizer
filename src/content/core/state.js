@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
     enableLargeCodeBlockOptimization: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
+    enableCodeBlockScrollbars: true,
 };
 
 if (!window[STATE_KEY]) {
@@ -66,6 +67,7 @@ if (!window[STATE_KEY]) {
             offscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
             largeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
             storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
+            codeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
         },
 
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,

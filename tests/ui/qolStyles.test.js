@@ -4,11 +4,16 @@ import {
     ensureQolStyles,
     removeQolStyles,
     getQolStyleText,
+    syncCodeBlockScrollbarStyles,
+    getCodeBlockScrollbarStyleText,
 } from "../../src/content/ui/qolStyles.js";
+
+import { state } from "../../src/content/core/state.js";
 
 describe("qolStyles", () => {
     beforeEach(() => {
         document.head.innerHTML = "";
+        state.settings.enableCodeBlockScrollbars = false;
     });
 
     it("installs the QoL style tag once", () => {
@@ -65,11 +70,21 @@ describe("qolStyles", () => {
         expect(styleEl.textContent).toContain("overflow-y: auto");
     });
 
-    it("contains the code block clamp rule", () => {
+    it("does not install code block scrollbar styles with base QoL styles", () => {
         const styleEl = ensureQolStyles();
 
         expect(styleEl).not.toBeNull();
+        expect(styleEl.textContent).not.toContain("section pre:has(.cm-editor)");
+        expect(document.getElementById("thread-optimizer-code-scrollbars-style")).toBeNull();
+    });
 
+    it("installs and removes the conditional code block scrollbar style tag", () => {
+        state.settings.enableCodeBlockScrollbars = true;
+        syncCodeBlockScrollbarStyles();
+
+        const styleEl = document.getElementById("thread-optimizer-code-scrollbars-style");
+
+        expect(styleEl).not.toBeNull();
         expect(styleEl.textContent).toContain("section pre {");
         expect(styleEl.textContent).toContain("max-height: 30vh");
         expect(styleEl.textContent).toContain("overflow-x: auto");
@@ -79,8 +94,19 @@ describe("qolStyles", () => {
         expect(styleEl.textContent).toContain("section pre:has(.cm-editor)");
         expect(styleEl.textContent).toContain("section pre .cm-scroller");
         expect(styleEl.textContent).toContain("section pre .cm-content");
-        expect(styleEl.textContent).toContain("max-height: 30vh");
-        expect(styleEl.textContent).toContain("overflow-y: auto");
+
+        state.settings.enableCodeBlockScrollbars = false;
+        syncCodeBlockScrollbarStyles();
+
+        expect(document.getElementById("thread-optimizer-code-scrollbars-style")).toBeNull();
+    });
+
+    it("getCodeBlockScrollbarStyleText exposes only the conditional code scrollbar CSS", () => {
+        const text = getCodeBlockScrollbarStyleText();
+
+        expect(text).toContain("section pre {");
+        expect(text).toContain("section pre:has(.cm-editor)");
+        expect(text).toContain("section pre .cm-scroller");
     });
 
     it("getQolStyleText exposes the CSS-driven offscreen selectors", () => {

@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
     enableLargeCodeBlockOptimization: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
+    enableCodeBlockScrollbars: true,
 };
 
 const historyKeptExchangesInput = document.getElementById("historyKeptExchanges");
@@ -14,6 +15,7 @@ const clearHistoryKeptExchangesButton = document.getElementById("clearHistoryKep
 const enablePruningInput = document.getElementById("enablePruning");
 const enableOffscreenOptimizationInput = document.getElementById("enableOffscreenOptimization");
 const enableLargeCodeBlockOptimizationInput = document.getElementById("enableLargeCodeBlockOptimization");
+const enableCodeBlockScrollbarsInput = document.getElementById("enableCodeBlockScrollbars");
 const enableDebugLoggingInput = document.getElementById("enableDebugLogging");
 const hiddenMessagesValueEl = document.getElementById("hiddenMessagesValue");
 const lastReplyTimeValueEl = document.getElementById("lastReplyTimeValue");
@@ -31,6 +33,7 @@ const REQUIRED_ELEMENTS = {
     enablePruningInput,
     enableOffscreenOptimizationInput,
     enableLargeCodeBlockOptimizationInput,
+    enableCodeBlockScrollbarsInput,
     enableDebugLoggingInput,
     hiddenMessagesValueEl,
     lastReplyTimeValueEl,
@@ -194,6 +197,7 @@ async function loadSettings() {
         enableLargeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
         enableDebugLogging: DEFAULT_SETTINGS.enableDebugLogging,
         enableStoreReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
+        enableCodeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
     });
 
     historyKeptExchangesInput.value =
@@ -204,6 +208,7 @@ async function loadSettings() {
     enableLargeCodeBlockOptimizationInput.checked = Boolean(stored.enableLargeCodeBlockOptimization);
     enableDebugLoggingInput.checked = Boolean(stored.enableDebugLogging);
     enableStoreReadOptimizationInput.checked = Boolean(stored.enableStoreReadOptimization);
+    enableCodeBlockScrollbarsInput.checked = Boolean(stored.enableCodeBlockScrollbars);
 
     updateFieldStates();
     updateDebugVisibility();
@@ -228,6 +233,7 @@ async function saveSettings() {
         enableLargeCodeBlockOptimization: enableLargeCodeBlockOptimizationInput.checked,
         enableDebugLogging: enableDebugLoggingInput.checked,
         enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
+        enableCodeBlockScrollbars: enableCodeBlockScrollbarsInput.checked,
     };
 
     await storageSyncSet(settingsToStore);
@@ -295,6 +301,7 @@ function bindEvents() {
     });
 
     bindEvent(enableStoreReadOptimizationInput, "change", saveSettings);
+    bindEvent(enableCodeBlockScrollbarsInput, "change", saveSettings);
 
     bindEvent(clearHistoryKeptExchangesButton, "click", async () => {
         historyKeptExchangesInput.value = "";

@@ -5,4 +5,5 @@ export function syncFeatureFlagsFromSettings() {
     state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
     state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
     state.featureFlags.storeReadOptimization = Boolean(state.settings.enableStoreReadOptimization);
+    state.featureFlags.codeBlockScrollbars = Boolean(state.settings.enableCodeBlockScrollbars);
 }
