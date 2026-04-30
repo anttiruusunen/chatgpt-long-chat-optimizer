@@ -1,18 +1,14 @@
 import { debugLog } from "../core/logger.js";
+import { state } from "../core/state.js";
 
-const STYLE_ID = "thread-optimizer-qol-style";
+const BASE_STYLE_ID = "thread-optimizer-qol-style";
+const CODE_SCROLLBARS_STYLE_ID = "thread-optimizer-code-scrollbars-style";
 
-const QOL_CSS = `
-/* immediately hide old visible sections once JS marks them as out-of-window */
+const BASE_QOL_CSS = `
 section[data-thread-optimizer-out-of-window="true"] {
     display: none !important;
 }
 
-/*
- * CSS-driven offscreen optimization for normal conversation sections.
- * JS toggles the root enable flag plus a small per-section
- * "live override" for the newest assistant section.
- */
 html[data-thread-optimizer-sections-offscreen="true"] section[data-testid^="conversation-turn-"],
 html[data-thread-optimizer-sections-offscreen="true"] section[data-turn] {
     content-visibility: auto;
@@ -24,77 +20,20 @@ html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimi
     contain-intrinsic-size: none;
 }
 
-/*
- * Hybrid code-block model:
- * - old large blocks are usually detached out of DOM by JS
- * - any large block that remains live in DOM still benefits from CSS
- */
 html[data-thread-optimizer-sections-offscreen="true"] section pre[data-thread-optimizer-large-code-live="true"] {
     content-visibility: auto;
     contain-intrinsic-size: auto 240px;
 }
 
-/* clamp only the intended user message content box */
 section[data-turn="user"] [data-message-author-role="user"] > div {
     max-height: 30vh;
     overflow-y: auto;
 }
 
-/*
- * Base code block flow:
- * keep code blocks in normal block flow so they never visually cover text below.
- * For plain code blocks, pre owns the clamp and scrolling.
- */
-section pre {
-    display: block;
-    position: relative;
-    z-index: 0;
-    clear: both;
-    box-sizing: border-box;
-    max-width: 100%;
-    max-height: 30vh;
-    overflow-x: auto;
-    overflow-y: auto;
-    contain: layout paint;
-}
-
-/*
- * CodeMirror-based blocks:
- * let the dedicated scroller own the vertical clamp/scroll instead of pre.
- */
-section pre:has(.cm-editor) {
-    max-height: none;
-    overflow: visible;
-    contain: none;
-}
-
-section pre .cm-editor {
-    display: block;
-    box-sizing: border-box;
-    max-width: 100%;
-}
-
-section pre .cm-scroller {
-    box-sizing: border-box;
-    max-height: 30vh;
-    overflow-x: auto;
-    overflow-y: auto;
-}
-
-section pre .cm-content,
-section pre .cm_content {
-    box-sizing: border-box;
-    max-height: none !important;
-    overflow: visible !important;
-    contain: none !important;
-}
-
-/* collapsed live code blocks stay in DOM but should not render */
 section pre[data-thread-optimizer-code-collapsed="true"] {
     display: none !important;
 }
 
-/* detached/collapsed code block placeholder */
 [data-thread-optimizer-code-placeholder="true"] {
     display: flex;
     align-items: center;
@@ -152,29 +91,87 @@ section pre[data-thread-optimizer-code-collapsed="true"] {
 }
 `;
 
-function getStyleElement() {
-    return document.getElementById(STYLE_ID);
+const CODE_SCROLLBARS_CSS = `
+section pre {
+    display: block;
+    position: relative;
+    z-index: 0;
+    clear: both;
+    box-sizing: border-box;
+    max-width: 100%;
+    max-height: 30vh;
+    overflow-x: auto;
+    overflow-y: auto;
+    contain: layout paint;
 }
 
-export function ensureQolStyles() {
-    let styleEl = getStyleElement();
+section pre:has(.cm-editor) {
+    max-height: none;
+    overflow: visible;
+    contain: none;
+}
+
+section pre .cm-editor {
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+section pre .cm-scroller {
+    box-sizing: border-box;
+    max-height: 30vh;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+section pre .cm-content,
+section pre .cm_content {
+    box-sizing: border-box;
+    max-height: none !important;
+    overflow: visible !important;
+    contain: none !important;
+}
+`;
+
+function ensureStyleElement(id, text) {
+    let styleEl = document.getElementById(id);
     if (styleEl) return styleEl;
 
     styleEl = document.createElement("style");
-    styleEl.id = STYLE_ID;
-    styleEl.textContent = QOL_CSS;
+    styleEl.id = id;
+    styleEl.textContent = text;
     (document.head || document.documentElement).appendChild(styleEl);
-
-    debugLog("QoL styles: installed");
 
     return styleEl;
 }
 
+export function ensureQolStyles() {
+    const styleEl = ensureStyleElement(BASE_STYLE_ID, BASE_QOL_CSS);
+    debugLog("QoL styles: installed");
+    return styleEl;
+}
+
+export function syncCodeBlockScrollbarStyles() {
+    if (state.settings.enableCodeBlockScrollbars) {
+        ensureStyleElement(CODE_SCROLLBARS_STYLE_ID, CODE_SCROLLBARS_CSS);
+        debugLog("Code scrollbar styles: installed");
+        return;
+    }
+
+    document.getElementById(CODE_SCROLLBARS_STYLE_ID)?.remove();
+    debugLog("Code scrollbar styles: removed");
+}
+
 export function removeQolStyles() {
-    getStyleElement()?.remove();
+    document.getElementById(BASE_STYLE_ID)?.remove();
+    document.getElementById(CODE_SCROLLBARS_STYLE_ID)?.remove();
     debugLog("QoL styles: removed");
 }
 
 export function getQolStyleText() {
-    return QOL_CSS;
+    return BASE_QOL_CSS;
+}
+
+export function getCodeBlockScrollbarStyleText() {
+    return CODE_SCROLLBARS_CSS;
 }
