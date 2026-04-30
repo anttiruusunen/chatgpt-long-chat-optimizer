@@ -210,21 +210,6 @@
     </div>
 
     <div class="flagRow">
-        <input id="enableOffscreenOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableOffscreenOptimization">
-            <strong>Enable offscreen optimization</strong>
-        </label>
-    </div>
-
-    <div class="flagRow">
-        <input id="enableLargeCodeBlockOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableLargeCodeBlockOptimization">
-            <strong>Collapse code blocks</strong>
-            <span>Hide code blocks behind a click-to-reveal placeholder while optimizing the thread.</span>
-        </label>
-    </div>
-
-    <div class="flagRow">
         <input id="enableCodeBlockCollapse" type="checkbox" />
         <label class="flagLabel" for="enableCodeBlockCollapse">
             <strong>Hide large code blocks</strong>
@@ -241,14 +226,6 @@
     </div>
 
     <div class="flagRow">
-        <input id="enableStoreReadOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableStoreReadOptimization">
-            <strong>Optimize ChatGPT store reads</strong>
-            <span>Experimental cache for repeated internal node lookups during long conversations.</span>
-        </label>
-    </div>
-
-    <div class="flagRow">
         <input id="enableCodeBlockScrollbars" type="checkbox" />
         <label class="flagLabel" for="enableCodeBlockScrollbars">
             <strong>Code block scrollbars</strong>
@@ -259,22 +236,42 @@
     <div class="flagRow">
         <input id="enableDebugLogging" type="checkbox" />
         <label class="flagLabel" for="enableDebugLogging">
-            <strong>Enable debug logging</strong>
+            <strong>Advanced / debug mode</strong>
         </label>
     </div>
-
-    <button id="logDebugStorePerformance" class="debugButton" type="button">Log store cache</button>
 </div>
 
 <div id="debugSection" class="debug" hidden>
-    <div class="label">Debug</div>
+    <div class="label">Advanced / Debug</div>
+
+    <div class="flagRow">
+        <input id="enableOffscreenOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableOffscreenOptimization">
+            <strong>Enable offscreen optimization</strong>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableLargeCodeBlockOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableLargeCodeBlockOptimization">
+            <strong>Optimize large code blocks</strong>
+            <span>Reduce rendering work for large code blocks during long conversations.</span>
+        </label>
+    </div>
+
+    <div class="flagRow">
+        <input id="enableStoreReadOptimization" type="checkbox" />
+        <label class="flagLabel" for="enableStoreReadOptimization">
+            <strong>Optimize ChatGPT store reads</strong>
+            <span>Experimental cache for repeated internal node lookups during long conversations.</span>
+        </label>
+    </div>
+
     <div class="debugButtons">
         <button id="logDebugState" class="debugButton" type="button">Log state</button>
         <button id="logDebugBuckets" class="debugButton" type="button">Log buckets</button>
         <button id="logDebugLogical" class="debugButton" type="button">Log logical</button>
-    </div>
-    <div class="hint">
-        Logs debug output in the content script console for the current tab.
+        <button id="logDebugStorePerformance" class="debugButton" type="button">Log store cache</button>
     </div>
 </div>
 
