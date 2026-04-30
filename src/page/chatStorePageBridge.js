@@ -14,6 +14,7 @@
 
     const ENABLE_STORE_PROFILER = false;
     const ENABLE_BRANCH_CALLSITE_STATS = false;
+    const ENABLE_CACHE_PROFILING = false;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -21,60 +22,60 @@
 
     const CACHE_MISS = Symbol("threadOptimizerCacheMiss");
 
-    function createFrameCache({ maxSize, stats }) {
+    function createPersistentCache({ maxSize, stats, profiled = false }) {
         const cache = new Map();
-        let clearScheduled = false;
 
         function clear(reason) {
             if (cache.size !== 0) {
                 cache.clear();
-                stats.cached = 0;
+                if (profiled && stats && "cached" in stats) stats.cached = 0;
             }
 
-            clearScheduled = false;
-            stats.frameClears += 1;
-            stats.lastClearReason = reason;
-        }
-
-        function scheduleClear() {
-            if (clearScheduled) return;
-            clearScheduled = true;
-
-            requestAnimationFrame(() => {
-                if (clearScheduled) clear("raf");
-            });
-
-            setTimeout(() => {
-                if (clearScheduled) clear("timeout-fallback");
-            }, 100);
-        }
-
-        function get(key) {
-            const value = cache.get(key);
-
-            if (value !== undefined) {
-                stats.hits += 1;
-                return value === CACHE_MISS ? null : value;
+            if (profiled && stats) {
+                stats.frameClears += 1;
+                stats.lastClearReason = reason;
             }
-
-            stats.misses += 1;
-            return undefined;
         }
 
-        function set(key, value) {
-            cache.set(key, value === null ? CACHE_MISS : value);
+        const get = profiled
+            ? function getProfiled(key) {
+                const value = cache.get(key);
 
-            if (!clearScheduled) {
-                scheduleClear();
+                if (value !== undefined) {
+                    stats.hits += 1;
+                    return value === CACHE_MISS ? null : value;
+                }
+
+                stats.misses += 1;
+                return undefined;
             }
+            : function getProduction(key) {
+                const value = cache.get(key);
+                return value === undefined
+                    ? undefined
+                    : value === CACHE_MISS
+                        ? null
+                        : value;
+            };
 
-            if (cache.size > maxSize) {
-                cache.delete(cache.keys().next().value);
-                stats.evictions += 1;
+        const set = profiled
+            ? function setProfiled(key, value) {
+                cache.set(key, value === null ? CACHE_MISS : value);
+
+                if (cache.size > maxSize) {
+                    cache.delete(cache.keys().next().value);
+                    stats.evictions += 1;
+                }
+
+                stats.cached = cache.size;
             }
+            : function setProduction(key, value) {
+                cache.set(key, value === null ? CACHE_MISS : value);
 
-            stats.cached = cache.size;
-        }
+                if (cache.size > maxSize) {
+                    cache.delete(cache.keys().next().value);
+                }
+            };
 
         return { get, set, clear, cache };
     }
@@ -1522,7 +1523,9 @@
             };
         },
 
-        installMessageIdIndex() {
+        installMessageIdIndex({
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) {
                 return {
                     ok: false,
@@ -1554,51 +1557,84 @@
 
             const bridgeRef = this;
 
-            this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeId(messageId) {
-                const index = bridgeRef.__messageIdIndex;
-                const stats = bridgeRef.__messageIdIndexStats;
+            if (profiled) {
+                this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProfiled(messageId) {
+                    const index = bridgeRef.__messageIdIndex;
+                    const stats = bridgeRef.__messageIdIndexStats;
 
-                if (index) {
-                    const indexed = index.get(messageId);
+                    if (index) {
+                        const indexed = index.get(messageId);
 
-                    if (indexed !== undefined) {
-                        stats.hits += 1;
-                        return indexed;
+                        if (indexed !== undefined) {
+                            stats.hits += 1;
+                            return indexed;
+                        }
                     }
-                }
 
-                stats.missSinceRebuild += 1;
+                    stats.missSinceRebuild += 1;
 
-                if (stats.missSinceRebuild >= 150) {
-                    stats.missSinceRebuild = 0;
+                    if (stats.missSinceRebuild >= 150) {
+                        stats.missSinceRebuild = 0;
 
-                    bridgeRef.maybeRebuildMessageIdIndex({
-                        minIntervalMs: 1000,
-                    });
+                        bridgeRef.maybeRebuildMessageIdIndex({
+                            minIntervalMs: 1000,
+                        });
 
-                    const rebuiltIndex = bridgeRef.__messageIdIndex;
-                    const rebuilt = rebuiltIndex?.get(messageId);
+                        const rebuiltIndex = bridgeRef.__messageIdIndex;
+                        const rebuilt = rebuiltIndex?.get(messageId);
 
-                    if (rebuilt !== undefined) {
-                        stats.hits += 1;
-                        return rebuilt;
+                        if (rebuilt !== undefined) {
+                            stats.hits += 1;
+                            return rebuilt;
+                        }
+                    } else {
+                        stats.rebuildSkips += 1;
                     }
-                } else {
-                    stats.rebuildSkips += 1;
-                }
 
-                stats.misses += 1;
+                    stats.misses += 1;
 
-                const store = bridgeRef.__store;
-                const result = original.call(store, messageId);
+                    const result = original.call(bridgeRef.__store, messageId);
 
-                if (result) {
-                    stats.fallbackHits += 1;
-                    bridgeRef.__messageIdIndex.set(messageId, result);
-                }
+                    if (result) {
+                        stats.fallbackHits += 1;
+                        bridgeRef.__messageIdIndex?.set(messageId, result);
+                    }
 
-                return result ?? null;
-            };
+                    return result ?? null;
+                };
+            } else {
+                let missSinceRebuild = 0;
+
+                this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProduction(messageId) {
+                    const index = bridgeRef.__messageIdIndex;
+
+                    if (index) {
+                        const indexed = index.get(messageId);
+                        if (indexed !== undefined) return indexed;
+                    }
+
+                    missSinceRebuild += 1;
+
+                    if (missSinceRebuild >= 150) {
+                        missSinceRebuild = 0;
+
+                        bridgeRef.maybeRebuildMessageIdIndex({
+                            minIntervalMs: 1000,
+                        });
+
+                        const rebuilt = bridgeRef.__messageIdIndex?.get(messageId);
+                        if (rebuilt !== undefined) return rebuilt;
+                    }
+
+                    const result = original.call(bridgeRef.__store, messageId);
+
+                    if (result) {
+                        bridgeRef.__messageIdIndex?.set(messageId, result);
+                    }
+
+                    return result ?? null;
+                };
+            }
 
             this.__messageIdIndexInstalled = true;
 
@@ -1606,6 +1642,7 @@
                 ok: true,
                 installed: true,
                 indexSize: this.__messageIdIndex.size,
+                profiled,
             };
         },
 
@@ -1638,10 +1675,18 @@
             };
         },
 
-        installExistingNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
+        installExistingNodeFrameCache({
+            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) return { ok: false, reason: "store not registered" };
+
             if (this.__existingNodeFrameCacheInstalled) {
-                return { ok: true, alreadyInstalled: true, stats: this.__existingNodeFrameCacheStats };
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__existingNodeFrameCacheStats,
+                };
             }
 
             const original = this.__store.getNodeIfExists;
@@ -1649,22 +1694,34 @@
                 return { ok: false, reason: "getNodeIfExists unavailable" };
             }
 
-            const stats = {
-                hits: 0,
-                misses: 0,
-                hintHits: 0,
-                hintConfirmed: 0,
-                confirmedFastHits: 0,
-                fallbackHits: 0,
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "frame+confirmed-direct-index",
-                lastClearReason: null,
-            };
+            const stats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    hintHits: 0,
+                    hintConfirmed: 0,
+                    confirmedFastHits: 0,
+                    fallbackHits: 0,
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    mode: "profiled:persistent+confirmed-direct-index",
+                    lastClearReason: null,
+                }
+                : {
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "production:persistent+confirmed-direct-index",
+                    lastClearReason: null,
+                };
 
-            const frameCache = createFrameCache({ maxSize, stats });
+            const frameCache = createPersistentCache({
+                maxSize,
+                stats,
+                profiled,
+            });
 
             this.__confirmedExistingNodeIds ??= new Set();
             this.__existingNodeFrameCache = frameCache.cache;
@@ -1673,52 +1730,95 @@
 
             const bridgeRef = this;
 
-            this.__store.getNodeIfExists = function cachedGetNodeIfExists(id) {
-                const cached = frameCache.get(id);
-                if (cached !== undefined) return cached;
+            if (profiled) {
+                this.__store.getNodeIfExists = function cachedGetNodeIfExistsProfiled(id) {
+                    const cached = frameCache.get(id);
+                    if (cached !== undefined) return cached;
 
-                const directIndex = bridgeRef.__nodeIdDirectIndex;
-                const hinted =
-                    directIndex instanceof Map
-                        ? directIndex.get(id)
-                        : undefined;
+                    const directIndex = bridgeRef.__nodeIdDirectIndex;
+                    const hinted =
+                        directIndex instanceof Map
+                            ? directIndex.get(id)
+                            : undefined;
 
-                if (
-                    hinted !== undefined &&
-                    bridgeRef.__confirmedExistingNodeIds?.has(id)
-                ) {
-                    stats.confirmedFastHits += 1;
-                    frameCache.set(id, hinted);
-                    return hinted;
-                }
+                    if (
+                        hinted !== undefined &&
+                        bridgeRef.__confirmedExistingNodeIds?.has(id)
+                    ) {
+                        stats.confirmedFastHits += 1;
+                        frameCache.set(id, hinted);
+                        return hinted;
+                    }
 
-                const store = bridgeRef.__store;
-                const result = original.call(store, id);
+                    const store = bridgeRef.__store;
+                    const result = original.call(store, id);
 
-                if (hinted !== undefined) {
-                    stats.hintHits += 1;
+                    if (hinted !== undefined) {
+                        stats.hintHits += 1;
 
-                    if (result === hinted) {
-                        stats.hintConfirmed += 1;
+                        if (result === hinted) {
+                            stats.hintConfirmed += 1;
+                            bridgeRef.__confirmedExistingNodeIds?.add(id);
+                        }
+                    }
+
+                    if (result != null) {
+                        stats.fallbackHits += 1;
+                        frameCache.set(id, result);
+
+                        if (result.id && directIndex instanceof Map) {
+                            directIndex.set(result.id, result);
+                        }
+                    }
+
+                    return result ?? null;
+                };
+            } else {
+                this.__store.getNodeIfExists = function cachedGetNodeIfExistsProduction(id) {
+                    const cached = frameCache.get(id);
+                    if (cached !== undefined) return cached;
+
+                    const directIndex = bridgeRef.__nodeIdDirectIndex;
+                    const hinted =
+                        directIndex instanceof Map
+                            ? directIndex.get(id)
+                            : undefined;
+
+                    if (
+                        hinted !== undefined &&
+                        bridgeRef.__confirmedExistingNodeIds?.has(id)
+                    ) {
+                        frameCache.set(id, hinted);
+                        return hinted;
+                    }
+
+                    const store = bridgeRef.__store;
+                    const result = original.call(store, id);
+
+                    if (hinted !== undefined && result === hinted) {
                         bridgeRef.__confirmedExistingNodeIds?.add(id);
                     }
-                }
 
-                if (result != null) {
-                    stats.fallbackHits += 1;
-                    frameCache.set(id, result);
+                    if (result != null) {
+                        frameCache.set(id, result);
 
-                    if (result.id && directIndex instanceof Map) {
-                        directIndex.set(result.id, result);
+                        if (result.id && directIndex instanceof Map) {
+                            directIndex.set(result.id, result);
+                        }
                     }
-                }
 
-                return result ?? null;
-            };
+                    return result ?? null;
+                };
+            }
 
             this.__existingNodeFrameCacheInstalled = true;
 
-            return { ok: true, installed: true, methods: ["getNodeIfExists"] };
+            return {
+                ok: true,
+                installed: true,
+                methods: ["getNodeIfExists"],
+                profiled,
+            };
         },
 
         uninstallExistingNodeFrameCache() {
@@ -1737,7 +1837,10 @@
             };
         },
 
-        installFindNodeFromLeafFrameCache({ maxSize = 10000 } = {}) {
+        installFindNodeFromLeafFrameCache({
+            maxSize = 10000,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) {
                 return { ok: false, reason: "store not registered" };
             }
@@ -1755,26 +1858,33 @@
                 return { ok: false, reason: "findNodeFromLeaf unavailable" };
             }
 
-            const stats = {
-                calls: 0,
-                misses: 0,
-                fallbackCalls: 0,
+            const stats = profiled
+                ? {
+                    calls: 0,
+                    misses: 0,
+                    fallbackCalls: 0,
 
-                sourceKeyMisses: 0,
-                sourceKeyMismatches: 0,
-                sourceKeyFastHits: 0,
-                sourceKeyTrusted: 0,
+                    sourceKeyMisses: 0,
+                    sourceKeyMismatches: 0,
+                    sourceKeyFastHits: 0,
+                    sourceKeyTrusted: 0,
 
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "predicate-source+leaf-nested-confirmed-fast-path",
-                lastClearReason: null,
-            };
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "profiled:predicate-source+leaf-nested-confirmed-fast-path",
+                    lastClearReason: null,
+                }
+                : {
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "production:predicate-source+leaf-nested-confirmed-fast-path",
+                    lastClearReason: null,
+                };
 
-            const sourceCache = new Map(); // predicateSource -> Map(leafId -> cachedResult)
-            const trustedLeafIds = new Map(); // predicateSource -> Set(leafId)
+            const sourceCache = new Map();
+            const trustedLeafIds = new Map();
             const predicateSourceByFn = new WeakMap();
             const insertionOrder = [];
 
@@ -1796,14 +1906,14 @@
             }
 
             function getOrCreateSourceMap(source) {
-                let map = sourceCache.get(source);
+                let sourceMap = sourceCache.get(source);
 
-                if (!map) {
-                    map = new Map();
-                    sourceCache.set(source, map);
+                if (!sourceMap) {
+                    sourceMap = new Map();
+                    sourceCache.set(source, sourceMap);
                 }
 
-                return map;
+                return sourceMap;
             }
 
             function getOrCreateTrustedSet(source) {
@@ -1817,78 +1927,148 @@
                 return set;
             }
 
-            this.__store.findNodeFromLeaf = function cachedFindNodeFromLeaf(predicateFn, ...rest) {
-                stats.calls += 1;
+            function evictIfNeeded() {
+                if (stats.cached <= maxSize) return;
 
-                const leafId = rest[0];
+                const oldest = insertionOrder.shift();
+                if (!oldest) return;
 
-                if (typeof predicateFn !== "function" || !leafId) {
-                    stats.fallbackCalls += 1;
-                    return original.call(bridgeRef.__store, predicateFn, ...rest);
+                const [oldSource, oldLeafId] = oldest;
+                const oldMap = sourceCache.get(oldSource);
+
+                oldMap?.delete(oldLeafId);
+                trustedLeafIds.get(oldSource)?.delete(oldLeafId);
+
+                if (oldMap?.size === 0) {
+                    sourceCache.delete(oldSource);
+                    trustedLeafIds.delete(oldSource);
                 }
 
-                const source = getPredicateSource(predicateFn);
-                const sourceMap = getOrCreateSourceMap(source);
-                const trustedSet = trustedLeafIds.get(source);
+                stats.cached -= 1;
+                stats.evictions += 1;
+            }
 
-                if (trustedSet?.has(leafId)) {
-                    const cached = sourceMap.get(leafId);
+            if (profiled) {
+                this.__store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(predicateFn, ...rest) {
+                    stats.calls += 1;
 
-                    if (cached !== undefined) {
-                        stats.sourceKeyFastHits += 1;
-                        return cached === CACHE_MISS ? null : cached;
+                    const leafId = rest[0];
+
+                    if (typeof predicateFn !== "function" || !leafId) {
+                        stats.fallbackCalls += 1;
+                        return original.call(bridgeRef.__store, predicateFn, ...rest);
                     }
-                }
 
-                const result = original.call(bridgeRef.__store, predicateFn, ...rest);
-                const cachedResult = result ?? CACHE_MISS;
+                    const source = getPredicateSource(predicateFn);
+                    const sourceMap = getOrCreateSourceMap(source);
+                    const trustedSet = trustedLeafIds.get(source);
 
-                if (sourceMap.has(leafId)) {
-                    if (sourceMap.get(leafId) === cachedResult) {
-                        if (!trustedSet?.has(leafId)) {
-                            getOrCreateTrustedSet(source).add(leafId);
-                            stats.sourceKeyTrusted += 1;
+                    if (trustedSet?.has(leafId)) {
+                        const cached = sourceMap.get(leafId);
+
+                        if (cached !== undefined) {
+                            stats.sourceKeyFastHits += 1;
+                            return cached === CACHE_MISS ? null : cached;
+                        }
+                    }
+
+                    const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                    const cachedResult = result ?? CACHE_MISS;
+
+                    if (sourceMap.has(leafId)) {
+                        if (sourceMap.get(leafId) === cachedResult) {
+                            if (!trustedSet?.has(leafId)) {
+                                getOrCreateTrustedSet(source).add(leafId);
+                                stats.sourceKeyTrusted += 1;
+                            }
+                        } else {
+                            trustedSet?.delete(leafId);
+                            sourceMap.set(leafId, cachedResult);
+                            stats.sourceKeyMismatches += 1;
                         }
                     } else {
-                        stats.sourceKeyMismatches += 1;
-                        trustedSet?.delete(leafId);
                         sourceMap.set(leafId, cachedResult);
+                        insertionOrder.push([source, leafId]);
+
+                        stats.sourceKeyMisses += 1;
+                        stats.cached += 1;
                     }
-                } else {
-                    stats.sourceKeyMisses += 1;
-                    sourceMap.set(leafId, cachedResult);
-                    insertionOrder.push([source, leafId]);
-                    stats.cached += 1;
-                }
 
-                stats.misses += 1;
+                    stats.misses += 1;
+                    evictIfNeeded();
 
-                if (stats.cached > maxSize) {
-                    const oldest = insertionOrder.shift();
+                    return result ?? null;
+                };
+            } else {
+                let cachedCount = 0;
 
-                    if (oldest) {
-                        const [oldSource, oldLeafId] = oldest;
-                        const oldMap = sourceCache.get(oldSource);
+                this.__store.findNodeFromLeaf = function cachedFindNodeFromLeafProduction(predicateFn, ...rest) {
+                    const leafId = rest[0];
 
-                        oldMap?.delete(oldLeafId);
-                        trustedLeafIds.get(oldSource)?.delete(oldLeafId);
+                    if (typeof predicateFn !== "function" || !leafId) {
+                        return original.call(bridgeRef.__store, predicateFn, ...rest);
+                    }
 
-                        if (oldMap?.size === 0) {
-                            sourceCache.delete(oldSource);
-                            trustedLeafIds.delete(oldSource);
+                    const source = getPredicateSource(predicateFn);
+                    const sourceMap = getOrCreateSourceMap(source);
+                    const trustedSet = trustedLeafIds.get(source);
+
+                    if (trustedSet?.has(leafId)) {
+                        const cached = sourceMap.get(leafId);
+                        if (cached !== undefined) {
+                            return cached === CACHE_MISS ? null : cached;
                         }
-
-                        stats.cached -= 1;
-                        stats.evictions += 1;
                     }
-                }
 
-                return result ?? null;
-            };
+                    const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                    const cachedResult = result ?? CACHE_MISS;
+
+                    if (sourceMap.has(leafId)) {
+                        if (sourceMap.get(leafId) === cachedResult) {
+                            if (!trustedSet?.has(leafId)) {
+                                getOrCreateTrustedSet(source).add(leafId);
+                            }
+                        } else {
+                            trustedSet?.delete(leafId);
+                            sourceMap.set(leafId, cachedResult);
+                        }
+                    } else {
+                        sourceMap.set(leafId, cachedResult);
+                        insertionOrder.push([source, leafId]);
+                        cachedCount += 1;
+                    }
+
+                    // local eviction (no stats writes)
+                    if (cachedCount > maxSize) {
+                        const oldest = insertionOrder.shift();
+                        if (oldest) {
+                            const [oldSource, oldLeafId] = oldest;
+                            const oldMap = sourceCache.get(oldSource);
+
+                            oldMap?.delete(oldLeafId);
+                            trustedLeafIds.get(oldSource)?.delete(oldLeafId);
+
+                            if (oldMap?.size === 0) {
+                                sourceCache.delete(oldSource);
+                                trustedLeafIds.delete(oldSource);
+                            }
+
+                            cachedCount -= 1;
+                        }
+                    }
+
+                    return result ?? null;
+                };
+            }
 
             this.__findNodeFromLeafFrameCacheInstalled = true;
 
-            return { ok: true, installed: true, methods: ["findNodeFromLeaf"] };
+            return {
+                ok: true,
+                installed: true,
+                methods: ["findNodeFromLeaf"],
+                profiled,
+            };
         },
 
         uninstallFindNodeFromLeafFrameCache() {
@@ -1907,7 +2087,10 @@
             };
         },
 
-        installGetLeafFromNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
+        installGetLeafFromNodeFrameCache({
+            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) {
                 return { ok: false, reason: "store not registered" };
             }
@@ -1925,18 +2108,28 @@
                 return { ok: false, reason: "getLeafFromNode unavailable" };
             }
 
-            const stats = {
-                hits: 0,
-                misses: 0,
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "frame",
-                lastClearReason: null,
-            };
+            const stats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    mode: "profiled:persistent",
+                    lastClearReason: null,
+                }
+                : {
+                    maxSize,
+                    mode: "production:persistent",
+                    lastClearReason: null,
+                };
 
-            const frameCache = createFrameCache({ maxSize, stats });
+            const frameCache = createPersistentCache({
+                maxSize,
+                stats,
+                profiled,
+            });
 
             this.__getLeafFromNodeFrameCache = frameCache.cache;
             this.__getLeafFromNodeFrameCacheStats = stats;
@@ -1956,8 +2149,7 @@
                 const cached = frameCache.get(key);
                 if (cached !== undefined) return cached;
 
-                const store = bridgeRef.__store;
-                const result = original.call(store, id);
+                const result = original.call(bridgeRef.__store, id);
 
                 frameCache.set(key, result ?? null);
                 return result ?? null;
@@ -1965,9 +2157,13 @@
 
             this.__getLeafFromNodeFrameCacheInstalled = true;
 
-            return { ok: true, installed: true, methods: ["getLeafFromNode"] };
+            return {
+                ok: true,
+                installed: true,
+                methods: ["getLeafFromNode"],
+                profiled,
+            };
         },
-
         uninstallGetLeafFromNodeFrameCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
@@ -2087,7 +2283,10 @@
             };
         },
 
-        installBranchCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
+        installBranchCache({
+            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) {
                 return { ok: false, reason: "store not registered" };
             }
@@ -2104,9 +2303,11 @@
             const getBranchFromLeafOriginal = this.__store.getBranchFromLeaf;
 
             const originals = {};
+
             if (typeof getBranchOriginal === "function") {
                 originals.getBranch = getBranchOriginal;
             }
+
             if (typeof getBranchFromLeafOriginal === "function") {
                 originals.getBranchFromLeaf = getBranchFromLeafOriginal;
             }
@@ -2115,36 +2316,56 @@
                 return { ok: false, reason: "no branch methods available" };
             }
 
-            const getBranchStats = {
-                hits: 0,
-                misses: 0,
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "frame:getBranch",
-                lastClearReason: null,
-            };
+            const getBranchStats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    mode: "profiled:persistent:getBranch",
+                    lastClearReason: null,
+                }
+                : {
+                    maxSize,
+                    mode: "production:persistent:getBranch",
+                    lastClearReason: null,
+                };
 
-            const getBranchFromLeafStats = {
-                hits: 0,
-                misses: 0,
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "frame:getBranchFromLeaf",
-                lastClearReason: null,
-            };
+            const getBranchFromLeafStats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    calls: 0,
+                    cacheReturns: 0,
+                    prefixHits: 0,
+                    prefixMisses: 0,
+                    prefixRejected: 0,
+                    originalCalls: 0,
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    mode: "profiled:persistent:getBranchFromLeaf",
+                    lastClearReason: null,
+                }
+                : {
+                    maxSize,
+                    mode: "production:persistent:getBranchFromLeaf",
+                    lastClearReason: null,
+                };
 
-            const getBranchCache = createFrameCache({
+            const getBranchCache = createPersistentCache({
                 maxSize,
                 stats: getBranchStats,
+                profiled,
             });
 
-            const getBranchFromLeafCache = createFrameCache({
+            const getBranchFromLeafCache = createPersistentCache({
                 maxSize,
                 stats: getBranchFromLeafStats,
+                profiled,
             });
 
             this.__branchCache = {
@@ -2166,8 +2387,7 @@
                     const cached = getBranchCache.get(id);
                     if (cached !== undefined) return cached;
 
-                    const store = bridgeRef.__store;
-                    const result = getBranchOriginal.call(store, id, ...rest);
+                    const result = getBranchOriginal.call(bridgeRef.__store, id, ...rest);
 
                     getBranchCache.set(id, result ?? null);
                     return result ?? null;
@@ -2175,16 +2395,98 @@
             }
 
             if (typeof getBranchFromLeafOriginal === "function") {
-                this.__store.getBranchFromLeaf = function cachedGetBranchFromLeaf(id, ...rest) {
-                    const cached = getBranchFromLeafCache.get(id);
-                    if (cached !== undefined) return cached;
+                if (profiled) {
+                    this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
+                        getBranchFromLeafStats.calls += 1;
 
-                    const store = bridgeRef.__store;
-                    const result = getBranchFromLeafOriginal.call(store, id, ...rest);
+                        const key =
+                            typeof id === "string" ||
+                            typeof id === "number" ||
+                            typeof id === "boolean" ||
+                            id == null
+                                ? id
+                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
-                    getBranchFromLeafCache.set(id, result ?? null);
-                    return result ?? null;
-                };
+                        const cached = getBranchFromLeafCache.get(key);
+                        if (cached !== undefined) {
+                            getBranchFromLeafStats.cacheReturns += 1;
+                            return cached;
+                        }
+
+                        const node = getNodeDirect(bridgeRef.__store, key);
+                        const parentId = node?.parentId ?? null;
+
+                        if (node && parentId) {
+                            const parentBranch = getBranchFromLeafCache.get(parentId);
+
+                            if (
+                                Array.isArray(parentBranch) &&
+                                parentBranch[parentBranch.length - 1]?.id === parentId
+                            ) {
+                                getBranchFromLeafStats.prefixHits += 1;
+
+                                const result = parentBranch.concat(node);
+                                getBranchFromLeafCache.set(key, result);
+
+                                return result;
+                            }
+
+                            getBranchFromLeafStats.prefixMisses += 1;
+                        } else {
+                            getBranchFromLeafStats.prefixRejected += 1;
+                        }
+
+                        getBranchFromLeafStats.originalCalls += 1;
+
+                        const result = getBranchFromLeafOriginal.call(
+                            bridgeRef.__store,
+                            id,
+                            ...rest
+                        );
+
+                        getBranchFromLeafCache.set(key, result ?? null);
+                        return result ?? null;
+                    };
+                } else {
+                    this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
+                        const key =
+                            typeof id === "string" ||
+                            typeof id === "number" ||
+                            typeof id === "boolean" ||
+                            id == null
+                                ? id
+                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
+
+                        const cached = getBranchFromLeafCache.get(key);
+                        if (cached !== undefined) return cached;
+
+                        const node = getNodeDirect(bridgeRef.__store, key);
+                        const parentId = node?.parentId ?? null;
+
+                        if (node && parentId) {
+                            const parentBranch = getBranchFromLeafCache.get(parentId);
+
+                            if (
+                                Array.isArray(parentBranch) &&
+                                parentBranch[parentBranch.length - 1]?.id === parentId
+                            ) {
+                                const result = parentBranch.concat(node);
+                                getBranchFromLeafCache.set(key, result);
+
+                                return result;
+                            }
+                        }
+
+                        const result = getBranchFromLeafOriginal.call(
+                            bridgeRef.__store,
+                            id,
+                            ...rest
+                        );
+
+                        getBranchFromLeafCache.set(key, result ?? null);
+                        return result ?? null;
+                    };
+                }
             }
 
             this.__branchCacheInstalled = true;
@@ -2193,6 +2495,7 @@
                 ok: true,
                 installed: true,
                 methods: Object.keys(originals),
+                profiled,
             };
 
             this.__branchCacheLastInstallResult = result;
@@ -2214,17 +2517,18 @@
             branchCache?.getBranch?.clear?.();
             branchCache?.getBranchFromLeaf?.clear?.();
 
-            if (this.__branchCacheStats?.getBranch) {
+            if (this.__branchCacheStats?.getBranch && "cached" in this.__branchCacheStats.getBranch) {
                 this.__branchCacheStats.getBranch.cached = 0;
             }
 
-            if (this.__branchCacheStats?.getBranchFromLeaf) {
+            if (
+                this.__branchCacheStats?.getBranchFromLeaf &&
+                "cached" in this.__branchCacheStats.getBranchFromLeaf
+            ) {
                 this.__branchCacheStats.getBranchFromLeaf.cached = 0;
             }
 
-            return {
-                ok: true,
-            };
+            return { ok: true };
         },
 
         getBranchCacheStats() {
@@ -2239,7 +2543,10 @@
             };
         },
 
-        installResolvedNodeFrameCache({ maxSize = DEFAULT_CACHE_MAX_SIZE } = {}) {
+        installResolvedNodeFrameCache({
+            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
             if (!this.__store) {
                 return { ok: false, reason: "store not registered" };
             }
@@ -2248,50 +2555,162 @@
                 return { ok: true, alreadyInstalled: true };
             }
 
-            const stats = {
-                hits: 0,
-                misses: 0,
-                cached: 0,
-                evictions: 0,
-                frameClears: 0,
-                maxSize,
-                mode: "frame",
-                lastClearReason: null,
-            };
+            const stats = profiled
+                ? {
+                    calls: 0,
+                    hits: 0,
+                    misses: 0,
 
-            const frameCache = createFrameCache({ maxSize, stats });
+                    nodeHits: 0,
+                    nullHits: 0,
+                    nodeWrites: 0,
+                    nullWrites: 0,
+                    dualKeyWrites: 0,
+
+                    resolvedNodeIds: 0,
+                    messageIdInputs: 0,
+                    nodeIdInputs: 0,
+                    unknownInputs: 0,
+
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    mode: "profiled:persistent",
+                    lastClearReason: null,
+
+                    inputSamples: [],
+                    resultSamples: [],
+                }
+                : {
+                    maxSize,
+                    mode: "production:persistent",
+                    lastClearReason: null,
+                };
+
+            const frameCache = createPersistentCache({
+                maxSize,
+                stats,
+                profiled,
+            });
 
             this.__resolvedNodeFrameCache = frameCache.cache;
             this.__resolvedNodeFrameCacheStats = stats;
 
             const bridgeRef = this;
 
-            this.__resolveNodeFast = function resolveNodeFast(id) {
-                const cached = frameCache.get(id);
-                if (cached !== undefined) return cached;
+            if (profiled) {
+                this.__resolveNodeFast = function resolveNodeFastProfiled(id) {
+                    stats.calls += 1;
 
-                const node = resolveNodeCore(bridgeRef, id);
-
-                if (node) {
-                    const nodeId = node.id;
-
-                    // primary key
-                    frameCache.set(id, node);
-
-                    // 🔥 dual-key cache
-                    if (nodeId && nodeId !== id) {
-                        frameCache.set(nodeId, node);
+                    if (typeof id === "string") {
+                        if (id.startsWith("client-") || /^[0-9a-f-]{20,}$/i.test(id)) {
+                            stats.nodeIdInputs += 1;
+                        } else {
+                            stats.messageIdInputs += 1;
+                        }
+                    } else {
+                        stats.unknownInputs += 1;
                     }
-                } else {
-                    frameCache.set(id, null);
-                }
 
-                return node;
-            };
+                    const cached = frameCache.get(id);
+
+                    if (cached !== undefined) {
+                        if (cached === null) {
+                            stats.nullHits += 1;
+                        } else {
+                            stats.nodeHits += 1;
+                        }
+
+                        return cached;
+                    }
+
+                    const node = resolveNodeCore(bridgeRef, id);
+
+                    if (stats.inputSamples.length < 20) {
+                        stats.inputSamples.push({
+                            id,
+                            idType: typeof id,
+                            idString: String(id).slice(0, 120),
+                            nodeExists: Boolean(node),
+                            nodeId: node?.id ?? null,
+                            messageId:
+                                node?.message?.id ||
+                                node?.message?.message_id ||
+                                node?.message?.metadata?.message_id ||
+                                null,
+                        });
+                    }
+
+                    if (node) {
+                        const nodeId = node.id;
+
+                        stats.nodeWrites += 1;
+
+                        if (nodeId) {
+                            stats.resolvedNodeIds += 1;
+                        }
+
+                        frameCache.set(id, node);
+
+                        if (nodeId && nodeId !== id) {
+                            frameCache.set(nodeId, node);
+                            stats.dualKeyWrites += 1;
+                        }
+
+                        if (stats.resultSamples.length < 20) {
+                            stats.resultSamples.push({
+                                inputId: String(id).slice(0, 120),
+                                nodeId,
+                                hasMessage: Boolean(node.message),
+                                messageId:
+                                    node.message?.id ||
+                                    node.message?.message_id ||
+                                    node.message?.metadata?.message_id ||
+                                    null,
+                                nodeKeys:
+                                    node && typeof node === "object"
+                                        ? Object.keys(node).slice(0, 20)
+                                        : null,
+                            });
+                        }
+                    } else {
+                        stats.nullWrites += 1;
+                        frameCache.set(id, null);
+                    }
+
+                    return node;
+                };
+            } else {
+                this.__resolveNodeFast = function resolveNodeFastProduction(id) {
+                    const cached = frameCache.get(id);
+                    if (cached !== undefined) return cached;
+
+                    const node = resolveNodeCore(bridgeRef, id);
+
+                    if (node) {
+                        const nodeId = node.id;
+
+                        frameCache.set(id, node);
+
+                        if (nodeId && nodeId !== id) {
+                            frameCache.set(nodeId, node);
+                        }
+                    } else {
+                        frameCache.set(id, null);
+                    }
+
+                    return node;
+                };
+            }
 
             this.__resolvedNodeFrameCacheInstalled = true;
 
-            return { ok: true, installed: true };
+            return {
+                ok: true,
+                installed: true,
+                profiled,
+            };
         },
 
         uninstallResolvedNodeFrameCache() {
@@ -2332,21 +2751,36 @@
                 ok: true,
                 discoveryResult,
                 statusBefore: this.status(),
-                messageIdIndex: this.installMessageIdIndex(),
+                messageIdIndex: this.installMessageIdIndex({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
                 indexRefreshHooks: [
                     this.wrapMutationForIndexRefresh("addMessageNode"),
                     this.wrapMutationForIndexRefresh("addOptimisticMessageNode"),
                     this.wrapMutationForIndexRefresh("prependNode"),
                     this.wrapMutationForIndexRefresh("prependOptismisticNode"),
-                    this.wrapMutationForIndexRefresh("processUpdate"),
+
+                    // PERF: processUpdate appears to fire during streaming.
+                    // Avoid clearing read caches here so branch/path caches can persist
+                    // across token updates. Revisit if stale branch bugs appear.
+                    { ok: true, skipped: true, method: "processUpdate", reason: "streaming update; do not clear read caches" },
                 ],
-                nodeFrameCache: this.installExistingNodeFrameCache(),
+                nodeFrameCache: this.installExistingNodeFrameCache({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
                 findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache({
                     maxSize: 10000,
+                    profiled: ENABLE_CACHE_PROFILING,
                 }),
-                getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache(),
-                branchCache: this.installBranchCache(),
-                resolvedNodeFrameCache: this.installResolvedNodeFrameCache(),
+                getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
+                branchCache: this.installBranchCache({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
+                resolvedNodeFrameCache: this.installResolvedNodeFrameCache({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
                 profiler: ENABLE_STORE_PROFILER
                     ? this.installStoreProfiler()
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
@@ -2541,14 +2975,60 @@
 
         clearStoreReadCache(reason = "manual") {
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
-                if (cacheSlot === "__branchCache") {
-                    this.clearBranchCache?.();
+                // Experiment: keep confirmed findNodeFromLeaf cache alive across
+                // tab/focus/frame-style clears. Still clear it on real store mutation.
+                if (
+                    cacheSlot === "__branchCache" &&
+                    reason !== "manual" &&
+                    reason !== "conversation-change"
+                ) {
+                   if (this.__branchCacheStats?.getBranchFromLeaf && ENABLE_CACHE_PROFILING) {
+                        this.__branchCacheStats.getBranchFromLeaf.skippedClears =
+                            (this.__branchCacheStats.getBranchFromLeaf.skippedClears || 0) + 1;
+                        this.__branchCacheStats.getBranchFromLeaf.lastClearReason =
+                            "kept-persistent-" + reason;
+                    }
 
-                    if (this.__branchCacheStats?.getBranch) {
+                    // Keep getBranchFromLeaf long-lived, but still allow getBranch
+                    // to clear normally if you want it fresher.
+                    this.__branchCache?.getBranch?.clear?.();
+
+                    if (this.__branchCacheStats?.getBranch && ENABLE_CACHE_PROFILING) {
+                        this.__branchCacheStats.getBranch.cached = 0;
+                        this.__branchCacheStats.getBranch.frameClears += 1;
                         this.__branchCacheStats.getBranch.lastClearReason = reason;
                     }
 
-                    if (this.__branchCacheStats?.getBranchFromLeaf) {
+                    continue;
+                }
+                if (
+                    (
+                        cacheSlot === "__findNodeFromLeafFrameCache" ||
+                        cacheSlot === "__getLeafFromNodeFrameCache" ||
+                        cacheSlot === "__existingNodeFrameCache"
+                    ) &&
+                    reason !== "store-mutation" &&
+                    reason !== "conversation-change" &&
+                    reason !== "manual" &&
+                    reason !== "tab-active"
+                ) {
+                    const stats = this[statsSlot];
+
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-" + reason;
+                    }
+
+                    continue;
+                }
+                if (cacheSlot === "__branchCache") {
+                    this.clearBranchCache?.();
+
+                    if (ENABLE_CACHE_PROFILING && this.__branchCacheStats?.getBranch) {
+                        this.__branchCacheStats.getBranch.lastClearReason = reason;
+                    }
+
+                    if (ENABLE_CACHE_PROFILING && this.__branchCacheStats?.getBranchFromLeaf) {
                         this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
                     }
 
@@ -2560,7 +3040,7 @@
 
                 cache?.clear?.();
 
-                if (stats) {
+                if (stats && ENABLE_CACHE_PROFILING) {
                     stats.cached = 0;
 
                     if ("clears" in stats) {
