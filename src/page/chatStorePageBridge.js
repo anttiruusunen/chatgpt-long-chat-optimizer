@@ -130,11 +130,14 @@
     function resetFrameCacheStats(stats, cache) {
         if (!stats) return;
 
-        stats.hits = 0;
-        stats.misses = 0;
+        if ("hits" in stats) stats.hits = 0;
+        if ("misses" in stats) stats.misses = 0;
+
         stats.cached = cache?.size ?? 0;
-        stats.evictions = 0;
-        stats.frameClears = 0;
+
+        if ("evictions" in stats) stats.evictions = 0;
+        if ("frameClears" in stats) stats.frameClears = 0;
+
         stats.lastClearReason = null;
     }
 
@@ -1757,9 +1760,7 @@
                 misses: 0,
                 fallbackCalls: 0,
 
-                sourceKeyHits: 0,
                 sourceKeyMisses: 0,
-                sourceKeyConfirmed: 0,
                 sourceKeyMismatches: 0,
                 sourceKeyFastHits: 0,
                 sourceKeyTrusted: 0,
@@ -1768,18 +1769,53 @@
                 evictions: 0,
                 frameClears: 0,
                 maxSize,
-                mode: "predicate-source+leaf-confirmed-fast-path",
+                mode: "predicate-source+leaf-nested-confirmed-fast-path",
                 lastClearReason: null,
             };
 
-            const sourceCache = new Map();
-            const trustedSourceKeys = new Set();
+            const sourceCache = new Map(); // predicateSource -> Map(leafId -> cachedResult)
+            const trustedLeafIds = new Map(); // predicateSource -> Set(leafId)
+            const predicateSourceByFn = new WeakMap();
+            const insertionOrder = [];
 
             this.__findNodeFromLeafFrameCache = sourceCache;
             this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = { findNodeFromLeaf: original };
 
             const bridgeRef = this;
+
+            function getPredicateSource(predicateFn) {
+                let source = predicateSourceByFn.get(predicateFn);
+
+                if (source === undefined) {
+                    source = String(predicateFn).slice(0, 500);
+                    predicateSourceByFn.set(predicateFn, source);
+                }
+
+                return source;
+            }
+
+            function getOrCreateSourceMap(source) {
+                let map = sourceCache.get(source);
+
+                if (!map) {
+                    map = new Map();
+                    sourceCache.set(source, map);
+                }
+
+                return map;
+            }
+
+            function getOrCreateTrustedSet(source) {
+                let set = trustedLeafIds.get(source);
+
+                if (!set) {
+                    set = new Set();
+                    trustedLeafIds.set(source, set);
+                }
+
+                return set;
+            }
 
             this.__store.findNodeFromLeaf = function cachedFindNodeFromLeaf(predicateFn, ...rest) {
                 stats.calls += 1;
@@ -1791,10 +1827,12 @@
                     return original.call(bridgeRef.__store, predicateFn, ...rest);
                 }
 
-                const sourceKey = String(predicateFn).slice(0, 500) + "::" + String(leafId);
+                const source = getPredicateSource(predicateFn);
+                const sourceMap = getOrCreateSourceMap(source);
+                const trustedSet = trustedLeafIds.get(source);
 
-                if (trustedSourceKeys.has(sourceKey)) {
-                    const cached = sourceCache.get(sourceKey);
+                if (trustedSet?.has(leafId)) {
+                    const cached = sourceMap.get(leafId);
 
                     if (cached !== undefined) {
                         stats.sourceKeyFastHits += 1;
@@ -1805,35 +1843,44 @@
                 const result = original.call(bridgeRef.__store, predicateFn, ...rest);
                 const cachedResult = result ?? CACHE_MISS;
 
-                if (sourceCache.has(sourceKey)) {
-                    stats.sourceKeyHits += 1;
-
-                    if (sourceCache.get(sourceKey) === cachedResult) {
-                        stats.sourceKeyConfirmed += 1;
-
-                        if (!trustedSourceKeys.has(sourceKey)) {
-                            trustedSourceKeys.add(sourceKey);
+                if (sourceMap.has(leafId)) {
+                    if (sourceMap.get(leafId) === cachedResult) {
+                        if (!trustedSet?.has(leafId)) {
+                            getOrCreateTrustedSet(source).add(leafId);
                             stats.sourceKeyTrusted += 1;
                         }
                     } else {
                         stats.sourceKeyMismatches += 1;
-                        trustedSourceKeys.delete(sourceKey);
-                        sourceCache.set(sourceKey, cachedResult);
+                        trustedSet?.delete(leafId);
+                        sourceMap.set(leafId, cachedResult);
                     }
                 } else {
                     stats.sourceKeyMisses += 1;
-                    sourceCache.set(sourceKey, cachedResult);
-                    stats.cached = sourceCache.size;
+                    sourceMap.set(leafId, cachedResult);
+                    insertionOrder.push([source, leafId]);
+                    stats.cached += 1;
                 }
 
                 stats.misses += 1;
 
-                if (sourceCache.size > maxSize) {
-                    const oldestKey = sourceCache.keys().next().value;
-                    sourceCache.delete(oldestKey);
-                    trustedSourceKeys.delete(oldestKey);
-                    stats.evictions += 1;
-                    stats.cached = sourceCache.size;
+                if (stats.cached > maxSize) {
+                    const oldest = insertionOrder.shift();
+
+                    if (oldest) {
+                        const [oldSource, oldLeafId] = oldest;
+                        const oldMap = sourceCache.get(oldSource);
+
+                        oldMap?.delete(oldLeafId);
+                        trustedLeafIds.get(oldSource)?.delete(oldLeafId);
+
+                        if (oldMap?.size === 0) {
+                            sourceCache.delete(oldSource);
+                            trustedLeafIds.delete(oldSource);
+                        }
+
+                        stats.cached -= 1;
+                        stats.evictions += 1;
+                    }
                 }
 
                 return result ?? null;
