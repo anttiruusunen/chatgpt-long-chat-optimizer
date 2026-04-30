@@ -115,6 +115,11 @@ function createConversationContainer({ anchorId = "4" } = {}) {
     return container;
 }
 
+function replaceConversationDom() {
+    document.body.innerHTML = "";
+    return createConversationContainer();
+}
+
 async function flush() {
     await Promise.resolve();
     await Promise.resolve();
@@ -171,8 +176,7 @@ describe("navigation rearm integration", () => {
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
-        document.body.innerHTML = "";
-        createConversationContainer();
+        replaceConversationDom();
 
         history.pushState({}, "", "/c/chat-2");
         vi.runAllTimers();
@@ -181,15 +185,12 @@ describe("navigation rearm integration", () => {
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
-    it("rearms initial prune from a sidebar click hint", async () => {
+    it("waits for a fresh container before rearming initial prune from a sidebar click hint", async () => {
         createConversationContainer();
         await import("../../src/content/core/index.js");
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
-
-        document.body.innerHTML = "";
-        createConversationContainer();
 
         const link = document.createElement("a");
         link.setAttribute("data-sidebar-item", "true");
@@ -201,18 +202,22 @@ describe("navigation rearm integration", () => {
         vi.advanceTimersByTime(150);
         await flush();
 
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        replaceConversationDom();
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
-    it("rearms initial prune from a Recents conversation link without data-sidebar-item", async () => {
+    it("waits for a fresh container before rearming from a Recents conversation link without data-sidebar-item", async () => {
         createConversationContainer();
         await import("../../src/content/core/index.js");
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
-
-        document.body.innerHTML = "";
-        createConversationContainer();
 
         const link = document.createElement("a");
         link.href = "/c/chat-from-recents";
@@ -224,18 +229,22 @@ describe("navigation rearm integration", () => {
         vi.advanceTimersByTime(150);
         await flush();
 
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        replaceConversationDom();
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
-    it("runs a follow-up rearm after a Recents conversation link click", async () => {
+    it("does not double-prune from the follow-up rearm after a Recents conversation link click", async () => {
         createConversationContainer();
         await import("../../src/content/core/index.js");
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
-
-        document.body.innerHTML = "";
-        createConversationContainer();
 
         const link = document.createElement("a");
         link.href = "/c/chat-from-recents-followup";
@@ -247,12 +256,19 @@ describe("navigation rearm integration", () => {
         vi.advanceTimersByTime(150);
         await flush();
 
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        replaceConversationDom();
+
+        vi.advanceTimersByTime(150);
+        await flush();
+
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
 
         vi.advanceTimersByTime(450);
         await flush();
 
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(3);
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
     it("does not rearm initial prune from a non-conversation link click", async () => {
@@ -262,15 +278,14 @@ describe("navigation rearm integration", () => {
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
-        document.body.innerHTML = "";
-        createConversationContainer();
-
         const link = document.createElement("a");
         link.href = "/settings";
         link.textContent = "Settings";
         document.body.appendChild(link);
 
         dispatchClick(link);
+
+        replaceConversationDom();
 
         vi.advanceTimersByTime(1000);
         await flush();

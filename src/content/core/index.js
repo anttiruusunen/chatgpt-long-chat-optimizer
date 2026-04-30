@@ -48,7 +48,68 @@ import { createPruneController } from "../pruning/pruneController.js";
 
 installDomMutationGuard();
 
+let pendingNavigationPruneTimer = null;
+let navigationPruneGeneration = 0;
+
+function clearPendingNavigationPrune() {
+    if (pendingNavigationPruneTimer) {
+        clearTimeout(pendingNavigationPruneTimer);
+        pendingNavigationPruneTimer = null;
+    }
+}
+
+function isLinkNavigationReason(reason) {
+    return (
+        reason === "conversation-link-click" ||
+        reason === "conversation-link-click-followup" ||
+        reason === "sidebar-click"
+    );
+}
+
+function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
+    const generation = ++navigationPruneGeneration;
+    const startedAt = performance.now();
+    const MAX_WAIT_MS = 2500;
+    const POLL_MS = 100;
+
+    clearPendingNavigationPrune();
+
+    function attempt() {
+        if (generation !== navigationPruneGeneration) return;
+
+        invalidateConversationDomCache();
+
+        const container = getConversationContainer();
+        const previousGone =
+            previousContainer instanceof Element && !previousContainer.isConnected;
+        const containerChanged =
+            container instanceof Element && container !== previousContainer;
+        const noPreviousContainer = !(previousContainer instanceof Element);
+        const timedOut = performance.now() - startedAt >= MAX_WAIT_MS;
+
+        if (
+            container &&
+            (noPreviousContainer || previousGone || containerChanged || timedOut)
+        ) {
+            ensureObserverAttached();
+
+            runInitialPrune(container, {
+                useStartupMask: false,
+                ...options,
+            });
+
+            pendingNavigationPruneTimer = null;
+            return;
+        }
+
+        pendingNavigationPruneTimer = setTimeout(attempt, POLL_MS);
+    }
+
+    pendingNavigationPruneTimer = setTimeout(attempt, POLL_MS);
+}
+
 function resetConversationLifecycleForNavigation() {
+    clearPendingNavigationPrune();
     invalidateConversationDomCache();
     clearPendingAutoPrune();
 
@@ -80,6 +141,8 @@ function resetConversationLifecycleForNavigation() {
 }
 
 function rearmInitialPruneForNavigation(reason) {
+    const previousContainer = state.observedContainer || getConversationContainer();
+
     resetConversationLifecycleForNavigation();
 
     const hasContainer = ensureObserverAttached();
@@ -87,9 +150,17 @@ function rearmInitialPruneForNavigation(reason) {
     debugLog("Index: rearming initial prune after navigation", {
         reason,
         hasContainer,
+        isLinkNavigation: isLinkNavigationReason(reason),
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
+        if (isLinkNavigationReason(reason)) {
+            waitForFreshContainerAndInitialPrune(previousContainer, {
+                useStartupMask: false,
+            });
+            return;
+        }
+
         if (hasContainer) {
             runInitialPrune(getConversationContainer(), {
                 useStartupMask: false,

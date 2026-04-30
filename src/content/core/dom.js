@@ -20,6 +20,9 @@ let cachedContainerVersion = -1;
 let cachedSections = null;
 let cachedSectionsVersion = -1;
 
+let cachedScrollContainer = null;
+let cachedScrollContainerVersion = -1;
+
 const mountNodeCache = new WeakMap();
 
 export function invalidateConversationDomCache() {
@@ -30,6 +33,9 @@ export function invalidateConversationDomCache() {
 
     cachedSections = null;
     cachedSectionsVersion = -1;
+
+    cachedScrollContainer = null;
+    cachedScrollContainerVersion = -1;
 }
 
 /**
@@ -250,9 +256,22 @@ export function getLatestAssistantSection() {
 }
 
 export function getConversationScrollContainer() {
+    if (
+        cachedScrollContainerVersion === domCacheVersion &&
+        cachedScrollContainer instanceof Element &&
+        cachedScrollContainer.isConnected
+    ) {
+        return cachedScrollContainer;
+    }
+
+    const fallbackScrollContainer =
+        document.scrollingElement || document.documentElement;
+
     const container = getConversationContainer();
     if (!container) {
-        return document.scrollingElement || document.documentElement;
+        cachedScrollContainer = fallbackScrollContainer;
+        cachedScrollContainerVersion = domCacheVersion;
+        return cachedScrollContainer;
     }
 
     let current = container.parentElement;
@@ -268,13 +287,17 @@ export function getConversationScrollContainer() {
             overflow === "scroll";
 
         if (isScrollable) {
-            return current;
+            cachedScrollContainer = current;
+            cachedScrollContainerVersion = domCacheVersion;
+            return cachedScrollContainer;
         }
 
         current = current.parentElement;
     }
 
-    return document.scrollingElement || document.documentElement;
+    cachedScrollContainer = fallbackScrollContainer;
+    cachedScrollContainerVersion = domCacheVersion;
+    return cachedScrollContainer;
 }
 
 export function resetConversationDomCacheForTests() {
