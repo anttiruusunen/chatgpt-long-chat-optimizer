@@ -46,10 +46,12 @@ import {
 } from "./pageBridgeSync.js";
 import { createPruneController } from "../pruning/pruneController.js";
 
-installDomMutationGuard();
+const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
 
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
+
+installDomMutationGuard();
 
 function clearPendingNavigationPrune() {
     if (pendingNavigationPruneTimer) {
@@ -95,6 +97,7 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 
             runInitialPrune(container, {
                 useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
                 ...options,
             });
 
@@ -164,10 +167,12 @@ function rearmInitialPruneForNavigation(reason) {
         if (hasContainer) {
             runInitialPrune(getConversationContainer(), {
                 useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         } else {
             waitForContainerAndInitialPrune({
                 useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         }
         return;

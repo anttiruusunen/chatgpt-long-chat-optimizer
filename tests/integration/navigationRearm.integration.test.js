@@ -237,6 +237,16 @@ describe("navigation rearm integration", () => {
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+
+        // ✅ NEW ASSERTION: ensure delayed refresh option was passed
+        expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
+            expect.any(Element),
+            expect.any(Object),
+            expect.objectContaining({
+                useStartupMask: false,
+                postPruneRefreshDelayMs: 500,
+            })
+        );
     });
 
     it("does not double-prune from the follow-up rearm after a Recents conversation link click", async () => {

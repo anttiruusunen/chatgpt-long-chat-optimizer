@@ -41,6 +41,7 @@ let pendingConversationChromeSyncForceCss = false;
 let pendingConversationChromeSyncIncludeStreaming = false;
 let pendingConversationChromeSyncReasons = new Set();
 let pendingMaintenanceReasons = new Set();
+let pendingPostPruneRefreshTimer = null;
 
 export function configureConversationMaintenance({
     ensureObserverAttached,
@@ -242,16 +243,46 @@ function flushConversationMaintenance() {
     });
 }
 
-export function scheduleRefreshPostPruneState() {
+export function scheduleRefreshPostPruneState({
+    delayMs = 0,
+    reason = "post-prune-refresh",
+} = {}) {
+    if (delayMs > 0) {
+        if (pendingPostPruneRefreshTimer) {
+            clearTimeout(pendingPostPruneRefreshTimer);
+        }
+
+        pendingPostPruneRefreshTimer = setTimeout(() => {
+            pendingPostPruneRefreshTimer = null;
+            scheduleRefreshPostPruneState({
+                reason,
+            });
+        }, delayMs);
+
+        debugLog("Maintenance: delayed post-prune refresh", {
+            reason,
+            delayMs,
+        });
+
+        return;
+    }
+
+    if (pendingPostPruneRefreshTimer) {
+        clearTimeout(pendingPostPruneRefreshTimer);
+        pendingPostPruneRefreshTimer = null;
+    }
+
     if (pendingPostPruneRefresh && isConversationMaintenanceScheduled) {
         debugLog("Maintenance: skipped duplicate post-prune refresh schedule");
         return;
     }
 
     pendingPostPruneRefresh = true;
-    scheduleConversationMaintenance("post-prune-refresh");
+    scheduleConversationMaintenance(reason);
 
-    debugLog("Maintenance: scheduled post-prune refresh");
+    debugLog("Maintenance: scheduled post-prune refresh", {
+        reason,
+    });
 }
 
 export function scheduleConversationChromeSync({
@@ -280,6 +311,10 @@ registerUiPipelineTask(CONVERSATION_MAINTENANCE_TASK, () => {
 });
 
 export function resetConversationMaintenanceForTests() {
+    if (pendingPostPruneRefreshTimer) {
+        clearTimeout(pendingPostPruneRefreshTimer);
+        pendingPostPruneRefreshTimer = null;
+    }
     isConversationMaintenanceScheduled = false;
     isCssVisibilityWindowSyncDeferred = false;
     pendingConversationChromeSync = false;

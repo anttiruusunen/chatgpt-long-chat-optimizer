@@ -229,4 +229,33 @@ describe("conversationMaintenance", () => {
         expect(refreshTopRestoreSentinelObservationMock).not.toHaveBeenCalled();
         expect(refreshBottomPruneSentinelObservationMock).not.toHaveBeenCalled();
     });
+
+    it("delays post-prune refresh when requested", () => {
+        vi.useFakeTimers();
+
+        const ensureObserverAttached = vi.fn();
+        const withDomMutationGuard = vi.fn((fn) => fn());
+
+        configureConversationMaintenance({
+            ensureObserverAttached,
+            withDomMutationGuard,
+        });
+
+        scheduleRefreshPostPruneState({
+            delayMs: 500,
+            reason: "navigation-initial-prune-refresh",
+        });
+
+        vi.advanceTimersByTime(499);
+
+        expect(ensureObserverAttached).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+
+        expect(ensureObserverAttached).not.toHaveBeenCalled();
+
+        vi.runOnlyPendingTimers();
+
+        vi.useRealTimers();
+    });
 });

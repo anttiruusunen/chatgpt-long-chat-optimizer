@@ -87,13 +87,22 @@ export function createPruneController({
     }
 
     function runInitialPrune(container, options = {}) {
-        const { useStartupMask = true } = options;
+        const {
+            useStartupMask = true,
+            postPruneRefreshDelayMs = 0,
+        } = options;
 
         return runInitialPruneBase(
             container,
             {
                 pruneOldSections,
-                refreshObservedSections: scheduleRefreshPostPruneState,
+                refreshObservedSections: () =>
+                    scheduleRefreshPostPruneState({
+                        delayMs: postPruneRefreshDelayMs,
+                        reason: useStartupMask
+                            ? "initial-prune-refresh"
+                            : "navigation-initial-prune-refresh",
+                    }),
                 installStartupPruneMask: useStartupMask
                     ? () => {
                         installStartupPruneMask(container, getStartupMaskVisibleSectionsLimit());
@@ -105,6 +114,7 @@ export function createPruneController({
             },
             {
                 useStartupMask,
+                postPruneRefreshDelayMs,
             }
         );
     }
