@@ -6,6 +6,8 @@ import {
     getQolStyleText,
     syncCodeBlockScrollbarStyles,
     getCodeBlockScrollbarStyleText,
+    syncUserMessageClampStyles,
+    getUserMessageClampStyleText,
 } from "../../src/content/ui/qolStyles.js";
 
 import { state } from "../../src/content/core/state.js";
@@ -14,6 +16,7 @@ describe("qolStyles", () => {
     beforeEach(() => {
         document.head.innerHTML = "";
         state.settings.enableCodeBlockScrollbars = false;
+        state.settings.enableUserMessageClamp = false;
     });
 
     it("installs the QoL style tag once", () => {
@@ -59,8 +62,21 @@ describe("qolStyles", () => {
         expect(styleEl.textContent).toContain("contain-intrinsic-size: none");
     });
 
-    it("contains the narrowed user clamp rule", () => {
+    it("does not install user message clamp styles with base QoL styles", () => {
         const styleEl = ensureQolStyles();
+
+        expect(styleEl).not.toBeNull();
+        expect(styleEl.textContent).not.toContain(
+            'section[data-turn="user"] [data-message-author-role="user"] > div'
+        );
+        expect(document.getElementById("thread-optimizer-user-message-clamp-style")).toBeNull();
+    });
+
+    it("installs and removes the conditional user message clamp style tag", () => {
+        state.settings.enableUserMessageClamp = true;
+        syncUserMessageClampStyles();
+
+        const styleEl = document.getElementById("thread-optimizer-user-message-clamp-style");
 
         expect(styleEl).not.toBeNull();
         expect(styleEl.textContent).toContain(
@@ -68,6 +84,21 @@ describe("qolStyles", () => {
         );
         expect(styleEl.textContent).toContain("max-height: 30vh");
         expect(styleEl.textContent).toContain("overflow-y: auto");
+
+        state.settings.enableUserMessageClamp = false;
+        syncUserMessageClampStyles();
+
+        expect(document.getElementById("thread-optimizer-user-message-clamp-style")).toBeNull();
+    });
+
+    it("getUserMessageClampStyleText exposes only the conditional user clamp CSS", () => {
+        const text = getUserMessageClampStyleText();
+
+        expect(text).toContain(
+            'section[data-turn="user"] [data-message-author-role="user"] > div'
+        );
+        expect(text).toContain("max-height: 30vh");
+        expect(text).toContain("overflow-y: auto");
     });
 
     it("does not install code block scrollbar styles with base QoL styles", () => {

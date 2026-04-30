@@ -30,6 +30,7 @@ import {
 import {
     ensureQolStyles,
     syncCodeBlockScrollbarStyles,
+    syncUserMessageClampStyles,
 } from "../ui/qolStyles.js";
 import { installConversationNavigationWatcher } from "./navigation.js";
 import {
@@ -241,6 +242,7 @@ async function initialize() {
     syncFeatureFlagsFromSettings();
     ensureQolStyles();
     syncCodeBlockScrollbarStyles();
+    syncUserMessageClampStyles();
     syncStoreReadOptimizationToPageWithRetry();
     syncPruningStateToPageBridge();
 
@@ -300,7 +302,8 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     let offscreenFlagChanged = false;
     let largeCodeBlockFlagChanged = false;
     let storeReadOptimizationFlagChanged = false;
-    let qolSettingsChanged = false;
+    let userMessageClampChanged = false;
+    let codeBlockCollapseChanged = false;
 
     if (changes.historyKeptExchanges) {
         state.settings.historyKeptExchanges = changes.historyKeptExchanges.newValue;
@@ -337,13 +340,30 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     if (changes.enableCodeBlockScrollbars) {
         state.settings.enableCodeBlockScrollbars = Boolean(changes.enableCodeBlockScrollbars.newValue);
-        syncCodeBlockScrollbarStyles();
+    }
+
+    if (changes.enableUserMessageClamp) {
+        state.settings.enableUserMessageClamp = Boolean(changes.enableUserMessageClamp.newValue);
+        userMessageClampChanged = true;
+    }
+
+    if (changes.enableCodeBlockCollapse) {
+        state.settings.enableCodeBlockCollapse = Boolean(changes.enableCodeBlockCollapse.newValue);
+        codeBlockCollapseChanged = true;
     }
 
     syncFeatureFlagsFromSettings();
 
-    if (qolSettingsChanged) {
-        syncQolSettingsToDocument();
+    if (changes.enableCodeBlockScrollbars) {
+        syncCodeBlockScrollbarStyles();
+    }
+
+    if (userMessageClampChanged) {
+        syncUserMessageClampStyles();
+    }
+
+    if (codeBlockCollapseChanged) {
+        scheduleRefreshPostPruneState();
     }
 
     syncPruningStateToPageBridge();

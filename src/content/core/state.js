@@ -19,6 +19,8 @@ export const DEFAULT_SETTINGS = {
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
     enableCodeBlockScrollbars: true,
+    enableUserMessageClamp: true,
+    enableCodeBlockCollapse: true,
 };
 
 if (!window[STATE_KEY]) {
@@ -68,6 +70,8 @@ if (!window[STATE_KEY]) {
             largeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
             storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
             codeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
+            userMessageClamp: DEFAULT_SETTINGS.enableUserMessageClamp,
+            codeBlockCollapse: DEFAULT_SETTINGS.enableCodeBlockCollapse,
         },
 
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,

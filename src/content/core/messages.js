@@ -1,7 +1,10 @@
 import { state } from "./state.js";
 import { debugLog } from "../core/logger.js";
 import { ext } from "../../shared/ext.js";
-import { syncCodeBlockScrollbarStyles } from "../ui/qolStyles.js";
+import {
+    syncCodeBlockScrollbarStyles,
+    syncUserMessageClampStyles,
+} from "../ui/qolStyles.js";
 
 function getHiddenExchangesCount() {
     return Math.floor((Number(state.hiddenCount) || 0) / 2);
@@ -70,7 +73,11 @@ export function registerRuntimeMessageHandlers({
                 state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
                 state.settings.enableStoreReadOptimization = Boolean(message.enableStoreReadOptimization);
                 state.settings.enableCodeBlockScrollbars = Boolean(message.enableCodeBlockScrollbars);
+                state.settings.enableUserMessageClamp = Boolean(message.enableUserMessageClamp);
+                state.settings.enableCodeBlockCollapse = Boolean(message.enableCodeBlockCollapse);
+
                 syncCodeBlockScrollbarStyles();
+                syncUserMessageClampStyles();
 
                 state.debugLoggingEnabled = state.settings.enableDebugLogging;
 

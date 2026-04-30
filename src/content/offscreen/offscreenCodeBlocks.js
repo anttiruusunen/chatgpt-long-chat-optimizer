@@ -329,6 +329,7 @@ function reconcileDetachedCodeBlocks() {
 
         if (
             !state.featureFlags.largeCodeBlockOptimization ||
+            !state.featureFlags.codeBlockCollapse ||
             !isLargeCodeBlock(pre)
         ) {
             restoreDetachedCodeBlockEntry(entry, {
@@ -365,6 +366,16 @@ function getSettledCodeBlockActions(section, providedCodeBlocks) {
         }
 
         if (pre.dataset.threadOptimizerCodeExpanded === "true") {
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: true,
+                live: true,
+            });
+            continue;
+        }
+
+        if (!state.featureFlags.codeBlockCollapse) {
             actions.push({
                 type: "clear",
                 pre,
@@ -480,6 +491,16 @@ function getStreamingCodeBlockActions(section, providedCodeBlocks) {
         // During streaming, never detach.
         // React/ChatGPT may still be reconciling the message DOM.
         // Detaching + restoring during stream can cause the real <pre> to disappear.
+        if (!state.featureFlags.codeBlockCollapse) {
+            actions.push({
+                type: "clear",
+                pre,
+                preserveExpanded: true,
+                live: true,
+            });
+            continue;
+        }
+
         actions.push({
             type: "collapse",
             pre,

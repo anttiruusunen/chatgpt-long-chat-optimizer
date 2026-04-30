@@ -4,6 +4,15 @@ import { state } from "../core/state.js";
 const BASE_STYLE_ID = "thread-optimizer-qol-style";
 const CODE_SCROLLBARS_STYLE_ID = "thread-optimizer-code-scrollbars-style";
 
+const USER_MESSAGE_CLAMP_STYLE_ID = "thread-optimizer-user-message-clamp-style";
+
+const USER_MESSAGE_CLAMP_CSS = `
+section[data-turn="user"] [data-message-author-role="user"] > div {
+    max-height: 30vh;
+    overflow-y: auto;
+}
+`;
+
 const BASE_QOL_CSS = `
 section[data-thread-optimizer-out-of-window="true"] {
     display: none !important;
@@ -23,11 +32,6 @@ html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimi
 html[data-thread-optimizer-sections-offscreen="true"] section pre[data-thread-optimizer-large-code-live="true"] {
     content-visibility: auto;
     contain-intrinsic-size: auto 240px;
-}
-
-section[data-turn="user"] [data-message-author-role="user"] > div {
-    max-height: 30vh;
-    overflow-y: auto;
 }
 
 section pre[data-thread-optimizer-code-collapsed="true"] {
@@ -165,6 +169,7 @@ export function syncCodeBlockScrollbarStyles() {
 export function removeQolStyles() {
     document.getElementById(BASE_STYLE_ID)?.remove();
     document.getElementById(CODE_SCROLLBARS_STYLE_ID)?.remove();
+    document.getElementById(USER_MESSAGE_CLAMP_STYLE_ID)?.remove();
     debugLog("QoL styles: removed");
 }
 
@@ -174,4 +179,19 @@ export function getQolStyleText() {
 
 export function getCodeBlockScrollbarStyleText() {
     return CODE_SCROLLBARS_CSS;
+}
+
+export function syncUserMessageClampStyles() {
+    if (state.settings.enableUserMessageClamp) {
+        ensureStyleElement(USER_MESSAGE_CLAMP_STYLE_ID, USER_MESSAGE_CLAMP_CSS);
+        debugLog("User message clamp styles: installed");
+        return;
+    }
+
+    document.getElementById(USER_MESSAGE_CLAMP_STYLE_ID)?.remove();
+    debugLog("User message clamp styles: removed");
+}
+
+export function getUserMessageClampStyleText() {
+    return USER_MESSAGE_CLAMP_CSS;
 }

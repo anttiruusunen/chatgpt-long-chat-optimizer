@@ -8,6 +8,8 @@ const DEFAULT_SETTINGS = {
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
     enableCodeBlockScrollbars: true,
+    enableCodeBlockCollapse: true,
+    enableUserMessageClamp: true,
 };
 
 const historyKeptExchangesInput = document.getElementById("historyKeptExchanges");
@@ -26,6 +28,8 @@ const logDebugLogicalButton = document.getElementById("logDebugLogical");
 const statusEl = document.getElementById("status");
 const enableStoreReadOptimizationInput = document.getElementById("enableStoreReadOptimization");
 const logDebugStorePerformanceButton = document.getElementById("logDebugStorePerformance");
+const enableCodeBlockCollapseInput = document.getElementById("enableCodeBlockCollapse");
+const enableUserMessageClampInput = document.getElementById("enableUserMessageClamp");
 
 const REQUIRED_ELEMENTS = {
     historyKeptExchangesInput,
@@ -40,6 +44,8 @@ const REQUIRED_ELEMENTS = {
     debugSectionEl,
     statusEl,
     enableStoreReadOptimizationInput,
+    enableCodeBlockCollapseInput,
+    enableUserMessageClampInput,
 };
 
 let popupStatePollTimer = null;
@@ -198,6 +204,8 @@ async function loadSettings() {
         enableDebugLogging: DEFAULT_SETTINGS.enableDebugLogging,
         enableStoreReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
         enableCodeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
+        enableCodeBlockCollapse: DEFAULT_SETTINGS.enableCodeBlockCollapse,
+        enableUserMessageClamp: DEFAULT_SETTINGS.enableUserMessageClamp,
     });
 
     historyKeptExchangesInput.value =
@@ -209,6 +217,8 @@ async function loadSettings() {
     enableDebugLoggingInput.checked = Boolean(stored.enableDebugLogging);
     enableStoreReadOptimizationInput.checked = Boolean(stored.enableStoreReadOptimization);
     enableCodeBlockScrollbarsInput.checked = Boolean(stored.enableCodeBlockScrollbars);
+    enableCodeBlockCollapseInput.checked = Boolean(stored.enableCodeBlockCollapse);
+    enableUserMessageClampInput.checked = Boolean(stored.enableUserMessageClamp);
 
     updateFieldStates();
     updateDebugVisibility();
@@ -234,6 +244,8 @@ async function saveSettings() {
         enableDebugLogging: enableDebugLoggingInput.checked,
         enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
         enableCodeBlockScrollbars: enableCodeBlockScrollbarsInput.checked,
+        enableCodeBlockCollapse: enableCodeBlockCollapseInput.checked,
+        enableUserMessageClamp: enableUserMessageClampInput.checked,
     };
 
     await storageSyncSet(settingsToStore);
@@ -302,6 +314,8 @@ function bindEvents() {
 
     bindEvent(enableStoreReadOptimizationInput, "change", saveSettings);
     bindEvent(enableCodeBlockScrollbarsInput, "change", saveSettings);
+    bindEvent(enableCodeBlockCollapseInput, "change", saveSettings);
+    bindEvent(enableUserMessageClampInput, "change", saveSettings);
 
     bindEvent(clearHistoryKeptExchangesButton, "click", async () => {
         historyKeptExchangesInput.value = "";
