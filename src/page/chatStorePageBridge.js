@@ -12,9 +12,10 @@
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
-    const ENABLE_STORE_PROFILER = false;
-    const ENABLE_BRANCH_CALLSITE_STATS = false;
-    const ENABLE_CACHE_PROFILING = false;
+    const ENABLE_DEBUG = false;
+    const ENABLE_STORE_PROFILER = ENABLE_DEBUG;
+    const ENABLE_BRANCH_CALLSITE_STATS = ENABLE_DEBUG;
+    const ENABLE_CACHE_PROFILING = ENABLE_DEBUG;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -860,6 +861,7 @@
                 version: this.__version,
                 hasStore: Boolean(this.__store),
                 found: this.__found,
+                debug: ENABLE_DEBUG,
                 registeredAt: this.__registeredAt,
                 lastError: this.__lastError,
                 meta: this.__meta,
@@ -2392,15 +2394,14 @@
         },
 
         recordBranchCallSite(methodName, args) {
-            if (!this.__branchCallSiteStats) {
-                this.__branchCallSiteStats = {
-                    installed: true,
-                    totalCalls: 0,
-                    methods: {},
-                    callSites: {},
-                    maxCallSites: 80,
-                };
-            }
+            if (!ENABLE_BRANCH_CALLSITE_STATS) return;
+            const stats = this.__branchCallSiteStats ??= {
+                installed: true,
+                totalCalls: 0,
+                methods: {},
+                callSites: {},
+                maxCallSites: 80,
+            };
 
             const stats = this.__branchCallSiteStats;
 
@@ -2409,7 +2410,7 @@
 
             let stackKey = "stack capture disabled";
 
-            if (this.__branchCallSiteCaptureStacks) {
+            if (ENABLE_BRANCH_CALLSITE_STATS && this.__branchCallSiteCaptureStacks) {
                 stackKey = normalizeStack(new Error().stack);
             }
 
@@ -2469,6 +2470,15 @@
         },
 
         getBranchCallSiteStats() {
+            if (!ENABLE_BRANCH_CALLSITE_STATS) {
+                return {
+                    installed: false,
+                    reason: "disabled",
+                    totalCalls: 0,
+                    methods: {},
+                    topCallSites: [],
+                };
+            }
             if (!this.__branchCallSiteStats) {
                 return {
                     installed: false,
