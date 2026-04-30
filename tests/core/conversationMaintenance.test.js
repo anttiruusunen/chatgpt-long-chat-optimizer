@@ -112,6 +112,7 @@ describe("conversationMaintenance", () => {
         conversationSectionsMock = [makeSection("1"), makeSection("2")];
         isReplyStreamingMock = false;
 
+        state.featureFlags.offscreenOptimization = true;
         state.hiddenCount = 2;
 
         ensurePlaceholderStateMock.mockReset();
@@ -257,5 +258,20 @@ describe("conversationMaintenance", () => {
         vi.runOnlyPendingTimers();
 
         vi.useRealTimers();
+    });
+
+    it("skips offscreen refresh work when offscreen optimization is disabled", () => {
+        state.featureFlags.offscreenOptimization = false;
+
+        scheduleConversationChromeSync({
+            reason: "offscreen-disabled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).not.toHaveBeenCalled();
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
     });
 });

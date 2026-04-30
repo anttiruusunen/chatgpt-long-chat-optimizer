@@ -58,6 +58,10 @@ export function configureConversationMaintenance({
             : null;
 }
 
+function isOffscreenRefreshEnabled() {
+    return Boolean(state.featureFlags.offscreenOptimization);
+}
+
 function getMaintenanceDeps() {
     return {
         ensureObserverAttached: ensureObserverAttachedDependency,
@@ -122,6 +126,11 @@ export function flushDeferredCssVisibilityWindowSync(reason = "reply-settled") {
 }
 
 function flushPostPruneState() {
+    if (!isOffscreenRefreshEnabled()) {
+        debugLog("Maintenance: skipped offscreen refresh because feature is disabled");
+        return;
+    }
+
     if (isReplyStreaming()) {
         disconnectSentinelObservers();
         scheduleOffscreenRefresh();
@@ -187,7 +196,9 @@ function applyConversationChromeSnapshot(
         reason: reasons.join(",") || "conversation-chrome-sync",
     });
 
-    ensureSectionCssOffscreenMode();
+    if (isOffscreenRefreshEnabled()) {
+        ensureSectionCssOffscreenMode();
+    }
 
     debugLog("Maintenance: flushed conversation chrome sync batch", {
         reasons,
