@@ -1859,65 +1859,21 @@
             return result;
         },
 
-        installStartupGetNodeIfExistsWrapper(original, cacheApi) {
-            const bridgeRef = this;
-
-            this.__store.getNodeIfExists = function cachedGetNodeIfExistsStartup(id) {
-                const cached = cacheApi.get(id);
-                if (cached !== undefined) return cached;
-
-                const result = original.call(bridgeRef.__store, id) ?? null;
-
-                if (result != null) {
-                    cacheApi.set(id, result);
-                }
-
-                return result;
-            };
-
-            this.__existingNodeFrameCacheMode = "startup";
-        },
-
         installLiveGetNodeIfExistsWrapper(original, cacheApi) {
-            const bridgeRef = this;
+            const store = this.__store;
+            const get = cacheApi.get;
+            const set = cacheApi.set;
 
             this.__store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
-                const store = bridgeRef.__store;
-
-                const leafId =
-                    typeof store?.currentLeafId === "function"
-                        ? store.currentLeafId()
-                        : store?.currentLeafId;
-
-                if (id === leafId) {
-                    const nowFrame = bridgeRef.__liveNodeReadFrame || 0;
-
-                    if (
-                        bridgeRef.__liveNodeCacheId === id &&
-                        bridgeRef.__liveNodeCacheFrame === nowFrame
-                    ) {
-                        return bridgeRef.__liveNodeCacheValue;
-                    }
-
-                    const result = original.call(store, id) ?? null;
-
-                    bridgeRef.__liveNodeCacheId = id;
-                    bridgeRef.__liveNodeCacheValue = result;
-                    bridgeRef.__liveNodeCacheFrame = nowFrame;
-
-                    return result;
-                }
-
-                const cached = cacheApi.get(id);
+                const cached = get(id);
                 if (cached !== undefined) return cached;
 
-                const result = original.call(store, id) ?? null;
-
-                if (result?.message?.status !== "in_progress" && result != null) {
-                    cacheApi.set(id, result);
+                const result = original.call(store, id);
+                if (result && result.message.status !== "in_progress") {
+                    set(id, result);
                 }
 
-                return result;
+                return result ?? null;
             };
 
             this.__existingNodeFrameCacheMode = "live";
@@ -2035,6 +1991,33 @@
             return { ok: true, mode: "live" };
         },
 
+        prewarmExistingNodeFrameCache(cacheApi) {
+            const nodes = this.__store?.nodes;
+            if (!nodes) return { ok: false, reason: "nodes unavailable" };
+
+            const add = (node) => {
+                if (
+                    node?.id &&
+                    node.message?.status !== "in_progress"
+                ) {
+                    cacheApi.set(node.id, node);
+                }
+            };
+
+            if (nodes instanceof Map) {
+                for (const node of nodes.values()) add(node);
+            } else if (Array.isArray(nodes)) {
+                for (const node of nodes) add(node);
+            } else if (typeof nodes === "object") {
+                for (const node of Object.values(nodes)) add(node);
+            }
+
+            return {
+                ok: true,
+                size: cacheApi.cache?.size ?? null,
+            };
+        },
+
         installExistingNodeFrameCache({
             maxSize = DEFAULT_CACHE_MAX_SIZE,
             profiled = ENABLE_CACHE_PROFILING,
@@ -2139,7 +2122,8 @@
                     return result ?? null;
                 };
             } else {
-                this.installStartupGetNodeIfExistsWrapper(original, frameCache);
+                this.prewarmExistingNodeFrameCache?.(frameCache);
+                this.installLiveGetNodeIfExistsWrapper(original, frameCache);
             }
 
             this.__existingNodeFrameCacheInstalled = true;
@@ -3589,7 +3573,8 @@
 
         if (bridge.__store && typeof original === "function" && cacheApi) {
             cacheApi.clear?.("conversation-change");
-            bridge.installStartupGetNodeIfExistsWrapper?.(original, cacheApi);
+            bridge.prewarmExistingNodeFrameCache?.(cacheApi);
+            bridge.installLiveGetNodeIfExistsWrapper?.(original, cacheApi);
         }
     }
 
@@ -3618,6 +3603,7 @@
     };
 
     function enableLivePolicyOnUserIntent() {
+        bumpLiveNodeReadFrame();
         bridge.enableLiveNodeCachePolicy?.();
     }
 
@@ -3645,10 +3631,12 @@
         true
     );
 
-    (function tickLiveNodeReadFrame() {
-        bridge.__liveNodeReadFrame += 1;
-        requestAnimationFrame(tickLiveNodeReadFrame);
-    })();
+    function bumpLiveNodeReadFrame() {
+        bridge.__liveNodeReadFrame = (bridge.__liveNodeReadFrame + 1) | 0;
+    }
+
+    document.addEventListener("input", bumpLiveNodeReadFrame, true);
+    document.addEventListener("compositionend", bumpLiveNodeReadFrame, true);
 
     bridge.startDiscoveryLoop();
 })();
