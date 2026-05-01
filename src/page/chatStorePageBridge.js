@@ -1,5 +1,43 @@
 (() => {
     const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
+
+    function waitForBridge(timeout = 5000, interval = 50) {
+        return new Promise(resolve => {
+            const start = Date.now();
+            const timer = setInterval(() => {
+                if (window.__threadOptimizerChatStoreBridge) {
+                    clearInterval(timer);
+                    resolve(window.__threadOptimizerChatStoreBridge);
+                } else if (Date.now() - start > timeout) {
+                    clearInterval(timer);
+                    resolve(null);
+                }
+            }, interval);
+        });
+    }
+
+    async function installBridgeSafely() {
+        const currentScript = document.currentScript;
+        const token = currentScript?.getAttribute("data-thread-optimizer-chat-store-page-bridge-token");
+
+        if (!token) {
+            console.warn("[thread-optimizer bridge] no token found, bridge install skipped");
+            return;
+        }
+
+        const bridge = await waitForBridge();
+        if (!bridge) {
+            console.warn("[thread-optimizer bridge] bridge object never initialized, install skipped");
+            return;
+        }
+
+        if (!bridge.__installed && typeof bridge.install === "function") {
+            bridge.install(token);
+        }
+    }
+
+    installBridgeSafely();
+
     const BRIDGE_VERSION = 8;
 
     const MAX_FIBERS = 4000;
