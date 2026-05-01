@@ -12,6 +12,45 @@
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
+    const PAGE_SCRIPT_TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
+    const TRUSTED_SOURCE = "thread-optimizer";
+
+    const MESSAGE_TYPES = new Set([
+        "thread-optimizer:set-pruning-state",
+        "thread-optimizer:record-pruned-message-id",
+        "thread-optimizer:log-store-performance",
+        "thread-optimizer:set-store-read-optimization",
+    ]);
+
+    function getBridgeTokenFromCurrentScript() {
+        const script = document.currentScript;
+
+        if (!(script instanceof HTMLScriptElement)) {
+            return null;
+        }
+
+        const token = script.getAttribute(PAGE_SCRIPT_TOKEN_ATTR);
+
+        if (typeof token !== "string") {
+            return null;
+        }
+
+        const normalized = token.trim();
+
+        if (!/^[a-f0-9]{32}$/i.test(normalized)) {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    const BRIDGE_TOKEN = getBridgeTokenFromCurrentScript();
+
+    if (!BRIDGE_TOKEN) {
+        console.warn("[thread-optimizer bridge] blocked install because bridge token is missing");
+        return;
+    }
+
     const ENABLE_DEBUG = false;
     const ENABLE_STORE_PROFILER = ENABLE_DEBUG;
     const ENABLE_BRANCH_CALLSITE_STATS = ENABLE_DEBUG;
@@ -3363,22 +3402,128 @@
 
     window[GLOBAL_KEY] = bridge;
 
+    function isPlainObject(value) {
+        return value !== null &&
+            typeof value === "object" &&
+            Object.getPrototypeOf(value) === Object.prototype;
+    }
+
+    function normalizeBridgeMessageId(messageId) {
+        if (typeof messageId !== "string") {
+            return null;
+        }
+
+        const normalized = messageId.trim();
+
+        if (!normalized) {
+            return null;
+        }
+
+        if (normalized.length > 300) {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    function isValidBridgeMessageEnvelope(event) {
+        if (event.source !== window) return false;
+        if (event.origin !== window.location.origin) return false;
+
+        const data = event.data;
+
+        if (!isPlainObject(data)) return false;
+        if (data.source !== TRUSTED_SOURCE) return false;
+        if (data.token !== BRIDGE_TOKEN) return false;
+        if (!MESSAGE_TYPES.has(data.type)) return false;
+
+        return true;
+    }
+
+    function validateBridgeMessage(data) {
+        switch (data.type) {
+            case "thread-optimizer:set-pruning-state": {
+                const prunedTurnCount = Number(data.prunedTurnCount);
+
+                return {
+                    ok: true,
+                    value: {
+                        enabled: Boolean(data.enabled),
+                        prunedTurnCount:
+                            Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0
+                                ? prunedTurnCount
+                                : 0,
+                    },
+                };
+            }
+
+            case "thread-optimizer:record-pruned-message-id": {
+                const messageId = normalizeBridgeMessageId(data.messageId);
+
+                if (!messageId) {
+                    return {
+                        ok: false,
+                        reason: "invalid message id",
+                    };
+                }
+
+                return {
+                    ok: true,
+                    value: {
+                        messageId,
+                    },
+                };
+            }
+
+            case "thread-optimizer:log-store-performance": {
+                return {
+                    ok: true,
+                    value: {},
+                };
+            }
+
+            case "thread-optimizer:set-store-read-optimization": {
+                return {
+                    ok: true,
+                    value: {
+                        enabled: Boolean(data.enabled),
+                        debug: Boolean(data.debug),
+                    },
+                };
+            }
+
+            default:
+                return {
+                    ok: false,
+                    reason: "unknown message type",
+                };
+        }
+    }
+
     window.addEventListener(
         "message",
         (event) => {
-            if (event.source !== window) return;
-            if (event.origin !== window.location.origin) return;
-
-            const data = event.data;
-
-            if (!data || data.source !== "thread-optimizer") {
+            if (!isValidBridgeMessageEnvelope(event)) {
                 return;
             }
 
+            const data = event.data;
+            const validation = validateBridgeMessage(data);
+
+            if (!validation.ok) {
+                console.debug("[thread-optimizer bridge] ignored invalid bridge message", {
+                    type: data.type,
+                    reason: validation.reason,
+                });
+                return;
+            }
+
+            const payload = validation.value;
+
             if (data.type === "thread-optimizer:set-pruning-state") {
                 bridge.setKnownPruningState({
-                    enabled: data.enabled,
-                    prunedTurnCount: data.prunedTurnCount,
+                    enabled: payload.enabled,
+                    prunedTurnCount: payload.prunedTurnCount,
                 });
 
                 if (!isStoreGoodEnough(bridge.__store)) {
@@ -3389,7 +3534,7 @@
             }
 
             if (data.type === "thread-optimizer:record-pruned-message-id") {
-                bridge.recordPrunedMessageId(data.messageId);
+                bridge.recordPrunedMessageId(payload.messageId);
                 return;
             }
 
@@ -3401,28 +3546,24 @@
 
             if (data.type === "thread-optimizer:set-store-read-optimization") {
                 console.debug("[thread-optimizer bridge] received store read optimization setting", {
-                    enabled: data.enabled,
-                    debug: data.debug,
+                    enabled: payload.enabled,
+                    debug: payload.debug,
                 });
 
-                bridge.__storeReadOptimizationRequested = Boolean(data.enabled);
-                bridge.__storeReadOptimizationDebug = Boolean(data.debug);
+                bridge.__storeReadOptimizationRequested = payload.enabled;
+                bridge.__storeReadOptimizationDebug = payload.debug;
 
-                if (data.enabled) {
+                if (payload.enabled) {
                     bridge.applyStoreReadOptimization({
-                        debug: Boolean(data.debug),
+                        debug: payload.debug,
                         clearStats: true,
                     });
                 } else {
                     bridge.disableStoreReadOptimization({
-                        debug: Boolean(data.debug),
+                        debug: payload.debug,
                     });
                 }
-
-                return;
             }
-
-            console.debug("[thread-optimizer bridge] ignored message", data);
         },
         false
     );
