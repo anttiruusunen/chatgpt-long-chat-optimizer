@@ -45,6 +45,21 @@ const CODE_BLOCK_REFRESH_TASK = "code-block-refresh";
 
 let codeBlockRevealClickListenerInstalled = false;
 
+function removeInvalidNestedCodePlaceholders(root = document) {
+    const placeholders = root.querySelectorAll(
+        [
+            ".cm-editor [data-thread-optimizer-code-placeholder='true']",
+            ".cm-scroller [data-thread-optimizer-code-placeholder='true']",
+            ".cm-content [data-thread-optimizer-code-placeholder='true']",
+            ".cm-line [data-thread-optimizer-code-placeholder='true']",
+        ].join(",")
+    );
+
+    for (let i = 0; i < placeholders.length; i += 1) {
+        placeholders[i].remove();
+    }
+}
+
 function markSectionCodeBlocksProcessed(section) {
     if (!(section instanceof HTMLElement)) return;
     section.setAttribute(CODE_BLOCKS_PROCESSED_ATTR, "true");
@@ -277,6 +292,15 @@ function ensureCodeBlockRevealClickListener() {
             );
             if (!(placeholder instanceof HTMLElement)) return;
 
+            if (
+                placeholder.closest(
+                    ".cm-editor, .cm-scroller, .cm-content, .cm-line, .cm-gutters"
+                )
+            ) {
+                placeholder.remove();
+                return;
+            }
+
             const revealButton = target.closest("button");
 
             if (revealButton && isRevealButtonElement(revealButton)) {
@@ -290,10 +314,15 @@ function ensureCodeBlockRevealClickListener() {
                     return;
                 }
 
-                revealCollapsedCodeBlockFromPlaceholder(placeholder);
-
                 const hostSection = placeholder.closest("section");
+
                 clearSectionCodeBlocksProcessed(hostSection);
+
+                try {
+                    revealCollapsedCodeBlockFromPlaceholder(placeholder);
+                } finally {
+                    clearSectionCodeBlocksProcessed(hostSection);
+                }
             }
         },
         true
@@ -722,6 +751,7 @@ function processSettledSections(sections) {
 
 export function refreshObservedCodeBlocks() {
     ensureCodeBlockRevealClickListener();
+    removeInvalidNestedCodePlaceholders();
     reconcileDetachedCodeBlocks();
 
     const sections = getConversationSections();
@@ -786,9 +816,28 @@ function isCodeBlockOptimizationEligible(pre) {
         return false;
     }
 
+    // Do not collapse CodeMirror internals.
+    // ChatGPT code viewers may render nested <pre> / content nodes inside
+    // .cm-editor/.cm-scroller. Inserting our placeholder there creates
+    // "Reveal code block" UI inside an already-rendered code block.
     if (
         pre.closest(
             [
+                ".cm-editor",
+                ".cm-scroller",
+                ".cm-content",
+                ".cm-line",
+                ".cm-gutters",
+            ].join(",")
+        )
+    ) {
+        return false;
+    }
+
+    if (
+        pre.closest(
+            [
+                '[data-thread-optimizer-code-placeholder="true"]',
                 '[data-writing-block="true"]',
                 ".writing-block-editor",
                 '.ProseMirror[contenteditable="true"]',

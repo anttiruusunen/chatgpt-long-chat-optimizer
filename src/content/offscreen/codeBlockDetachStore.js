@@ -134,46 +134,61 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
 }
 
 export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
-    const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
-
-    if (detachedEntry) {
-        detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
-        restoreDetachedCodeBlockEntry(detachedEntry, {
-            removePlaceholder: true,
-            preserveExpanded: true,
-        });
-        scheduleRefreshCallback?.();
+    if (!(placeholder instanceof HTMLElement)) {
         return;
     }
 
     const placeholderId = getPlaceholderId(placeholder);
-    if (!placeholderId) return;
 
-    let pre = Array.from(document.querySelectorAll("pre")).find(
-        (candidate) => getPlaceholderIdForPre(candidate) === placeholderId
-    );
-
-    if (!(pre instanceof HTMLPreElement)) {
-        const scope =
-            placeholder.closest("article, [data-message-author-role], section[data-testid^='conversation-turn-'], section[data-turn]") ??
-            document;
-
-        pre = Array.from(scope.querySelectorAll("pre")).find(
-            (candidate) =>
-                candidate instanceof HTMLPreElement &&
-                candidate.hasAttribute("data-thread-optimizer-code-collapsed")
-        );
-    }
-
-    if (!(pre instanceof HTMLPreElement)) {
+    if (!placeholderId) {
         setPlaceholderVisibility(placeholder, false);
+
+        if (placeholder.isConnected) {
+            placeholder.remove();
+        }
+
         scheduleRefreshCallback?.();
         return;
     }
 
-    setPlaceholderIdForPre(pre, placeholderId);
-    pre.dataset.threadOptimizerCodeExpanded = "true";
-    clearCollapsedCodeBlock(pre, { preserveExpanded: true });
+    const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
+
+    if (detachedEntry) {
+        detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
+
+        restoreDetachedCodeBlockEntry(detachedEntry, {
+            removePlaceholder: true,
+            preserveExpanded: true,
+        });
+
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    const matchingPre = Array.from(document.querySelectorAll("pre")).find(
+        (candidate) =>
+            candidate instanceof HTMLPreElement &&
+            getPlaceholderIdForPre(candidate) === placeholderId
+    );
+
+    if (matchingPre instanceof HTMLPreElement) {
+        matchingPre.dataset.threadOptimizerCodeExpanded = "true";
+
+        clearCollapsedCodeBlock(matchingPre, {
+            preserveExpanded: true,
+        });
+
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    setPlaceholderVisibility(placeholder, false);
+
+    if (placeholder.isConnected) {
+        placeholder.remove();
+    }
+
+    state.detachedCodeBlocks.delete(placeholderId);
     scheduleRefreshCallback?.();
 }
 

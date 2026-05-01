@@ -500,4 +500,75 @@ describe("offscreenCodeBlocks", () => {
         expect(first.dataset.threadOptimizerCodeExpanded).toBe("true");
         expect(state.detachedCodeBlocks.size).toBe(1);
     });
+
+    it("does not collapse CodeMirror internal pre elements", () => {
+        const conversation = document.getElementById("conversation");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+        section.setAttribute("data-testid", "conversation-turn-codemirror");
+        section.innerHTML = `
+            <div class="markdown">
+                <div class="relative">
+                    <div class="cm-editor">
+                        <div class="cm-scroller">
+                            <pre><code>${"x".repeat(5000)}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        conversation.appendChild(section);
+        refreshObservedCodeBlocks();
+
+        expect(
+            section.querySelector(
+                ".cm-editor [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(
+            section.querySelector(
+                ".cm-scroller [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(state.detachedCodeBlocks.size).toBe(0);
+
+        const pre = section.querySelector(".cm-editor pre");
+        expect(pre).not.toBeNull();
+        expect(pre.isConnected).toBe(true);
+    });
+
+    it("removes invalid placeholders nested inside CodeMirror internals", () => {
+        const conversation = document.getElementById("conversation");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+        section.setAttribute("data-testid", "conversation-turn-codemirror-stale");
+        section.innerHTML = `
+            <div class="markdown">
+                <div class="cm-editor">
+                    <div class="cm-scroller">
+                        <div data-thread-optimizer-code-placeholder="true">
+                            Bad nested placeholder
+                        </div>
+                        <pre><code>${"x".repeat(5000)}</code></pre>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        conversation.appendChild(section);
+        refreshObservedCodeBlocks();
+
+        expect(
+            section.querySelector(
+                ".cm-editor [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(section.querySelector(".cm-editor pre")).not.toBeNull();
+    });
 });
