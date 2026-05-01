@@ -32,15 +32,11 @@ export function syncStoreReadOptimizationToPageWithRetry(retries = 10, totalTime
     const MAX_TOTAL_TIME = 5000; // 5 seconds cap
 
     if (bridge?.__installed) {
-        window.postMessage(
-            {
-                source: "thread-optimizer",
-                type: "thread-optimizer:set-store-read-optimization",
-                enabled: state.featureFlags.storeReadOptimization,
-                debug: state.debugLoggingEnabled,
-            },
-            window.location.origin
-        );
+        postThreadOptimizerBridgeMessage({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: state.featureFlags.storeReadOptimization,
+            debug: state.debugLoggingEnabled,
+        });
         return;
     }
 
