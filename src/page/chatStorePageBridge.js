@@ -3203,80 +3203,52 @@
 
         clearStoreReadCache(reason = "manual") {
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
-                // Experiment: keep confirmed findNodeFromLeaf cache alive across
-                // tab/focus/frame-style clears. Still clear it on real store mutation.
-                if (
-                    cacheSlot === "__branchCache" &&
-                    reason !== "manual" &&
-                    reason !== "conversation-change"
-                ) {
-                   if (this.__branchCacheStats?.getBranchFromLeaf && ENABLE_CACHE_PROFILING) {
-                        this.__branchCacheStats.getBranchFromLeaf.skippedClears =
-                            (this.__branchCacheStats.getBranchFromLeaf.skippedClears || 0) + 1;
-                        this.__branchCacheStats.getBranchFromLeaf.lastClearReason =
-                            "kept-persistent-" + reason;
-                    }
+                const cache = this[cacheSlot];
+                const stats = this[statsSlot];
 
-                    // Keep getBranchFromLeaf long-lived, but still allow getBranch
-                    // to clear normally if you want it fresher.
+                // Special handling for branch cache
+                if (cacheSlot === "__branchCache") {
+                    // Keep getBranchFromLeaf long-lived, clear getBranch
                     this.__branchCache?.getBranch?.clear?.();
 
-                    if (this.__branchCacheStats?.getBranch && ENABLE_CACHE_PROFILING) {
-                        this.__branchCacheStats.getBranch.cached = 0;
-                        this.__branchCacheStats.getBranch.frameClears += 1;
-                        this.__branchCacheStats.getBranch.lastClearReason = reason;
+                    if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
+                        if (this.__branchCacheStats.getBranch) {
+                            this.__branchCacheStats.getBranch.cached = 0;
+                            this.__branchCacheStats.getBranch.frameClears += 1;
+                            this.__branchCacheStats.getBranch.lastClearReason = reason;
+                        }
+
+                        if (this.__branchCacheStats.getBranchFromLeaf) {
+                            this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
+                        }
                     }
 
+                    this.clearBranchCache?.();
                     continue;
                 }
+
+                // Skip clears for certain caches unless it's a "real" reason
                 if (
-                    (
-                        cacheSlot === "__findNodeFromLeafFrameCache" ||
-                        cacheSlot === "__getLeafFromNodeFrameCache" ||
-                        cacheSlot === "__existingNodeFrameCache"
-                    ) &&
+                    (cacheSlot === "__findNodeFromLeafFrameCache" ||
+                    cacheSlot === "__getLeafFromNodeFrameCache" ||
+                    cacheSlot === "__existingNodeFrameCache") &&
                     reason !== "store-mutation" &&
                     reason !== "conversation-change" &&
-                    reason !== "manual" &&
-                    reason !== "tab-active"
+                    reason !== "manual"
                 ) {
-                    const stats = this[statsSlot];
-
                     if (stats && ENABLE_CACHE_PROFILING) {
                         stats.skippedClears = (stats.skippedClears || 0) + 1;
                         stats.lastClearReason = "skipped-" + reason;
                     }
-
-                    continue;
-                }
-                if (cacheSlot === "__branchCache") {
-                    this.clearBranchCache?.();
-
-                    if (ENABLE_CACHE_PROFILING && this.__branchCacheStats?.getBranch) {
-                        this.__branchCacheStats.getBranch.lastClearReason = reason;
-                    }
-
-                    if (ENABLE_CACHE_PROFILING && this.__branchCacheStats?.getBranchFromLeaf) {
-                        this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
-                    }
-
                     continue;
                 }
 
-                const cache = this[cacheSlot];
-                const stats = this[statsSlot];
-
+                // Default: clear cache and update stats
                 cache?.clear?.();
-
                 if (stats && ENABLE_CACHE_PROFILING) {
                     stats.cached = 0;
-
-                    if ("clears" in stats) {
-                        stats.clears += 1;
-                    } else if ("frameClears" in stats) {
-                        stats.frameClears += 1;
-                    }
-
+                    if ("clears" in stats) stats.clears += 1;
+                    else if ("frameClears" in stats) stats.frameClears += 1;
                     stats.lastClearReason = reason;
                 }
             }
@@ -3590,18 +3562,6 @@
         lastConversationKey = nextKey;
         resetToStartupCachePolicy("conversation-change");
     }
-
-    function clearCachesOnTabActive() {
-        bridge.clearStoreReadCache?.("tab-active");
-    }
-
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-            clearCachesOnTabActive();
-        }
-    });
-
-    window.addEventListener("focus", clearCachesOnTabActive);
 
     window.addEventListener("popstate", checkConversationChanged);
 
