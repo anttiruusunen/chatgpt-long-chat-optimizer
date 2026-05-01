@@ -15,7 +15,8 @@
     const ENABLE_DEBUG = false;
     const ENABLE_STORE_PROFILER = ENABLE_DEBUG;
     const ENABLE_BRANCH_CALLSITE_STATS = ENABLE_DEBUG;
-    const ENABLE_CACHE_PROFILING = ENABLE_DEBUG;
+    const ENABLE_CACHE_PROFILING = true;
+    const ENABLE_NODE_CALLSITE_STATS = ENABLE_DEBUG;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -1850,6 +1851,41 @@
             const stats = this.__existingNodeFrameCacheStats;
 
             this.__store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
+                if (ENABLE_NODE_CALLSITE_STATS) {
+                    bridgeRef.__nodeCallSiteStats ??= {
+                        total: 0,
+                        callSites: {},
+                        max: 50,
+                    };
+
+                    const stats = bridgeRef.__nodeCallSiteStats;
+
+                    stats.total += 1;
+
+                    const stack = normalizeStack(new Error().stack);
+
+                    const existing = stats.callSites[stack];
+
+                    if (existing) {
+                        existing.calls += 1;
+                        existing.lastId = id;
+                    } else {
+                        const keys = Object.keys(stats.callSites);
+
+                        if (keys.length >= stats.max) {
+                            const lowest = keys.reduce((a, b) =>
+                                stats.callSites[a].calls < stats.callSites[b].calls ? a : b
+                            );
+                            delete stats.callSites[lowest];
+                        }
+
+                        stats.callSites[stack] = {
+                            calls: 1,
+                            firstId: id,
+                            lastId: id,
+                        };
+                    }
+                }
                 const store = bridgeRef.__store;
 
                 const leafId =
@@ -2603,6 +2639,7 @@
 
             if (typeof getBranchOriginal === "function") {
                 this.__store.getBranch = function cachedGetBranch(id, ...rest) {
+                    bridgeRef.recordBranchCallSite?.("getBranch", [id, ...rest]);
                     const cached = getBranchCache.get(id);
                     if (cached !== undefined) return cached;
 
@@ -2616,6 +2653,7 @@
             if (typeof getBranchFromLeafOriginal === "function") {
                 if (profiled) {
                     this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
+                        bridgeRef.recordBranchCallSite?.("getBranchFromLeaf", [id, ...rest]);
                         getBranchFromLeafStats.calls += 1;
 
                         const key =
