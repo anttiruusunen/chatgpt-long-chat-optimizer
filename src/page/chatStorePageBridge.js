@@ -3245,7 +3245,8 @@
                         }
                     }
 
-                    this.clearBranchCache?.();
+                    // Intentionally keep getBranchFromLeaf long-lived.
+                    // Only getBranch is cleared on generic cache clears.
                     continue;
                 }
 
