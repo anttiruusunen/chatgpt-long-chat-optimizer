@@ -3414,6 +3414,7 @@
                     continue;
                 }
 
+                // keep getDisplayTurns cache across mutations
                 if (
                     cacheSlot === "__getDisplayTurnsCache" &&
                     reason === "store-mutation"
@@ -3425,9 +3426,21 @@
                     continue;
                 }
 
+                // keep getLeafFromNode cache across mutations
+                if (
+                    cacheSlot === "__getLeafFromNodeFrameCache" &&
+                    reason === "store-mutation"
+                ) {
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-store-mutation";
+                    }
+                    continue;
+                }
+
+                // skip unnecessary clears for selected caches
                 if (
                     (cacheSlot === "__findNodeFromLeafFrameCache" ||
-                        cacheSlot === "__getLeafFromNodeFrameCache" ||
                         cacheSlot === "__existingNodeFrameCache") &&
                     reason !== "store-mutation" &&
                     reason !== "conversation-change" &&
