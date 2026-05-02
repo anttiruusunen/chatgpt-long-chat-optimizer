@@ -3167,7 +3167,16 @@
             this.__getDisplayTurnsCacheOriginal = { getDisplayTurns: original };
 
             this.__store.getDisplayTurns = function cachedGetDisplayTurns(leafId, ...rest) {
-                if (!prunedSet?.has(leafId)) {
+                const currentLeafId =
+                    typeof store.currentLeafId === "function"
+                        ? store.currentLeafId()
+                        : store.currentLeafId;
+
+                const shouldCache =
+                    leafId !== currentLeafId &&
+                    prunedSet?.has(leafId);
+
+                if (!shouldCache) {
                     if (stats) stats.bypassed = (stats.bypassed || 0) + 1;
                     return original.call(store, leafId, ...rest);
                 }
