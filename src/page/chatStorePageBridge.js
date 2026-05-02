@@ -205,6 +205,7 @@
         ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
         ["__branchCache", "__branchCacheStats"],
         ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
+        ["__getDisplayTurnsCache", "__getDisplayTurnsCacheStats"],
     ];
 
     function resetFrameCacheStats(stats, cache) {
@@ -331,6 +332,20 @@
             tag.includes("FontFace") ||
             tag.includes("GPU")
         );
+    }
+
+    function createCurrentLeafIdReader(store) {
+        const currentLeafId = store?.currentLeafId;
+
+        if (typeof currentLeafId === "function") {
+            return function readCurrentLeafIdFromFunction() {
+                return currentLeafId.call(store);
+            };
+        }
+
+        return function readCurrentLeafIdFromValue() {
+            return currentLeafId;
+        };
     }
 
     function safeCall(value) {
@@ -925,6 +940,7 @@
         __confirmedExistingNodeIds: null,
 
         __prunedMessageIdSet: new Set(),
+        __prunedLeafIdSet: new Set(),
         __liveNodeReadFrame: 0,
         __liveNodeCacheFrame: -1,
 
@@ -1018,6 +1034,11 @@
             this.__resolvedNodeFrameCacheStats = null;
             this.__resolvedNodeFrameCacheClearScheduled = false;
             this.__resolveNodeFast = null;
+
+            this.__getDisplayTurnsCacheInstalled = false;
+            this.__getDisplayTurnsCache = null;
+            this.__getDisplayTurnsCacheStats = null;
+            this.__getDisplayTurnsCacheOriginal = null;
 
             this.__indexRefreshHooksInstalled = false;
             this.__indexRefreshHookOriginals = null;
@@ -1164,6 +1185,7 @@
             }
 
             this.__prunedMessageIdSet.add(normalizedMessageId);
+            this.__prunedLeafIdSet ??= new Set();
 
             if (this.__storeValidationFailed || !this.__store) {
                 return {
@@ -1177,7 +1199,26 @@
                 };
             }
 
+            const node = getNodeDirect(this.__store, normalizedMessageId);
+
+            if (node?.id) {
+                this.__prunedMessageIdSet.add(node.id);
+
+                try {
+                    const leaf = this.__store.getLeafFromNode?.(node.id);
+                    const leafId = typeof leaf === "string" ? leaf : leaf?.id ?? null;
+
+                    if (leafId) {
+                        this.__prunedLeafIdSet.add(leafId);
+                    }
+                } catch {}
+            }
+
             const inspection = this.inspectMessageById(normalizedMessageId);
+
+            if (inspection.nodeId) {
+                this.__prunedMessageIdSet.add(inspection.nodeId);
+            }
 
             return {
                 recorded: true,
@@ -1214,6 +1255,7 @@
             this.__prunedMessageIds = [];
             this.__lastError = null;
             this.__prunedMessageIdSet.clear();
+            this.__prunedLeafIdSet.clear();
             return true;
         },
 
@@ -1411,13 +1453,19 @@
                 };
             }
 
-            const methodNames = [
-                "messageIdToExistingNodeId",
-                "getNodeIfExists",
-                "getBranch",
-                "getBranchFromLeaf",
-                "deleteNode",
-            ];
+            const EXCLUDED_PROFILE_METHODS = new Set([
+                "constructor",
+            ]);
+
+            const methodNames = Array.from(
+                new Set([
+                    ...Object.keys(this.__store),
+                    ...Object.getOwnPropertyNames(Object.getPrototypeOf(this.__store) || {}),
+                ])
+            ).filter((methodName) => {
+                if (EXCLUDED_PROFILE_METHODS.has(methodName)) return false;
+                return typeof this.__store[methodName] === "function";
+            });
 
             this.__storeProfile = {
                 installedAt: Date.now(),
@@ -1554,11 +1602,23 @@
                 };
             }
 
+            const topByCalls = Object.entries(methods)
+                .map(([methodName, profile]) => ({ methodName, ...profile }))
+                .sort((a, b) => b.calls - a.calls)
+                .slice(0, 30);
+
+            const topByTotalMs = Object.entries(methods)
+                .map(([methodName, profile]) => ({ methodName, ...profile }))
+                .sort((a, b) => b.totalMs - a.totalMs)
+                .slice(0, 30);
+
             return {
                 installed: this.__storeProfilerInstalled,
                 installedAt: this.__storeProfile.installedAt,
                 clearedAt: this.__storeProfile.clearedAt ?? null,
                 methods,
+                topByCalls,
+                topByTotalMs,
             };
         },
 
@@ -1885,6 +1945,10 @@
         installLiveGetNodeIfExistsWrapperProfiled(original, cacheApi) {
             const bridgeRef = this;
             const stats = this.__existingNodeFrameCacheStats;
+            const store = this.__store;
+            const getCurrentLeafId = createCurrentLeafIdReader(store);
+            const get = cacheApi.get;
+            const set = cacheApi.set;
 
             this.__store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
                 if (ENABLE_NODE_CALLSITE_STATS) {
@@ -1922,13 +1986,7 @@
                         };
                     }
                 }
-                const store = bridgeRef.__store;
-
-                const leafId =
-                    typeof store?.currentLeafId === "function"
-                        ? store.currentLeafId()
-                        : store?.currentLeafId;
-
+                const leafId = getCurrentLeafId();
                 const frame = bridgeRef.__liveNodeReadFrame || 0;
 
                 // 🔴 ACTIVE LEAF
@@ -1953,7 +2011,7 @@
                 }
 
                 // 🟢 NORMAL PATH
-                const cached = cacheApi.get(id);
+                const cached = get(id);
                 if (cached !== undefined) {
                     stats.normalCached += 1;
                     return cached;
@@ -1964,7 +2022,7 @@
                 const result = original.call(store, id) ?? null;
 
                 if (result?.message?.status !== "in_progress" && result != null) {
-                    cacheApi.set(id, result);
+                    set(id, result);
                 }
 
                 return result;
@@ -2080,13 +2138,15 @@
             this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
 
             const bridgeRef = this;
+            const store = this.__store;
+            const directIndex = this.__nodeIdDirectIndex;
+            const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
 
             if (profiled) {
                 this.__store.getNodeIfExists = function cachedGetNodeIfExistsProfiled(id) {
                     const cached = frameCache.get(id);
                     if (cached !== undefined) return cached;
 
-                    const directIndex = bridgeRef.__nodeIdDirectIndex;
                     const hinted =
                         directIndex instanceof Map
                             ? directIndex.get(id)
@@ -2094,14 +2154,13 @@
 
                     if (
                         hinted !== undefined &&
-                        bridgeRef.__confirmedExistingNodeIds?.has(id)
+                        confirmedExistingNodeIds.has(id)
                     ) {
                         stats.confirmedFastHits += 1;
                         frameCache.set(id, hinted);
                         return hinted;
                     }
 
-                    const store = bridgeRef.__store;
                     const result = original.call(store, id);
 
                     if (hinted !== undefined) {
@@ -2109,7 +2168,7 @@
 
                         if (result === hinted) {
                             stats.hintConfirmed += 1;
-                            bridgeRef.__confirmedExistingNodeIds?.add(id);
+                            confirmedExistingNodeIds.add(id);
                         }
                     }
 
@@ -2227,14 +2286,7 @@
 
             const bridgeRef = this;
             const store = this.__store;
-
-            function getCurrentLeafId() {
-                const store = bridgeRef.__store;
-
-                return typeof store?.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store?.currentLeafId;
-            }
+            const getCurrentLeafId = createCurrentLeafIdReader(store);
 
             this.__findNodeFromLeafFrameCache = sourceCache;
             this.__findNodeFromLeafFrameCacheStats = stats;
@@ -2729,6 +2781,9 @@
 
             if (typeof getBranchFromLeafOriginal === "function") {
                 if (profiled) {
+
+                    const store = this.__store;
+
                     this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
                         bridgeRef.recordBranchCallSite?.("getBranchFromLeaf", [id, ...rest]);
                         getBranchFromLeafStats.calls += 1;
@@ -2747,7 +2802,7 @@
                             return cached;
                         }
 
-                        const node = getNodeDirect(bridgeRef.__store, key);
+                        const node = getNodeDirect(store, key);
                         const parentId = node?.parentId ?? null;
 
                         if (node && parentId) {
@@ -2773,7 +2828,7 @@
                         getBranchFromLeafStats.originalCalls += 1;
 
                         const result = getBranchFromLeafOriginal.call(
-                            bridgeRef.__store,
+                            store,
                             id,
                             ...rest
                         );
@@ -3076,6 +3131,89 @@
             };
         },
 
+        installGetDisplayTurnsCache({
+            maxSize = 200,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
+            if (!this.__store) return { ok: false, reason: "store not registered" };
+            if (this.__getDisplayTurnsCacheInstalled) return { ok: true, alreadyInstalled: true };
+
+            const original = this.__store.getDisplayTurns;
+            if (typeof original !== "function") {
+                return { ok: false, reason: "getDisplayTurns unavailable" };
+            }
+
+            const stats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    bypassed: 0,
+                    cached: 0,
+                    evictions: 0,
+                    frameClears: 0,
+                    maxSize,
+                    lastClearReason: null,
+                }
+                : null;
+
+            const cacheApi = createPersistentCache({ maxSize, stats, profiled });
+            const store = this.__store;
+            const prunedSet = this.__prunedLeafIdSet;
+            const get = cacheApi.get;
+            const set = cacheApi.set;
+
+            this.__getDisplayTurnsCache = cacheApi.cache;
+            this.__getDisplayTurnsCacheStats = stats;
+            this.__getDisplayTurnsCacheOriginal = { getDisplayTurns: original };
+
+            this.__store.getDisplayTurns = function cachedGetDisplayTurns(leafId, ...rest) {
+                if (!prunedSet?.has(leafId)) {
+                    if (stats) stats.bypassed = (stats.bypassed || 0) + 1;
+                    return original.call(store, leafId, ...rest);
+                }
+
+                const cached = get(leafId);
+                if (cached !== undefined) return cached;
+
+                const result = original.call(store, leafId, ...rest);
+                set(leafId, result ?? null);
+                return result ?? null;
+            };
+
+            this.__getDisplayTurnsCacheInstalled = true;
+
+            return { ok: true, installed: true, profiled };
+        },
+
+        getDisplayTurnsCacheStats() {
+            const stats = this.__getDisplayTurnsCacheStats;
+            const hits = stats?.hits ?? 0;
+            const misses = stats?.misses ?? 0;
+            const total = hits + misses;
+            const size = this.__getDisplayTurnsCache?.size ?? 0;
+
+            return {
+                installed: Boolean(this.__getDisplayTurnsCacheInstalled),
+                hits,
+                misses,
+                bypassed: stats?.bypassed ?? 0,
+                hitRate: total > 0 ? hits / total : 0,
+                size,
+                cached: stats?.cached ?? size,
+                evictions: stats?.evictions ?? 0,
+                maxSize: stats?.maxSize ?? null,
+                lastClearReason: stats?.lastClearReason ?? null,
+            };
+        },
+
+        uninstallGetDisplayTurnsCache() {
+            return uninstallMethodFrameCache({
+                bridge: this,
+                originalSlot: "__getDisplayTurnsCacheOriginal",
+                installedFlag: "__getDisplayTurnsCacheInstalled",
+            });
+        },
+
         applyStoreReadOptimization({ debug = false, clearStats = false } = {}) {
             const optimizationStartedAt = performance.now();
             const discoveryResult = this.hasStore() ? true : this.promoteStoreDiscovery();
@@ -3126,6 +3264,10 @@
                     ? this.installStoreProfiler()
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
                 cleared: null,
+                getDisplayTurnsCache: this.installGetDisplayTurnsCache({
+                    maxSize: 500,
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
             };
 
             if (clearStats) {
@@ -3161,6 +3303,7 @@
         disableStoreReadOptimization({ debug = false } = {}) {
             const result = {
                 profiler: this.uninstallStoreProfiler?.(),
+                getDisplayTurnsCache: this.uninstallGetDisplayTurnsCache?.(),
                 resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
                 getLeafFromNodeFrameCache: this.uninstallGetLeafFromNodeFrameCache(),
                 findNodeFromLeafFrameCache: this.uninstallFindNodeFromLeafFrameCache(),
@@ -3234,6 +3377,7 @@
                 getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
+                getDisplayTurnsCache: this.getDisplayTurnsCacheStats?.(),
                 branchCallSites: this.getBranchCallSiteStats?.(),
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
@@ -3252,9 +3396,7 @@
                 const cache = this[cacheSlot];
                 const stats = this[statsSlot];
 
-                // Special handling for branch cache
                 if (cacheSlot === "__branchCache") {
-                    // Keep getBranchFromLeaf long-lived, clear getBranch
                     this.__branchCache?.getBranch?.clear?.();
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
@@ -3269,16 +3411,24 @@
                         }
                     }
 
-                    // Intentionally keep getBranchFromLeaf long-lived.
-                    // Only getBranch is cleared on generic cache clears.
                     continue;
                 }
 
-                // Skip clears for certain caches unless it's a "real" reason
+                if (
+                    cacheSlot === "__getDisplayTurnsCache" &&
+                    reason === "store-mutation"
+                ) {
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-store-mutation";
+                    }
+                    continue;
+                }
+
                 if (
                     (cacheSlot === "__findNodeFromLeafFrameCache" ||
-                    cacheSlot === "__getLeafFromNodeFrameCache" ||
-                    cacheSlot === "__existingNodeFrameCache") &&
+                        cacheSlot === "__getLeafFromNodeFrameCache" ||
+                        cacheSlot === "__existingNodeFrameCache") &&
                     reason !== "store-mutation" &&
                     reason !== "conversation-change" &&
                     reason !== "manual"
@@ -3290,8 +3440,8 @@
                     continue;
                 }
 
-                // Default: clear cache and update stats
                 cache?.clear?.();
+
                 if (stats && ENABLE_CACHE_PROFILING) {
                     stats.cached = 0;
                     if ("clears" in stats) stats.clears += 1;
@@ -3311,7 +3461,8 @@
                     this.__findNodeFromLeafFrameCacheInstalled ||
                     this.__getLeafFromNodeFrameCacheInstalled ||
                     this.__branchCacheInstalled ||
-                    this.__resolvedNodeFrameCacheInstalled
+                    this.__resolvedNodeFrameCacheInstalled ||
+                    this.__getDisplayTurnsCacheInstalled
                 ),
                 messageIdIndex: this.getMessageIdIndexStats?.(),
                 existingNodeFrameCache: this.getExistingNodeFrameCacheStats?.(),
@@ -3319,6 +3470,7 @@
                 getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
+                getDisplayTurnsCache: this.getDisplayTurnsCacheStats?.(),
             };
         },
 
