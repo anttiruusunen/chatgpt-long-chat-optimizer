@@ -1484,9 +1484,44 @@
                 this.__storeProfilerOriginals[methodName] = original;
 
                 const bridgeRef = this;
+                const shouldCaptureCallSite =
+                    methodName === "getNodeByIdOrMessageId";
 
                 this.__store[methodName] = function profiledStoreMethod(...args) {
                     const startedAt = performance.now();
+
+                    if (shouldCaptureCallSite) {
+                        const profile = bridgeRef.__getNodeByIdOrMessageIdCallSites ??= {
+                            total: 0,
+                            callSites: {},
+                            max: 50,
+                        };
+
+                        profile.total += 1;
+
+                        const stack = normalizeStack(new Error().stack);
+                        const existing = profile.callSites[stack];
+
+                        if (existing) {
+                            existing.calls += 1;
+                            existing.lastArg = args[0];
+                        } else {
+                            const keys = Object.keys(profile.callSites);
+
+                            if (keys.length >= profile.max) {
+                                const lowest = keys.reduce((a, b) =>
+                                    profile.callSites[a].calls < profile.callSites[b].calls ? a : b
+                                );
+                                delete profile.callSites[lowest];
+                            }
+
+                            profile.callSites[stack] = {
+                                calls: 1,
+                                firstArg: args[0],
+                                lastArg: args[0],
+                            };
+                        }
+                    }
 
                     try {
                         return original.apply(bridgeRef.__store, args);
@@ -2518,8 +2553,14 @@
                 if (cached !== undefined) return cached;
 
                 const result = original.call(store, id);
+                const leafId = typeof result === "string" ? result : result?.id ?? null;
 
                 set(key, result ?? null);
+
+                if (leafId && leafId !== key) {
+                    set(leafId, result ?? null);
+                }
+
                 return result ?? null;
             };
 
@@ -3277,6 +3318,30 @@
             });
         },
 
+        getNodeByIdOrMessageIdCallSiteStats() {
+            const stats = this.__getNodeByIdOrMessageIdCallSites;
+
+            if (!stats) {
+                return {
+                    installed: false,
+                    total: 0,
+                    topCallSites: [],
+                };
+            }
+
+            return {
+                installed: true,
+                total: stats.total,
+                topCallSites: Object.entries(stats.callSites)
+                    .map(([stack, data]) => ({
+                        stack,
+                        ...data,
+                    }))
+                    .sort((a, b) => b.calls - a.calls)
+                    .slice(0, 20),
+            };
+        },
+
         applyStoreReadOptimization({ debug = false, clearStats = false } = {}) {
             const optimizationStartedAt = performance.now();
             const discoveryResult = this.hasStore() ? true : this.promoteStoreDiscovery();
@@ -3442,6 +3507,7 @@
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
                 getDisplayTurnsCache: this.getDisplayTurnsCacheStats?.(),
                 branchCallSites: this.getBranchCallSiteStats?.(),
+                getNodeByIdOrMessageIdCallSites: this.getNodeByIdOrMessageIdCallSiteStats?.(),
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
             };
@@ -3477,11 +3543,15 @@
                     continue;
                 }
 
-                // keep getDisplayTurns cache across mutations
-                if (
-                    cacheSlot === "__getDisplayTurnsCache" &&
-                    reason === "store-mutation"
-                ) {
+                const keepAcrossStoreMutation =
+                    reason === "store-mutation" &&
+                    (
+                        cacheSlot === "__getDisplayTurnsCache" ||
+                        cacheSlot === "__getLeafFromNodeFrameCache" ||
+                        cacheSlot === "__findNodeFromLeafFrameCache"
+                    );
+
+                if (keepAcrossStoreMutation) {
                     if (stats && ENABLE_CACHE_PROFILING) {
                         stats.skippedClears = (stats.skippedClears || 0) + 1;
                         stats.lastClearReason = "skipped-store-mutation";
@@ -3489,31 +3559,6 @@
                     continue;
                 }
 
-                // keep getLeafFromNode cache across mutations
-                if (
-                    cacheSlot === "__getLeafFromNodeFrameCache" &&
-                    reason === "store-mutation"
-                ) {
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-store-mutation";
-                    }
-                    continue;
-                }
-
-                // keep findNodeFromLeaf cache across mutations
-                if (
-                    cacheSlot === "__findNodeFromLeafFrameCache" &&
-                    reason === "store-mutation"
-                ) {
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-store-mutation";
-                    }
-                    continue;
-                }
-
-                // skip unnecessary clears for selected caches
                 if (
                     cacheSlot === "__existingNodeFrameCache" &&
                     reason !== "store-mutation" &&
