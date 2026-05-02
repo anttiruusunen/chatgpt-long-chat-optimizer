@@ -12,6 +12,12 @@ import {
 
 import { state } from "../../src/content/core/state.js";
 
+const USER_MESSAGE_CLAMP_SELECTOR =
+    'section[data-turn="user"] [data-message-author-role="user"] .whitespace-pre-wrap';
+
+const USER_MESSAGE_WRAPPER_SELECTOR =
+    'section[data-turn="user"] [data-message-author-role="user"]';
+
 describe("qolStyles", () => {
     beforeEach(() => {
         document.head.innerHTML = "";
@@ -66,9 +72,7 @@ describe("qolStyles", () => {
         const styleEl = ensureQolStyles();
 
         expect(styleEl).not.toBeNull();
-        expect(styleEl.textContent).not.toContain(
-            'section[data-turn="user"] [data-message-author-role="user"] > div'
-        );
+        expect(styleEl.textContent).not.toContain(USER_MESSAGE_CLAMP_SELECTOR);
         expect(document.getElementById("thread-optimizer-user-message-clamp-style")).toBeNull();
     });
 
@@ -79,11 +83,14 @@ describe("qolStyles", () => {
         const styleEl = document.getElementById("thread-optimizer-user-message-clamp-style");
 
         expect(styleEl).not.toBeNull();
-        expect(styleEl.textContent).toContain(
-            'section[data-turn="user"] [data-message-author-role="user"] > div'
-        );
+        expect(styleEl.textContent).toContain(USER_MESSAGE_WRAPPER_SELECTOR);
+        expect(styleEl.textContent).toContain(USER_MESSAGE_CLAMP_SELECTOR);
+        expect(styleEl.textContent).toContain("max-height: none !important");
+        expect(styleEl.textContent).toContain("overflow: visible !important");
         expect(styleEl.textContent).toContain("max-height: 30vh");
         expect(styleEl.textContent).toContain("overflow-y: auto");
+        expect(styleEl.textContent).toContain("overflow-x: hidden");
+        expect(styleEl.textContent).toContain("overscroll-behavior: contain");
 
         state.settings.enableUserMessageClamp = false;
         syncUserMessageClampStyles();
@@ -94,11 +101,14 @@ describe("qolStyles", () => {
     it("getUserMessageClampStyleText exposes only the conditional user clamp CSS", () => {
         const text = getUserMessageClampStyleText();
 
-        expect(text).toContain(
-            'section[data-turn="user"] [data-message-author-role="user"] > div'
-        );
+        expect(text).toContain(USER_MESSAGE_WRAPPER_SELECTOR);
+        expect(text).toContain(USER_MESSAGE_CLAMP_SELECTOR);
+        expect(text).toContain("max-height: none !important");
+        expect(text).toContain("overflow: visible !important");
         expect(text).toContain("max-height: 30vh");
         expect(text).toContain("overflow-y: auto");
+        expect(text).toContain("overflow-x: hidden");
+        expect(text).toContain("overscroll-behavior: contain");
     });
 
     it("does not install code block scrollbar styles with base QoL styles", () => {

@@ -7,9 +7,16 @@ const CODE_SCROLLBARS_STYLE_ID = "thread-optimizer-code-scrollbars-style";
 const USER_MESSAGE_CLAMP_STYLE_ID = "thread-optimizer-user-message-clamp-style";
 
 const USER_MESSAGE_CLAMP_CSS = `
-section[data-turn="user"] [data-message-author-role="user"] > div {
+section[data-turn="user"] [data-message-author-role="user"] {
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+section[data-turn="user"] [data-message-author-role="user"] .whitespace-pre-wrap {
     max-height: 30vh;
     overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
 }
 `;
 
