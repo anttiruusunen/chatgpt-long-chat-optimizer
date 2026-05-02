@@ -3132,7 +3132,7 @@
         },
 
         installGetDisplayTurnsCache({
-            maxSize = 200,
+            maxSize = 5000,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             if (!this.__store) return { ok: false, reason: "store not registered" };
@@ -3153,16 +3153,35 @@
                     frameClears: 0,
                     maxSize,
                     lastClearReason: null,
+                    liveHits: 0,
+                    liveMisses: 0,
                 }
                 : null;
 
             const cacheApi = createPersistentCache({ maxSize, stats, profiled });
             const store = this.__store;
+            const bridgeRef = this;
             const prunedSet = this.__prunedLeafIdSet;
             const get = cacheApi.get;
             const set = cacheApi.set;
+
             const seenCounts = new Map();
             const promoteAfterCalls = 2;
+
+            // rAF-based single-use cache for current leaf
+            let liveFrame = -1;
+            let liveLeafId = null;
+            let liveValue = undefined;
+            let liveUsesLeft = 0;
+
+            // rAF frame counter
+            bridgeRef.__displayTurnsRafFrame = 0;
+            function bumpDisplayTurnsRafFrame() {
+                bridgeRef.__displayTurnsRafFrame =
+                    (bridgeRef.__displayTurnsRafFrame + 1) | 0;
+                requestAnimationFrame(bumpDisplayTurnsRafFrame);
+            }
+            requestAnimationFrame(bumpDisplayTurnsRafFrame);
 
             this.__getDisplayTurnsCache = cacheApi.cache;
             this.__getDisplayTurnsCacheStats = stats;
@@ -3175,11 +3194,32 @@
                         : store.currentLeafId;
 
                 const isCurrentLeaf = leafId === currentLeafId;
-                const isPrunedLeaf = prunedSet?.has(leafId);
 
+                // Current/active leaf: rAF-throttled single-use cache
                 if (isCurrentLeaf) {
-                    if (stats) stats.bypassed = (stats.bypassed || 0) + 1;
-                    return original.call(store, leafId, ...rest);
+                    const frame = bridgeRef.__displayTurnsRafFrame || 0;
+
+                    if (
+                        liveFrame === frame &&
+                        liveLeafId === leafId &&
+                        liveValue !== undefined &&
+                        liveUsesLeft > 0
+                    ) {
+                        liveUsesLeft -= 1;
+                        if (stats) stats.liveHits = (stats.liveHits || 0) + 1;
+                        return liveValue;
+                    }
+
+                    if (stats) stats.liveMisses = (stats.liveMisses || 0) + 1;
+
+                    const result = original.call(store, leafId, ...rest) ?? null;
+
+                    liveFrame = frame;
+                    liveLeafId = leafId;
+                    liveValue = result;
+                    liveUsesLeft = 2;
+
+                    return result;
                 }
 
                 const cached = get(leafId);
@@ -3189,6 +3229,8 @@
 
                 const nextCount = (seenCounts.get(leafId) || 0) + 1;
                 seenCounts.set(leafId, nextCount);
+
+                const isPrunedLeaf = prunedSet?.has(leafId);
 
                 if (isPrunedLeaf || nextCount >= promoteAfterCalls) {
                     set(leafId, result ?? null);
@@ -3221,6 +3263,8 @@
                 cached: stats?.cached ?? size,
                 evictions: stats?.evictions ?? 0,
                 maxSize: stats?.maxSize ?? null,
+                liveHits: stats?.liveHits ?? 0,
+                liveMisses: stats?.liveMisses ?? 0,
                 lastClearReason: stats?.lastClearReason ?? null,
             };
         },
@@ -3284,7 +3328,7 @@
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
                 cleared: null,
                 getDisplayTurnsCache: this.installGetDisplayTurnsCache({
-                    maxSize: 500,
+                    maxSize: 5000,
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
             };
