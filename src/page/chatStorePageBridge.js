@@ -1704,10 +1704,13 @@
                     return result ?? null;
                 };
             } else {
+                const store = this.__store;
+                const getIndex = () => bridgeRef.__messageIdIndex;
+                const maybeRebuildMessageIdIndex = bridgeRef.maybeRebuildMessageIdIndex;
                 let missSinceRebuild = 0;
 
-                this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProduction(messageId) {
-                    const index = bridgeRef.__messageIdIndex;
+                store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProduction(messageId) {
+                    const index = getIndex();
 
                     if (index) {
                         const indexed = index.get(messageId);
@@ -1719,18 +1722,18 @@
                     if (missSinceRebuild >= 150) {
                         missSinceRebuild = 0;
 
-                        bridgeRef.maybeRebuildMessageIdIndex({
+                        maybeRebuildMessageIdIndex.call(bridgeRef, {
                             minIntervalMs: 1000,
                         });
 
-                        const rebuilt = bridgeRef.__messageIdIndex?.get(messageId);
+                        const rebuilt = getIndex()?.get(messageId);
                         if (rebuilt !== undefined) return rebuilt;
                     }
 
-                    const result = original.call(bridgeRef.__store, messageId);
+                    const result = original.call(store, messageId);
 
                     if (result) {
-                        bridgeRef.__messageIdIndex?.set(messageId, result);
+                        getIndex()?.set(messageId, result);
                     }
 
                     return result ?? null;
@@ -2223,6 +2226,7 @@
             }
 
             const bridgeRef = this;
+            const store = this.__store;
 
             function getCurrentLeafId() {
                 const store = bridgeRef.__store;
@@ -2244,7 +2248,7 @@
 
                     if (typeof predicateFn !== "function" || !leafId) {
                         stats.fallbackCalls += 1;
-                        return original.call(bridgeRef.__store, predicateFn, ...rest);
+                        return original.call(store, predicateFn, ...rest);
                     }
 
                     const predicateSource = getPredicateSource(predicateFn);
@@ -2275,7 +2279,7 @@
                         stats.misses += 1;
                         stats.liveMisses += 1;
 
-                        const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                        const result = original.call(store, predicateFn, ...rest);
                         liveCache.set(predicateSource, result ?? CACHE_MISS);
                         return result ?? null;
                     }
@@ -2293,7 +2297,7 @@
                     stats.misses += 1;
                     stats.normalMisses += 1;
 
-                    const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                    const result = original.call(store, predicateFn, ...rest);
                     const cachedResult = result ?? CACHE_MISS;
 
                     sourceCache.set(key, cachedResult);
@@ -2317,7 +2321,7 @@
                     const leafId = rest[0];
 
                     if (typeof predicateFn !== "function" || !leafId) {
-                        return original.call(bridgeRef.__store, predicateFn, ...rest);
+                        return original.call(store, predicateFn, ...rest);
                     }
 
                     const predicateSource = getPredicateSource(predicateFn);
@@ -2342,7 +2346,7 @@
                             return cached === CACHE_MISS ? null : cached;
                         }
 
-                        const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                        const result = original.call(store, predicateFn, ...rest);
                         liveCache.set(predicateSource, result ?? CACHE_MISS);
                         return result ?? null;
                     }
@@ -2354,7 +2358,7 @@
                         return cached === CACHE_MISS ? null : cached;
                     }
 
-                    const result = original.call(bridgeRef.__store, predicateFn, ...rest);
+                    const result = original.call(store, predicateFn, ...rest);
 
                     sourceCache.set(key, result ?? CACHE_MISS);
                     insertionOrder.push(key);
@@ -2445,9 +2449,11 @@
             this.__getLeafFromNodeFrameCacheStats = stats;
             this.__getLeafFromNodeFrameCacheOriginal = { getLeafFromNode: original };
 
-            const bridgeRef = this;
+            const store = this.__store;
+            const get = frameCache.get;
+            const set = frameCache.set;
 
-            this.__store.getLeafFromNode = function cachedGetLeafFromNode(id) {
+            store.getLeafFromNode = function cachedGetLeafFromNode(id) {
                 const key =
                     typeof id === "string" ||
                     typeof id === "number" ||
@@ -2456,12 +2462,12 @@
                         ? id
                         : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
-                const cached = frameCache.get(key);
+                const cached = get(key);
                 if (cached !== undefined) return cached;
 
-                const result = original.call(bridgeRef.__store, id);
+                const result = original.call(store, id);
 
-                frameCache.set(key, result ?? null);
+                set(key, result ?? null);
                 return result ?? null;
             };
 
@@ -2699,14 +2705,24 @@
             const bridgeRef = this;
 
             if (typeof getBranchOriginal === "function") {
+                const store = this.__store;
+                const getBranchGet = getBranchCache.get;
+                const getBranchSet = getBranchCache.set;
+                const recordBranchCallSite = ENABLE_BRANCH_CALLSITE_STATS
+                    ? bridgeRef.recordBranchCallSite.bind(bridgeRef)
+                    : null;
+
                 this.__store.getBranch = function cachedGetBranch(id, ...rest) {
-                    bridgeRef.recordBranchCallSite?.("getBranch", [id, ...rest]);
-                    const cached = getBranchCache.get(id);
+                    if (recordBranchCallSite) {
+                        recordBranchCallSite("getBranch", [id, ...rest]);
+                    }
+
+                    const cached = getBranchGet(id);
                     if (cached !== undefined) return cached;
 
-                    const result = getBranchOriginal.call(bridgeRef.__store, id, ...rest);
+                    const result = getBranchOriginal.call(store, id, ...rest);
 
-                    getBranchCache.set(id, result ?? null);
+                    getBranchSet(id, result ?? null);
                     return result ?? null;
                 };
             }
@@ -2766,6 +2782,10 @@
                         return result ?? null;
                     };
                 } else {
+                    const store = this.__store;
+                    const getBranchFromLeafGet = getBranchFromLeafCache.get;
+                    const getBranchFromLeafSet = getBranchFromLeafCache.set;
+
                     this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
                         const key =
                             typeof id === "string" ||
@@ -2775,33 +2795,33 @@
                                 ? id
                                 : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
-                        const cached = getBranchFromLeafCache.get(key);
+                        const cached = getBranchFromLeafGet(key);
                         if (cached !== undefined) return cached;
 
-                        const node = getNodeDirect(bridgeRef.__store, key);
+                        const node = getNodeDirect(store, key);
                         const parentId = node?.parentId ?? null;
 
                         if (node && parentId) {
-                            const parentBranch = getBranchFromLeafCache.get(parentId);
+                            const parentBranch = getBranchFromLeafGet(parentId);
 
                             if (
                                 Array.isArray(parentBranch) &&
                                 parentBranch[parentBranch.length - 1]?.id === parentId
                             ) {
                                 const result = parentBranch.concat(node);
-                                getBranchFromLeafCache.set(key, result);
+                                getBranchFromLeafSet(key, result);
 
                                 return result;
                             }
                         }
 
                         const result = getBranchFromLeafOriginal.call(
-                            bridgeRef.__store,
+                            store,
                             id,
                             ...rest
                         );
 
-                        getBranchFromLeafCache.set(key, result ?? null);
+                        getBranchFromLeafSet(key, result ?? null);
                         return result ?? null;
                     };
                 }
@@ -3000,22 +3020,26 @@
                     return node;
                 };
             } else {
+                const get = frameCache.get;
+                const set = frameCache.set;
+                const resolve = resolveNodeCore;
+
                 this.__resolveNodeFast = function resolveNodeFastProduction(id) {
-                    const cached = frameCache.get(id);
+                    const cached = get(id);
                     if (cached !== undefined) return cached;
 
-                    const node = resolveNodeCore(bridgeRef, id);
+                    const node = resolve(bridgeRef, id);
 
                     if (node) {
                         const nodeId = node.id;
 
-                        frameCache.set(id, node);
+                        set(id, node);
 
                         if (nodeId && nodeId !== id) {
-                            frameCache.set(nodeId, node);
+                            set(nodeId, node);
                         }
                     } else {
-                        frameCache.set(id, null);
+                        set(id, null);
                     }
 
                     return node;
