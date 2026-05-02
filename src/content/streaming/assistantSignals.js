@@ -23,6 +23,13 @@ export function hasResponseActions(section) {
     return matchedButtons.length > 0;
 }
 
+export function isIncompleteAssistantSection(section) {
+    if (!(section instanceof HTMLElement)) return false;
+    if (section.getAttribute("data-turn") !== "assistant") return false;
+
+    return !hasResponseActions(section) && !hasAssistantErrorState(section);
+}
+
 export function hasAssistantErrorState(section) {
     if (!(section instanceof HTMLElement)) return false;
 

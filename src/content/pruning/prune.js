@@ -35,6 +35,7 @@ import {
     preserveScrollAfterReprune,
 } from "./pruneScroll.js";
 import { recordPrunedSectionMessageForManualBridgeDelete } from "../bridge/chatStoreBridgeClient.js";
+import { isIncompleteAssistantSection } from "../streaming/assistantSignals.js";
 
 const VISIBLE_EXCHANGES = 1;
 const SECTIONS_PER_EXCHANGE = 2;
@@ -387,10 +388,16 @@ export function pruneOldSections(
 
     const latestVisibleSections = currentVisibleSections.slice(-visibleSectionsLimit);
     const protectedVisibleSections = getProtectedVisibleSections();
+    const incompleteLatestAssistantSection =
+        currentVisibleSections[currentVisibleSections.length - 1]?.getAttribute("data-turn") === "assistant" &&
+        isIncompleteAssistantSection(currentVisibleSections[currentVisibleSections.length - 1])
+            ? currentVisibleSections[currentVisibleSections.length - 1]
+            : null;
 
     const targetVisibleSet = new Set([
         ...latestVisibleSections,
         ...protectedVisibleSections,
+        ...(incompleteLatestAssistantSection ? [incompleteLatestAssistantSection] : []),
     ]);
 
     const pruneableLogicalSections = logicalSections.filter(

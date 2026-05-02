@@ -348,4 +348,18 @@ describe("prune bookkeeping", () => {
         expect(getConversationSections().length).toBe(4);
         expect(state.softPrunedSections.length).toBe(0);
     });
+
+    it("does not prune the latest incomplete assistant section during initial/reload pruning", () => {
+        const { conversation } = buildConversation(6);
+
+        const incomplete = document.createElement("section");
+        incomplete.setAttribute("data-turn", "assistant");
+        incomplete.textContent = "partial streamed reply";
+        conversation.appendChild(incomplete);
+
+        pruneOldSections(1, { showPlaceholder: true }, makeDeps());
+
+        expect(incomplete.isConnected).toBe(true);
+        expect(getConversationSections()).toContain(incomplete);
+    });
 });
