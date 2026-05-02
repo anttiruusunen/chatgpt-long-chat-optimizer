@@ -3161,6 +3161,8 @@
             const prunedSet = this.__prunedLeafIdSet;
             const get = cacheApi.get;
             const set = cacheApi.set;
+            const seenCounts = new Map();
+            const promoteAfterCalls = 2;
 
             this.__getDisplayTurnsCache = cacheApi.cache;
             this.__getDisplayTurnsCacheStats = stats;
@@ -3172,11 +3174,10 @@
                         ? store.currentLeafId()
                         : store.currentLeafId;
 
-                const shouldCache =
-                    leafId !== currentLeafId &&
-                    prunedSet?.has(leafId);
+                const isCurrentLeaf = leafId === currentLeafId;
+                const isPrunedLeaf = prunedSet?.has(leafId);
 
-                if (!shouldCache) {
+                if (isCurrentLeaf) {
                     if (stats) stats.bypassed = (stats.bypassed || 0) + 1;
                     return original.call(store, leafId, ...rest);
                 }
@@ -3185,7 +3186,16 @@
                 if (cached !== undefined) return cached;
 
                 const result = original.call(store, leafId, ...rest);
-                set(leafId, result ?? null);
+
+                const nextCount = (seenCounts.get(leafId) || 0) + 1;
+                seenCounts.set(leafId, nextCount);
+
+                if (isPrunedLeaf || nextCount >= promoteAfterCalls) {
+                    set(leafId, result ?? null);
+                } else if (stats) {
+                    stats.bypassed = (stats.bypassed || 0) + 1;
+                }
+
                 return result ?? null;
             };
 
