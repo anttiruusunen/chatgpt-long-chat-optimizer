@@ -8,6 +8,13 @@ const PRE_PLACEHOLDER_ID_DATASET_KEY = "threadOptimizerCodePlaceholderId";
 const PLACEHOLDER_HIDDEN_ATTR = "data-thread-optimizer-code-placeholder-hidden";
 const REVEAL_BUTTON_ATTR = "data-thread-optimizer-code-reveal";
 
+function isCodeBlockPlaceholderElement(element) {
+    return (
+        element instanceof HTMLElement &&
+        element.getAttribute(CODE_BLOCK_PLACEHOLDER_ATTR) === "true"
+    );
+}
+
 function getNormalizedCodeBlockText(pre) {
     if (!(pre instanceof HTMLPreElement)) {
         return "";
@@ -149,12 +156,12 @@ export function updatePlaceholderLabel(placeholder) {
             ? placeholder.firstElementChild
             : null;
 
-    if (label) {
+    if (label && label.textContent !== "Code block hidden") {
         label.textContent = "Code block hidden";
     }
 
     const button = getRevealButtonForPlaceholder(placeholder);
-    if (button) {
+    if (button && button.textContent !== "Show code block") {
         button.textContent = "Show code block";
     }
 }
@@ -184,38 +191,46 @@ export function isPlaceholderHidden(placeholder) {
 }
 
 export function ensurePlaceholderForPre(pre) {
-    if (!(pre instanceof HTMLPreElement) || !pre.parentElement) {
+    if (!(pre instanceof HTMLPreElement)) {
         return null;
     }
 
-    // Reuse only the placeholder already assigned to THIS pre.
-    // This preserves UI stability without letting adjacent code blocks
-    // share placeholder identity.
     const existingId = getPlaceholderIdForPre(pre);
-    const existingPlaceholder = existingId
-        ? getPlaceholderById(existingId)
-        : null;
+    const existingPlaceholder = getPlaceholderById(existingId);
 
-    if (existingPlaceholder instanceof HTMLElement) {
-        updatePlaceholderLabel(existingPlaceholder);
+    if (existingPlaceholder instanceof HTMLElement && existingPlaceholder.isConnected) {
         setPlaceholderVisibility(existingPlaceholder, true);
+        return existingPlaceholder;
+    }
 
-        if (existingPlaceholder.parentElement !== pre.parentElement) {
-            pre.parentElement.insertBefore(existingPlaceholder, pre);
-        } else if (existingPlaceholder.nextSibling !== pre) {
-            pre.parentElement.insertBefore(existingPlaceholder, pre);
+    const siblingCandidates = [
+        pre.previousElementSibling,
+        pre.nextElementSibling,
+    ];
+
+    for (const candidate of siblingCandidates) {
+        if (!isCodeBlockPlaceholderElement(candidate)) {
+            continue;
         }
 
-        return existingPlaceholder;
+        const candidateId = getPlaceholderId(candidate);
+
+        if (candidateId && candidateId === existingId) {
+            setPlaceholderVisibility(candidate, true);
+            return candidate;
+        }
     }
 
     const placeholder = createCodeBlockPlaceholder();
     const id = ensurePlaceholderId(placeholder);
 
     setPlaceholderIdForPre(pre, id);
-    updatePlaceholderLabel(placeholder);
+
+    if (pre.parentElement) {
+        pre.parentElement.insertBefore(placeholder, pre);
+    }
+
     setPlaceholderVisibility(placeholder, true);
 
-    pre.parentElement.insertBefore(placeholder, pre);
     return placeholder;
 }

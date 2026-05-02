@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-
 import {
     isConversationSection,
     getAnchorSection,
@@ -10,6 +9,7 @@ import {
     getConversationScrollContainer,
     getConversationTurnRoot,
     getConversationSectionMountNode,
+    resetConversationDomCacheForTests,
 } from "../../src/content/core/dom.js";
 
 import {
@@ -76,11 +76,13 @@ describe("isConversationSection", () => {
 describe("conversation DOM helpers", () => {
     beforeEach(() => {
         document.body.innerHTML = "";
+        resetConversationDomCacheForTests();
         vi.restoreAllMocks();
     });
 
     afterEach(() => {
         document.body.innerHTML = "";
+        resetConversationDomCacheForTests();
         vi.restoreAllMocks();
     });
 
@@ -277,6 +279,8 @@ describe("conversation DOM helpers", () => {
         sections[3].setAttribute("data-scroll-anchor", "true");
         mode = "thread";
 
+        resetConversationDomCacheForTests();
+
         expect(getAnchorSection()).toBe(sections[3]);
         expect(getConversationScrollContainer()).toBe(threadRoot);
     });
@@ -358,5 +362,62 @@ describe("conversation DOM helpers", () => {
         const row = document.getElementById("row-2");
 
         expect(getConversationSectionMountNode(section)).toBe(row);
+    });
+
+    it("caches the conversation scroll container", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="scroll-root" style="overflow-y: auto;">
+                    <div id="conversation">
+                        <section data-testid="conversation-turn-1" data-turn="user"></section>
+                        <section data-testid="conversation-turn-2" data-turn="assistant" data-scroll-anchor="true"></section>
+                    </div>
+                </div>
+            </main>
+        `;
+
+        const scrollRoot = document.getElementById("scroll-root");
+        const getComputedStyleSpy = vi.spyOn(window, "getComputedStyle");
+
+        resetConversationDomCacheForTests();
+
+        expect(getConversationScrollContainer()).toBe(scrollRoot);
+        expect(getConversationScrollContainer()).toBe(scrollRoot);
+
+        expect(getComputedStyleSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("invalidates the cached scroll container when the conversation DOM cache is reset", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="old-scroll-root" style="overflow-y: auto;">
+                    <div id="conversation">
+                        <section data-testid="conversation-turn-1" data-turn="user"></section>
+                        <section data-testid="conversation-turn-2" data-turn="assistant" data-scroll-anchor="true"></section>
+                    </div>
+                </div>
+            </main>
+        `;
+
+        const oldScrollRoot = document.getElementById("old-scroll-root");
+
+        expect(getConversationScrollContainer()).toBe(oldScrollRoot);
+
+        document.body.innerHTML = `
+            <main>
+                <div id="new-scroll-root" style="overflow-y: auto;">
+                    <div id="conversation">
+                        <section data-testid="conversation-turn-1" data-turn="user"></section>
+                        <section data-testid="conversation-turn-2" data-turn="assistant" data-scroll-anchor="true"></section>
+                    </div>
+                </div>
+            </main>
+        `;
+
+        resetConversationDomCacheForTests();
+
+        const newScrollRoot = document.getElementById("new-scroll-root");
+
+        expect(getConversationScrollContainer()).toBe(newScrollRoot);
     });
 });

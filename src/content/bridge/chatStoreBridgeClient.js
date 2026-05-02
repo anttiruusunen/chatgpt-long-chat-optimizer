@@ -1,7 +1,10 @@
 import { debugLog } from "../core/logger";
+import { getChatStorePageBridgeToken } from "./bridgeBootstrap.js";
 
 const RECORD_SOURCE = "thread-optimizer";
 const RECORD_TYPE = "thread-optimizer:record-pruned-message-id";
+
+const MAX_MESSAGE_ID_LENGTH = 300;
 
 function extractMessageIdFromSection(section) {
     if (!(section instanceof HTMLElement)) {
@@ -24,8 +27,50 @@ function extractMessageIdFromSection(section) {
     return null;
 }
 
+function normalizeMessageId(messageId) {
+    if (typeof messageId !== "string") {
+        return null;
+    }
+
+    const normalized = messageId.trim();
+
+    if (!normalized) {
+        return null;
+    }
+
+    if (normalized.length > MAX_MESSAGE_ID_LENGTH) {
+        return null;
+    }
+
+    return normalized;
+}
+
+export function postThreadOptimizerBridgeMessage(message) {
+    const token = getChatStorePageBridgeToken();
+
+    if (!token) {
+        debugLog("[Thread Optimizer] page bridge token unavailable");
+        return false;
+    }
+
+    if (!message || typeof message !== "object") {
+        return false;
+    }
+
+    window.postMessage(
+        {
+            ...message,
+            source: RECORD_SOURCE,
+            token,
+        },
+        window.location.origin
+    );
+
+    return true;
+}
+
 export function recordPrunedSectionMessageForManualBridgeDelete(section) {
-    const messageId = extractMessageIdFromSection(section);
+    const messageId = normalizeMessageId(extractMessageIdFromSection(section));
 
     if (!messageId) {
         debugLog("[Thread Optimizer] no message id found on pruned section", {
@@ -40,21 +85,18 @@ export function recordPrunedSectionMessageForManualBridgeDelete(section) {
 
         return {
             recorded: false,
-            reason: "no message id found on section",
+            reason: "no valid message id found on section",
         };
     }
 
-    window.postMessage(
-        {
-            source: RECORD_SOURCE,
-            type: RECORD_TYPE,
-            messageId,
-        },
-        window.location.origin
-    );
+    const posted = postThreadOptimizerBridgeMessage({
+        type: RECORD_TYPE,
+        messageId,
+    });
 
     return {
-        recorded: true,
+        recorded: posted,
         messageId,
+        reason: posted ? null : "failed to post bridge message",
     };
 }

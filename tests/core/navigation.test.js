@@ -3,106 +3,140 @@ import {
     installConversationNavigationWatcher,
     resetConversationNavigationWatcherForTests,
 } from "../../src/content/core/navigation.js";
+import {
+    dispatchClick,
+} from "../utils/domEvents.js";
 
-describe("core/navigation", () => {
+describe("navigation watcher", () => {
+    let callback;
+
     beforeEach(() => {
         document.body.innerHTML = "";
         resetConversationNavigationWatcherForTests();
         history.replaceState({}, "", "/");
         vi.useFakeTimers();
+
+        callback = vi.fn();
+
+        installConversationNavigationWatcher({
+            onNavigationDetected: callback,
+        });
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         resetConversationNavigationWatcherForTests();
+        vi.runOnlyPendingTimers();
+        vi.useRealTimers();
         document.body.innerHTML = "";
         history.replaceState({}, "", "/");
     });
 
-    it("notifies on pushState route changes", () => {
-        const onNavigationDetected = vi.fn();
-
-        installConversationNavigationWatcher({ onNavigationDetected });
-
-        history.pushState({}, "", "/c/chat-1");
-        vi.runAllTimers();
-
-        expect(onNavigationDetected).toHaveBeenCalledTimes(1);
-        expect(onNavigationDetected).toHaveBeenCalledWith({
-            reason: "pushState",
-            locationKey: "/c/chat-1",
-        });
-    });
-
-    it("notifies on replaceState route changes", () => {
-        const onNavigationDetected = vi.fn();
-
-        installConversationNavigationWatcher({ onNavigationDetected });
-
-        history.replaceState({}, "", "/c/chat-2");
-        vi.runAllTimers();
-
-        expect(onNavigationDetected).toHaveBeenCalledTimes(1);
-        expect(onNavigationDetected).toHaveBeenCalledWith({
-            reason: "replaceState",
-            locationKey: "/c/chat-2",
-        });
-    });
-
-    it("uses sidebar clicks as an early navigation hint", () => {
-        const onNavigationDetected = vi.fn();
-
-        installConversationNavigationWatcher({ onNavigationDetected });
-
+    it("detects conversation links with data-sidebar-item", () => {
         const link = document.createElement("a");
         link.setAttribute("data-sidebar-item", "true");
-        link.href = "/c/chat-from-sidebar";
-        link.addEventListener("click", (event) => {
-            event.preventDefault();
-        });
+        link.href = "/c/test-1";
         document.body.appendChild(link);
 
-        link.dispatchEvent(
-            new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-            })
-        );
+        dispatchClick(link);
 
-        vi.advanceTimersByTime(149);
-        expect(onNavigationDetected).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(200);
 
-        vi.advanceTimersByTime(1);
-        expect(onNavigationDetected).toHaveBeenCalledTimes(1);
-        expect(onNavigationDetected).toHaveBeenCalledWith({
-            reason: "sidebar-click",
+        expect(callback).toHaveBeenCalledWith({
+            reason: "conversation-link-click",
             locationKey: "/",
         });
     });
 
-    it("does not notify for non-sidebar clicks", () => {
-        const onNavigationDetected = vi.fn();
+    it("detects conversation links via /c/ href without data-sidebar-item", () => {
+        const link = document.createElement("a");
+        link.href = "/c/test-conversation";
+        document.body.appendChild(link);
 
-        installConversationNavigationWatcher({ onNavigationDetected });
+        dispatchClick(link);
 
-        const button = document.createElement("button");
-        document.body.appendChild(button);
+        vi.advanceTimersByTime(200);
 
-        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        vi.runAllTimers();
-
-        expect(onNavigationDetected).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith({
+            reason: "conversation-link-click",
+            locationKey: "/",
+        });
     });
 
-    it("suppresses duplicate scheduled checks while one is pending", () => {
-        const onNavigationDetected = vi.fn();
+    it("does not trigger for non-conversation links", () => {
+        const link = document.createElement("a");
+        link.href = "/settings";
+        document.body.appendChild(link);
 
-        installConversationNavigationWatcher({ onNavigationDetected });
+        dispatchClick(link);
 
-        history.pushState({}, "", "/c/chat-1");
-        history.replaceState({}, "", "/c/chat-2");
-        vi.runAllTimers();
+        vi.advanceTimersByTime(1000);
 
-        expect(onNavigationDetected).toHaveBeenCalledTimes(1);
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("runs both immediate and follow-up checks after conversation link click", () => {
+        const link = document.createElement("a");
+        link.href = "/c/test-followup";
+        document.body.appendChild(link);
+
+        dispatchClick(link);
+
+        vi.advanceTimersByTime(200);
+        expect(callback).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(500);
+        expect(callback).toHaveBeenCalledTimes(2);
+    });
+
+    it("handles pushState navigation", () => {
+        history.pushState({}, "", "/c/push-test");
+
+        vi.runOnlyPendingTimers();
+
+        expect(callback).toHaveBeenCalledWith({
+            reason: "pushState",
+            locationKey: "/c/push-test",
+        });
+    });
+
+    it("handles replaceState navigation", () => {
+        history.replaceState({}, "", "/c/replace-test");
+
+        vi.runOnlyPendingTimers();
+
+        expect(callback).toHaveBeenCalledWith({
+            reason: "replaceState",
+            locationKey: "/c/replace-test",
+        });
+    });
+
+    it("does not notify on popstate when the location key is unchanged", () => {
+        window.dispatchEvent(new PopStateEvent("popstate"));
+
+        vi.runOnlyPendingTimers();
+
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("does not notify on hashchange when the location key is unchanged", () => {
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+        vi.runOnlyPendingTimers();
+
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("clears all scheduled timers on reset", () => {
+        const link = document.createElement("a");
+        link.href = "/c/test-clear";
+        document.body.appendChild(link);
+
+        dispatchClick(link);
+
+        resetConversationNavigationWatcherForTests();
+
+        vi.advanceTimersByTime(1000);
+
+        expect(callback).not.toHaveBeenCalled();
     });
 });

@@ -9,6 +9,7 @@ import {
 } from "../../src/content/offscreen/offscreenCodeBlocks.js";
 import { revealCollapsedCodeBlockFromPlaceholder } from "../../src/content/offscreen/codeBlockDetachStore.js";
 import { isLargeCodeBlock } from "../../src/content/offscreen/codeBlockPlaceholders.js";
+import { resetConversationDomCacheForTests } from "../../src/content/core/dom.js";
 
 function makeLargePre(text) {
     const pre = document.createElement("pre");
@@ -49,6 +50,7 @@ describe("offscreenCodeBlocks", () => {
     const originalMutationObserver = globalThis.MutationObserver;
 
     beforeEach(() => {
+        resetConversationDomCacheForTests();
         vi.useFakeTimers();
 
         document.body.innerHTML = `
@@ -95,6 +97,7 @@ describe("offscreenCodeBlocks", () => {
     });
 
     afterEach(() => {
+        resetConversationDomCacheForTests();
         document.body.innerHTML = "";
         state.detachedCodeBlocks = new Map();
 
@@ -206,7 +209,7 @@ describe("offscreenCodeBlocks", () => {
         expect(remainingPreBlocks[0]).toBe(transientPre);
     });
 
-    it("detaches earlier blocks immediately and keeps only the latest pre live", () => {
+    it("keeps streaming code blocks connected while creating placeholders", () => {
         const markdown = document.querySelector(".markdown");
 
         state.replyTiming.pending = true;
@@ -224,8 +227,8 @@ describe("offscreenCodeBlocks", () => {
         const remaining = markdown.querySelectorAll("pre");
 
         expect(placeholders.length).toBe(2);
-        expect(remaining.length).toBe(1);
-        expect(remaining[0]).toBe(second);
+        expect(remaining.length).toBe(2);
+        expect(Array.from(remaining)).toEqual([first, second]);
     });
 
     it("detaches all large code blocks in a settled assistant section and then leaves the section alone", () => {
@@ -314,7 +317,7 @@ describe("offscreenCodeBlocks", () => {
         expect(state.streamingCodeBlockLastPre).toBe(first);
     });
 
-    it("detaches earlier large code blocks when a new pre appears", () => {
+    it("keeps earlier large code blocks connected while streaming when a new pre appears", () => {
         const markdown = document.querySelector(".markdown");
         const first = makeLargePre(largeText("first"));
         markdown.appendChild(first);
@@ -340,11 +343,11 @@ describe("offscreenCodeBlocks", () => {
         const remainingPreBlocks = markdown.querySelectorAll("pre");
 
         expect(placeholders.length).toBe(2);
-        expect(remainingPreBlocks.length).toBe(1);
-        expect(remainingPreBlocks[0]).toBe(second);
+        expect(remainingPreBlocks.length).toBe(2);
+        expect(Array.from(remainingPreBlocks)).toEqual([first, second]);
     });
 
-    it("fully detaches the previously live last code block once the streaming section settles", () => {
+    it("detaches all streaming code blocks after the section settles", () => {
         const markdown = document.querySelector(".markdown");
         const assistant = document.querySelector('section[data-testid="conversation-turn-2"]');
 
@@ -358,7 +361,7 @@ describe("offscreenCodeBlocks", () => {
         let remainingPreBlocks = markdown.querySelectorAll("pre");
 
         expect(placeholders.length).toBe(2);
-        expect(remainingPreBlocks.length).toBe(1);
+        expect(remainingPreBlocks.length).toBe(2);
 
         addResponseActions(assistant);
         state.replyTiming.pending = false;
@@ -370,6 +373,7 @@ describe("offscreenCodeBlocks", () => {
 
         expect(placeholders.length).toBe(2);
         expect(remainingPreBlocks.length).toBe(0);
+        expect(state.detachedCodeBlocks.size).toBe(2);
     });
 
     it("does not re-detach a manually expanded historical code block on later refreshes", () => {
@@ -426,5 +430,145 @@ describe("offscreenCodeBlocks", () => {
         ).toBeNull();
 
         expect(latestAssistant.querySelector("pre")).not.toBeNull();
+    });
+
+    it("does not add detached entries for streaming placeholders until the section settles", () => {
+        const markdown = document.querySelector(".markdown");
+
+        state.replyTiming.pending = true;
+
+        const first = makeLargePre(largeText("first"));
+        const second = makeLargePre(largeText("second"));
+
+        markdown.appendChild(first);
+        markdown.appendChild(second);
+
+        reconcileLatestStreamingAssistantCodeBlocksNow();
+
+        expect(document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`).length).toBe(2);
+        expect(markdown.querySelectorAll("pre").length).toBe(2);
+        expect(state.detachedCodeBlocks.size).toBe(0);
+    });
+
+    it("converts streaming placeholders into detached entries after settling", () => {
+        const markdown = document.querySelector(".markdown");
+        const assistant = document.querySelector('section[data-testid="conversation-turn-2"]');
+
+        state.replyTiming.pending = true;
+
+        markdown.appendChild(makeLargePre(largeText("first")));
+        markdown.appendChild(makeLargePre(largeText("second")));
+
+        reconcileLatestStreamingAssistantCodeBlocksNow();
+
+        expect(state.detachedCodeBlocks.size).toBe(0);
+
+        addResponseActions(assistant);
+        state.replyTiming.pending = false;
+
+        refreshObservedCodeBlocks();
+
+        expect(markdown.querySelectorAll("pre").length).toBe(0);
+        expect(document.querySelectorAll(`[${CODE_BLOCK_PLACEHOLDER_ATTR}]`).length).toBe(2);
+        expect(state.detachedCodeBlocks.size).toBe(2);
+    });
+
+    it("preserves manually expanded streaming code blocks after settling", () => {
+        const markdown = document.querySelector(".markdown");
+        const assistant = document.querySelector('section[data-testid="conversation-turn-2"]');
+
+        state.replyTiming.pending = true;
+
+        const first = makeLargePre(largeText("first"));
+        const second = makeLargePre(largeText("second"));
+
+        markdown.appendChild(first);
+        markdown.appendChild(second);
+
+        reconcileLatestStreamingAssistantCodeBlocksNow();
+
+        first.dataset.threadOptimizerCodeExpanded = "true";
+
+        addResponseActions(assistant);
+        state.replyTiming.pending = false;
+
+        refreshObservedCodeBlocks();
+
+        const remainingPreBlocks = Array.from(markdown.querySelectorAll("pre"));
+
+        expect(remainingPreBlocks).toEqual([first]);
+        expect(first.dataset.threadOptimizerCodeExpanded).toBe("true");
+        expect(state.detachedCodeBlocks.size).toBe(1);
+    });
+
+    it("does not collapse CodeMirror internal pre elements", () => {
+        const conversation = document.getElementById("conversation");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+        section.setAttribute("data-testid", "conversation-turn-codemirror");
+        section.innerHTML = `
+            <div class="markdown">
+                <div class="relative">
+                    <div class="cm-editor">
+                        <div class="cm-scroller">
+                            <pre><code>${"x".repeat(5000)}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        conversation.appendChild(section);
+        refreshObservedCodeBlocks();
+
+        expect(
+            section.querySelector(
+                ".cm-editor [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(
+            section.querySelector(
+                ".cm-scroller [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(state.detachedCodeBlocks.size).toBe(0);
+
+        const pre = section.querySelector(".cm-editor pre");
+        expect(pre).not.toBeNull();
+        expect(pre.isConnected).toBe(true);
+    });
+
+    it("removes invalid placeholders nested inside CodeMirror internals", () => {
+        const conversation = document.getElementById("conversation");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+        section.setAttribute("data-testid", "conversation-turn-codemirror-stale");
+        section.innerHTML = `
+            <div class="markdown">
+                <div class="cm-editor">
+                    <div class="cm-scroller">
+                        <div data-thread-optimizer-code-placeholder="true">
+                            Bad nested placeholder
+                        </div>
+                        <pre><code>${"x".repeat(5000)}</code></pre>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        conversation.appendChild(section);
+        refreshObservedCodeBlocks();
+
+        expect(
+            section.querySelector(
+                ".cm-editor [data-thread-optimizer-code-placeholder='true']"
+            )
+        ).toBeNull();
+
+        expect(section.querySelector(".cm-editor pre")).not.toBeNull();
     });
 });

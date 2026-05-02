@@ -160,6 +160,9 @@ function buildConversation() {
 async function flush() {
     await Promise.resolve();
     await Promise.resolve();
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+    await Promise.resolve();
 }
 
 describe("cssVisibilityWindow integration", () => {
@@ -207,6 +210,11 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
+
+        await flush();
+        vi.advanceTimersByTime(0);
+        await flush();
+        vi.advanceTimersByTime(0);
         await flush();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;

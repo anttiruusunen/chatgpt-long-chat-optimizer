@@ -112,6 +112,7 @@ describe("conversationMaintenance", () => {
         conversationSectionsMock = [makeSection("1"), makeSection("2")];
         isReplyStreamingMock = false;
 
+        state.featureFlags.offscreenOptimization = true;
         state.hiddenCount = 2;
 
         ensurePlaceholderStateMock.mockReset();
@@ -228,5 +229,49 @@ describe("conversationMaintenance", () => {
         expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
         expect(refreshTopRestoreSentinelObservationMock).not.toHaveBeenCalled();
         expect(refreshBottomPruneSentinelObservationMock).not.toHaveBeenCalled();
+    });
+
+    it("delays post-prune refresh when requested", () => {
+        vi.useFakeTimers();
+
+        const ensureObserverAttached = vi.fn();
+        const withDomMutationGuard = vi.fn((fn) => fn());
+
+        configureConversationMaintenance({
+            ensureObserverAttached,
+            withDomMutationGuard,
+        });
+
+        scheduleRefreshPostPruneState({
+            delayMs: 500,
+            reason: "navigation-initial-prune-refresh",
+        });
+
+        vi.advanceTimersByTime(499);
+
+        expect(ensureObserverAttached).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+
+        expect(ensureObserverAttached).not.toHaveBeenCalled();
+
+        vi.runOnlyPendingTimers();
+
+        vi.useRealTimers();
+    });
+
+    it("skips offscreen refresh work when offscreen optimization is disabled", () => {
+        state.featureFlags.offscreenOptimization = false;
+
+        scheduleConversationChromeSync({
+            reason: "offscreen-disabled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).not.toHaveBeenCalled();
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
     });
 });

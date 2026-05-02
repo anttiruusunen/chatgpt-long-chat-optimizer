@@ -88,32 +88,27 @@ function safelyPlacePlaceholder(placeholder, container, beforeNode) {
         return false;
     }
 
-    if (!(beforeNode instanceof Node) || beforeNode.parentElement !== container) {
-        if (placeholder.parentElement !== container || container.firstChild !== placeholder) {
-            try {
-                container.prepend(placeholder);
-                return true;
-            } catch {
-                return false;
-            }
+    if (beforeNode instanceof Node && beforeNode.parentNode === container) {
+        if (placeholder.parentNode === container && placeholder.nextSibling === beforeNode) {
+            return false;
         }
-        return false;
+
+        try {
+            container.insertBefore(placeholder, beforeNode);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
-    if (isPlaceholderInCorrectPosition(placeholder, container, beforeNode)) {
+    if (placeholder.parentNode === container && container.firstChild === placeholder) {
         return false;
     }
 
     try {
-        container.insertBefore(placeholder, beforeNode);
+        container.prepend(placeholder);
         return true;
     } catch {
-        try {
-            if (placeholder.parentElement !== container || container.firstChild !== placeholder) {
-                container.prepend(placeholder);
-                return true;
-            }
-        } catch {}
         return false;
     }
 }

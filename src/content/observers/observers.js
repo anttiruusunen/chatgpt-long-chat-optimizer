@@ -1,5 +1,9 @@
 import { state } from "../core/state.js";
-import { getConversationContainer, isConversationSection } from "../core/dom.js";
+import {
+    getConversationContainer,
+    isConversationSection,
+    invalidateConversationDomCache,
+} from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 
 function nodeIsOrContainsConversationSection(node) {
@@ -11,11 +15,13 @@ function nodeIsOrContainsConversationSection(node) {
         return true;
     }
 
-    return Boolean(
-        Array.from(node.querySelectorAll("section")).find((section) =>
-            isConversationSection(section)
-        )
-    );
+    for (const section of node.querySelectorAll("section")) {
+        if (isConversationSection(section)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function nodeLooksLikeTurnMount(node) {
@@ -136,6 +142,8 @@ export function handleObservedMutations(
     if (!shouldConsiderPrune) {
         return;
     }
+
+    invalidateConversationDomCache();
 
     if (!getDidInitialPrune()) {
         bootstrapInitialPrune?.();

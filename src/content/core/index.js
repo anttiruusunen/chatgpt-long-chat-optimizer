@@ -2,17 +2,10 @@ import { state } from "./state.js";
 import { getSettings } from "./settings.js";
 import {
     getConversationContainer,
+    invalidateConversationDomCache,
 } from "./dom.js";
 import {
-    pruneOldSections as pruneOldSectionsBase,
-    restoreAllSections as restoreAllSectionsBase,
-    runInitialPrune as runInitialPruneBase,
-    enforceSoftPrunedLimit,
-} from "../pruning/prune.js";
-import {
     removePlaceholder,
-    installStartupPruneMask,
-    removeStartupPruneMask,
 } from "../pruning/pruneUi.js";
 import {
     handleReplyStreamingStarted,
@@ -34,194 +27,97 @@ import {
 import {
     disconnectSentinelObservers,
 } from "../pruning/sentinelObservers.js";
-import { ensureQolStyles } from "../ui/qolStyles.js";
 import {
-    clearCssVisibilityWindow,
-} from "../pruning/cssVisibilityWindow.js";
+    ensureQolStyles,
+    syncCodeBlockScrollbarStyles,
+    syncUserMessageClampStyles,
+} from "../ui/qolStyles.js";
 import { installConversationNavigationWatcher } from "./navigation.js";
-import {
-    setDomWriteBatchExecutor,
-} from "./domWriteBatch.js";
 import {
     configureConversationMaintenance,
     flushDeferredCssVisibilityWindowSync,
     scheduleConversationChromeSync,
     scheduleRefreshPostPruneState,
 } from "./conversationMaintenance.js";
+import {
+    installDomMutationGuard,
+    withDomMutationGuard,
+} from "./domMutationGuard.js";
+import { syncFeatureFlagsFromSettings } from "./featureFlags.js";
+import {
+    syncPruningStateToPageBridge,
+    syncStoreReadOptimizationToPageWithRetry,
+} from "./pageBridgeSync.js";
+import { createPruneController } from "../pruning/pruneController.js";
 
-let isBootstrapInitialPruneScheduled = false;
+const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
 
-function withDomMutationGuard(fn) {
-    state.isApplyingDomChanges = true;
-    try {
-        return fn();
-    } finally {
-        queueMicrotask(() => {
-            state.isApplyingDomChanges = false;
-        });
+let pendingNavigationPruneTimer = null;
+let navigationPruneGeneration = 0;
+
+installDomMutationGuard();
+
+function clearPendingNavigationPrune() {
+    if (pendingNavigationPruneTimer) {
+        clearTimeout(pendingNavigationPruneTimer);
+        pendingNavigationPruneTimer = null;
     }
 }
 
-setDomWriteBatchExecutor(withDomMutationGuard);
-
-function syncFeatureFlagsFromSettings() {
-    state.featureFlags.pruning = Boolean(state.settings.enablePruning);
-    state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
-    state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-    state.featureFlags.storeReadOptimization = Boolean(state.settings.enableStoreReadOptimization);
+function isLinkNavigationReason(reason) {
+    return (
+        reason === "conversation-link-click" ||
+        reason === "conversation-link-click-followup" ||
+        reason === "sidebar-click"
+    );
 }
 
-function applySoftPrunedLimitToCurrentState() {
-    withDomMutationGuard(() => {
-        enforceSoftPrunedLimit();
+function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
+    const generation = ++navigationPruneGeneration;
+    const startedAt = performance.now();
+    const MAX_WAIT_MS = 2500;
+    const POLL_MS = 100;
 
-        debugLog("Index: applied soft-pruned limit counts", {
-            totalHiddenCount: state.hiddenCount,
-            softPrunedSections: state.softPrunedSections.length,
-            hardEvictedCount: state.hardEvictedCount,
-            historyKeptExchanges: state.settings.historyKeptExchanges,
-        });
-    });
+    clearPendingNavigationPrune();
 
-    scheduleConversationChromeSync({
-        reason: "apply-soft-pruned-limit",
-        includeStreaming: true,
-    });
-}
+    function attempt() {
+        if (generation !== navigationPruneGeneration) return;
 
-function restoreAllSections() {
-    clearCssVisibilityWindow();
-
-    const result = restoreAllSectionsBase({
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    scheduleConversationChromeSync({
-        reason: "restore-all-sections",
-        includeStreaming: true,
-    });
-
-    return result;
-}
-
-function pruneOldSections(historyKeptExchanges = state.settings.historyKeptExchanges, options = {}) {
-    clearCssVisibilityWindow();
-
-    const result = pruneOldSectionsBase(historyKeptExchanges, options, {
-        ensureObserverAttached,
-        withDomMutationGuard,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-    });
-
-    scheduleConversationChromeSync({
-        reason: "prune-old-sections",
-        includeStreaming: true,
-    });
-
-    return result;
-}
-
-function getStartupMaskVisibleSectionsLimit() {
-    const safeExchanges = Math.max(1, Number(state.settings.historyKeptExchanges) || 1);
-    return safeExchanges * 2;
-}
-
-function runInitialPrune(container) {
-    return runInitialPruneBase(container, {
-        pruneOldSections,
-        refreshObservedSections: scheduleRefreshPostPruneState,
-        installStartupPruneMask: () => {
-            installStartupPruneMask(container, getStartupMaskVisibleSectionsLimit());
-        },
-        removeStartupPruneMask,
-    });
-}
-
-function bootstrapInitialPruneFromObservedMutation() {
-    if (isBootstrapInitialPruneScheduled) {
-        return;
-    }
-
-    if (!state.featureFlags.pruning || !state.settings.autoPrune || state.didInitialPrune) {
-        return;
-    }
-
-    isBootstrapInitialPruneScheduled = true;
-
-    requestAnimationFrame(() => {
-        isBootstrapInitialPruneScheduled = false;
-
-        if (!state.featureFlags.pruning || !state.settings.autoPrune || state.didInitialPrune) {
-            return;
-        }
+        invalidateConversationDomCache();
 
         const container = getConversationContainer();
-        if (!container) {
-            waitForContainerAndInitialPrune();
+        const previousGone =
+            previousContainer instanceof Element && !previousContainer.isConnected;
+        const containerChanged =
+            container instanceof Element && container !== previousContainer;
+        const noPreviousContainer = !(previousContainer instanceof Element);
+        const timedOut = performance.now() - startedAt >= MAX_WAIT_MS;
+
+        if (
+            container &&
+            (noPreviousContainer || previousGone || containerChanged || timedOut)
+        ) {
+            ensureObserverAttached();
+
+            runInitialPrune(container, {
+                useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+                ...options,
+            });
+
+            pendingNavigationPruneTimer = null;
             return;
         }
 
-        debugLog("Index: bootstrapping initial prune from observed mutation");
-        runInitialPrune(container);
-    });
-}
-
-function clearPendingAutoPrune() {
-    if (state.debounceTimer) {
-        clearTimeout(state.debounceTimer);
-        state.debounceTimer = null;
+        pendingNavigationPruneTimer = setTimeout(attempt, POLL_MS);
     }
 
-    clearCssVisibilityWindow();
-    state.isAutoPruneScheduled = false;
-}
-
-function scheduleAutoPrune() {
-    if (!state.featureFlags.pruning) return;
-    if (!state.settings.autoPrune) return;
-    if (!state.didInitialPrune) return;
-    if (state.isApplyingDomChanges) return;
-
-    if (state.isAutoPruneScheduled) {
-        debugLog("Index: skipped duplicate auto-prune schedule");
-        return;
-    }
-
-    state.isAutoPruneScheduled = true;
-    scheduleConversationChromeSync({
-        reason: "schedule-auto-prune",
-    });
-
-    state.debounceTimer = setTimeout(() => {
-        try {
-            if (!state.featureFlags.pruning || !state.settings.autoPrune) {
-                debugLog("Index: skipped auto-prune because feature is disabled");
-                return;
-            }
-
-            if (state.isApplyingDomChanges) {
-                debugLog("Index: skipped auto-prune because DOM guard is active");
-                return;
-            }
-
-            pruneOldSections(state.settings.historyKeptExchanges, { showPlaceholder: true });
-        } finally {
-            state.isAutoPruneScheduled = false;
-            state.debounceTimer = null;
-            scheduleConversationChromeSync({
-                reason: "auto-prune-finally",
-            });
-        }
-    }, 300);
-
-    debugLog("Index: scheduled auto-prune", {
-        historyKeptExchanges: state.settings.historyKeptExchanges,
-    });
+    pendingNavigationPruneTimer = setTimeout(attempt, POLL_MS);
 }
 
 function resetConversationLifecycleForNavigation() {
+    clearPendingNavigationPrune();
+    invalidateConversationDomCache();
     clearPendingAutoPrune();
 
     removePlaceholder();
@@ -252,6 +148,8 @@ function resetConversationLifecycleForNavigation() {
 }
 
 function rearmInitialPruneForNavigation(reason) {
+    const previousContainer = state.observedContainer || getConversationContainer();
+
     resetConversationLifecycleForNavigation();
 
     const hasContainer = ensureObserverAttached();
@@ -259,13 +157,27 @@ function rearmInitialPruneForNavigation(reason) {
     debugLog("Index: rearming initial prune after navigation", {
         reason,
         hasContainer,
+        isLinkNavigation: isLinkNavigationReason(reason),
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
+        if (isLinkNavigationReason(reason)) {
+            waitForFreshContainerAndInitialPrune(previousContainer, {
+                useStartupMask: false,
+            });
+            return;
+        }
+
         if (hasContainer) {
-            runInitialPrune(getConversationContainer());
+            runInitialPrune(getConversationContainer(), {
+                useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+            });
         } else {
-            waitForContainerAndInitialPrune();
+            waitForContainerAndInitialPrune({
+                useStartupMask: false,
+                postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+            });
         }
         return;
     }
@@ -282,9 +194,10 @@ function rearmInitialPruneForNavigation(reason) {
 }
 
 const observerDeps = createObserverDeps({
-    scheduleAutoPrune,
+    scheduleAutoPrune: (...args) => scheduleAutoPrune(...args),
     getDidInitialPrune: () => state.didInitialPrune,
-    bootstrapInitialPrune: bootstrapInitialPruneFromObservedMutation,
+    bootstrapInitialPrune: (...args) =>
+        bootstrapInitialPruneFromObservedMutation(...args),
 });
 
 function attachObserverToContainer(container) {
@@ -295,12 +208,28 @@ function ensureObserverAttached() {
     return ensureObserverAttachedBase(observerDeps);
 }
 
-function waitForContainerAndInitialPrune() {
+function waitForContainerAndInitialPrune(options = {}) {
     return waitForContainerAndInitialPruneBase({
         attachObserverToContainer,
-        runInitialPrune,
+        runInitialPrune: (container) => runInitialPrune(container, options),
     });
 }
+
+const pruneController = createPruneController({
+    ensureObserverAttached,
+    waitForContainerAndInitialPrune,
+    withDomMutationGuard,
+});
+
+const {
+    applySoftPrunedLimitToCurrentState,
+    restoreAllSections,
+    pruneOldSections,
+    runInitialPrune,
+    bootstrapInitialPruneFromObservedMutation,
+    clearPendingAutoPrune,
+    scheduleAutoPrune,
+} = pruneController;
 
 configureConversationMaintenance({
     ensureObserverAttached,
@@ -312,7 +241,10 @@ async function initialize() {
     state.debugLoggingEnabled = Boolean(state.settings.enableDebugLogging);
     syncFeatureFlagsFromSettings();
     ensureQolStyles();
+    syncCodeBlockScrollbarStyles();
+    syncUserMessageClampStyles();
     syncStoreReadOptimizationToPageWithRetry();
+    syncPruningStateToPageBridge();
 
     installReplyTimingListeners({
         onReplyStarted: () => {
@@ -370,6 +302,8 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     let offscreenFlagChanged = false;
     let largeCodeBlockFlagChanged = false;
     let storeReadOptimizationFlagChanged = false;
+    let userMessageClampChanged = false;
+    let codeBlockCollapseChanged = false;
 
     if (changes.historyKeptExchanges) {
         state.settings.historyKeptExchanges = changes.historyKeptExchanges.newValue;
@@ -404,7 +338,35 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         storeReadOptimizationFlagChanged = true;
     }
 
+    if (changes.enableCodeBlockScrollbars) {
+        state.settings.enableCodeBlockScrollbars = Boolean(changes.enableCodeBlockScrollbars.newValue);
+    }
+
+    if (changes.enableUserMessageClamp) {
+        state.settings.enableUserMessageClamp = Boolean(changes.enableUserMessageClamp.newValue);
+        userMessageClampChanged = true;
+    }
+
+    if (changes.enableCodeBlockCollapse) {
+        state.settings.enableCodeBlockCollapse = Boolean(changes.enableCodeBlockCollapse.newValue);
+        codeBlockCollapseChanged = true;
+    }
+
     syncFeatureFlagsFromSettings();
+
+    if (changes.enableCodeBlockScrollbars) {
+        syncCodeBlockScrollbarStyles();
+    }
+
+    if (userMessageClampChanged) {
+        syncUserMessageClampStyles();
+    }
+
+    if (codeBlockCollapseChanged) {
+        scheduleRefreshPostPruneState();
+    }
+
+    syncPruningStateToPageBridge();
 
     if (storeReadOptimizationFlagChanged || changes.enableDebugLogging) {
         syncStoreReadOptimizationToPageWithRetry();
@@ -450,33 +412,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         includeStreaming: true,
     });
 });
-
-function syncStoreReadOptimizationToPageWithRetry(retries = 10) {
-    if (typeof window === "undefined") {
-        return;
-    }
-
-    const bridge = window.__threadOptimizerChatStoreBridge;
-
-    if (bridge?.__installed) {
-        window.postMessage(
-            {
-                source: "thread-optimizer",
-                type: "thread-optimizer:set-store-read-optimization",
-                enabled: state.featureFlags.storeReadOptimization,
-                debug: state.debugLoggingEnabled,
-            },
-            window.location.origin
-        );
-        return;
-    }
-
-    if (retries > 0) {
-        setTimeout(() => {
-            syncStoreReadOptimizationToPageWithRetry(retries - 1);
-        }, 200);
-    }
-}
 
 registerRuntimeMessageHandlers({
     pruneOldSections,

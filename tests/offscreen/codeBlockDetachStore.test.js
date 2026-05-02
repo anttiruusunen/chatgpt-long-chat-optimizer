@@ -140,8 +140,8 @@ describe("codeBlockDetachStore", () => {
 
         expect(restored).toBe(pre);
         expect(assistant2.contains(pre)).toBe(true);
-        expect(assistant2.contains(placeholder)).toBe(true);
-        expect(isPlaceholderHidden(placeholder)).toBe(true);
+        expect(assistant2.contains(placeholder)).toBe(false);
+        expect(placeholder.isConnected).toBe(false);
         expect(state.detachedCodeBlocks.size).toBe(0);
     });
 
@@ -184,8 +184,8 @@ describe("codeBlockDetachStore", () => {
         clearCollapsedCodeBlock(pre, { preserveExpanded: true });
 
         expect(assistant2.contains(pre)).toBe(true);
-        expect(assistant2.contains(placeholder)).toBe(true);
-        expect(isPlaceholderHidden(placeholder)).toBe(true);
+        expect(assistant2.contains(placeholder)).toBe(false);
+        expect(placeholder.isConnected).toBe(false);
         expect(state.detachedCodeBlocks.size).toBe(0);
     });
 
@@ -201,8 +201,8 @@ describe("codeBlockDetachStore", () => {
         revealCollapsedCodeBlockFromPlaceholder(placeholder);
 
         expect(assistant2.contains(pre)).toBe(true);
-        expect(assistant2.contains(placeholder)).toBe(true);
-        expect(isPlaceholderHidden(placeholder)).toBe(true);
+        expect(assistant2.contains(placeholder)).toBe(false);
+        expect(placeholder.isConnected).toBe(false);
         expect(pre.dataset.threadOptimizerCodeExpanded).toBe("true");
         expect(scheduleRefreshMock).toHaveBeenCalledTimes(1);
     });

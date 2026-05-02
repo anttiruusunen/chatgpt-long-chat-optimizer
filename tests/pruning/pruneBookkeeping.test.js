@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { state } from "../../src/content/core/state.js";
 import {
+    getConversationSections,
+    invalidateConversationDomCache,
+    resetConversationDomCacheForTests,
+} from "../../src/content/core/dom.js";
+import {
     pruneOldSections,
     restoreAllSections,
     restoreOneExchangeFromSoftPruned,
     repruneOneExchangeFromVisibleProtected,
     enforceSoftPrunedLimit,
+    runInitialPrune,
 } from "../../src/content/pruning/prune.js";
 
 function makeSection({
@@ -29,6 +35,7 @@ function makeSection({
 
 function buildConversation(exchangeCount = 6) {
     document.body.innerHTML = "";
+    resetConversationDomCacheForTests();
 
     const page = document.createElement("div");
     const scrollWrap = document.createElement("div");
@@ -60,6 +67,8 @@ function buildConversation(exchangeCount = 6) {
         sections.push(user, assistant);
     }
 
+    resetConversationDomCacheForTests();
+
     return { page, scrollWrap, conversation, sections };
 }
 
@@ -79,21 +88,33 @@ function resetState() {
     state.featureFlags.pruning = true;
 }
 
+function guardedDomWrite(fn) {
+    invalidateConversationDomCache();
+
+    try {
+        return fn();
+    } finally {
+        invalidateConversationDomCache();
+    }
+}
+
 function makeDeps() {
     return {
         ensureObserverAttached: vi.fn(),
-        withDomMutationGuard: (fn) => fn(),
+        withDomMutationGuard: guardedDomWrite,
         refreshObservedSections: vi.fn(),
     };
 }
 
 beforeEach(() => {
+    resetConversationDomCacheForTests();
     document.body.innerHTML = "";
     resetState();
 });
 
 afterEach(() => {
     document.body.innerHTML = "";
+    resetConversationDomCacheForTests();
 });
 
 describe("prune bookkeeping", () => {
@@ -172,6 +193,26 @@ describe("prune bookkeeping", () => {
         expect(remainingVisible).toBe(2);
     });
 
+    it("keeps cached conversation sections accurate across prune, restore, and reprune", () => {
+        buildConversation(6);
+
+        expect(getConversationSections().length).toBe(12);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(getConversationSections().length).toBe(2);
+
+        const restoreResult = restoreOneExchangeFromSoftPruned(makeDeps());
+
+        expect(restoreResult.restoredSectionsCount).toBe(2);
+        expect(getConversationSections().length).toBe(4);
+
+        const repruneResult = repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(repruneResult.reprunedSectionsCount).toBe(2);
+        expect(getConversationSections().length).toBe(2);
+    });
+
     it("enforces soft-pruned limit by hard-evicting overflow", () => {
         buildConversation(8);
 
@@ -209,5 +250,181 @@ describe("prune bookkeeping", () => {
         if (hardEvictedBeforeRestore === 0) {
             expect(placeholder).toBeNull();
         }
+    });
+
+    it("does not reprune when there is no restored protected exchange", () => {
+        buildConversation(4);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const beforeSoftPruned = state.softPrunedSections.length;
+        const beforeHidden = state.hiddenCount;
+
+        const result = repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(result.reprunedSectionsCount).toBe(0);
+        expect(state.softPrunedSections.length).toBe(beforeSoftPruned);
+        expect(state.hiddenCount).toBe(beforeHidden);
+    });
+
+    it("restore and reprune preserve total hidden count", () => {
+        buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const totalHiddenAfterPrune = state.totalHiddenCount;
+
+        restoreOneExchangeFromSoftPruned(makeDeps());
+        repruneOneExchangeFromVisibleProtected(makeDeps());
+
+        expect(state.totalHiddenCount).toBe(totalHiddenAfterPrune);
+    });
+
+    it("moves the placeholder before newly restored sections when restoring one exchange", () => {
+        const { conversation } = buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        const placeholder = getPlaceholder();
+        expect(placeholder).not.toBeNull();
+
+        const restoreResult = restoreOneExchangeFromSoftPruned(makeDeps());
+
+        expect(restoreResult.restoredSectionsCount).toBe(2);
+
+        const visibleAfterRestore = getConversationSections();
+        expect(visibleAfterRestore.length).toBe(4);
+
+        const firstVisibleAfterRestore = visibleAfterRestore[0];
+
+        expect(conversation.contains(placeholder)).toBe(true);
+        expect(placeholder.hidden).toBe(false);
+
+        expect(
+            Array.from(conversation.children).indexOf(placeholder)
+        ).toBeLessThan(
+            Array.from(conversation.children).indexOf(firstVisibleAfterRestore)
+        );
+    });
+
+    it("keeps the placeholder aligned after repeated restore-one cycles", () => {
+        state.settings.historyKeptExchanges = 3;
+
+        const { conversation } = buildConversation(8);
+
+        pruneOldSections(3, { showPlaceholder: true }, makeDeps());
+
+        const placeholder = getPlaceholder();
+        expect(placeholder).not.toBeNull();
+
+        const firstRestore = restoreOneExchangeFromSoftPruned(makeDeps());
+        expect(firstRestore.restoredSectionsCount).toBe(2);
+
+        const secondRestore = restoreOneExchangeFromSoftPruned(makeDeps());
+        expect(secondRestore.restoredSectionsCount).toBe(2);
+
+        const visibleSections = getConversationSections();
+        const firstVisibleSection = visibleSections[0];
+
+        expect(conversation.contains(placeholder)).toBe(true);
+        expect(placeholder.hidden).toBe(false);
+
+        expect(
+            Array.from(conversation.children).indexOf(placeholder)
+        ).toBeLessThan(
+            Array.from(conversation.children).indexOf(firstVisibleSection)
+        );
+    });
+
+    it("refreshes cached visible sections after restoreAllSections", () => {
+        buildConversation(6);
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(getConversationSections().length).toBe(2);
+
+        const result = restoreAllSections(makeDeps());
+
+        expect(result.visibleSectionsChanged).toBe(true);
+        expect(getConversationSections().length).toBe(4);
+        expect(state.softPrunedSections.length).toBe(0);
+    });
+
+    it("does not prune the latest incomplete assistant section during initial/reload pruning", () => {
+        const { conversation } = buildConversation(6);
+
+        const incomplete = document.createElement("section");
+        incomplete.setAttribute("data-turn", "assistant");
+        incomplete.textContent = "partial streamed reply";
+        conversation.appendChild(incomplete);
+
+        pruneOldSections(1, { showPlaceholder: true }, makeDeps());
+
+        expect(incomplete.isConnected).toBe(true);
+        expect(getConversationSections()).toContain(incomplete);
+    });
+
+    it("runInitialPrune preserves the latest incomplete assistant section", async () => {
+        vi.useFakeTimers();
+
+        try {
+            window.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+
+            state.featureFlags.pruning = true;
+            state.settings.autoPrune = true;
+            state.settings.historyKeptExchanges = 1;
+            state.didInitialPrune = false;
+
+            const { conversation } = buildConversation(6);
+
+            const incomplete = makeSection({
+                turn: "assistant",
+                testId: "conversation-turn-streaming",
+                text: "partial streamed reply",
+            });
+
+            conversation.appendChild(incomplete);
+            resetConversationDomCacheForTests();
+
+            runInitialPrune(
+                conversation,
+                {
+                    pruneOldSections: (sectionsToKeep, options) =>
+                        pruneOldSections(sectionsToKeep, options, makeDeps()),
+                    refreshObservedSections: vi.fn(),
+                    installStartupPruneMask: vi.fn(),
+                    removeStartupPruneMask: vi.fn(),
+                },
+                { useStartupMask: false }
+            );
+
+            await Promise.resolve();
+            vi.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            expect(state.didInitialPrune).toBe(true);
+            expect(incomplete.isConnected).toBe(true);
+            expect(getConversationSections()).toContain(incomplete);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("still prunes older incomplete-looking assistant sections", () => {
+        const { conversation } = buildConversation(6);
+
+        const olderIncomplete = makeSection({
+            turn: "assistant",
+            testId: "conversation-turn-older-incomplete",
+            text: "older partial-looking assistant",
+        });
+
+        conversation.insertBefore(olderIncomplete, conversation.children[2]);
+        resetConversationDomCacheForTests();
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(olderIncomplete.isConnected).toBe(false);
+        expect(getConversationSections()).not.toContain(olderIncomplete);
     });
 });

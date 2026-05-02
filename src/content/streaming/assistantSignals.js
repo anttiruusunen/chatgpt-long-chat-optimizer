@@ -23,6 +23,26 @@ export function hasResponseActions(section) {
     return matchedButtons.length > 0;
 }
 
+export function isIncompleteAssistantSection(section) {
+    if (!(section instanceof HTMLElement)) return false;
+    if (section.getAttribute("data-turn") !== "assistant") return false;
+
+    return !hasResponseActions(section) && !hasAssistantErrorState(section);
+}
+
+export function hasAssistantErrorState(section) {
+    if (!(section instanceof HTMLElement)) return false;
+
+    const text = section.textContent || "";
+
+    return (
+        text.includes("Something went wrong") ||
+        text.includes("There was an error generating a response") ||
+        Boolean(section.querySelector('[data-testid*="error"]')) ||
+        Boolean(section.querySelector('[role="alert"]'))
+    );
+}
+
 export function isLikelyComposerInput(target) {
     if (!(target instanceof HTMLElement)) return false;
 

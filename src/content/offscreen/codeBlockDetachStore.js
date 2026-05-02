@@ -72,6 +72,11 @@ export function restoreDetachedCodeBlockEntry(
 
     if (removePlaceholder) {
         setPlaceholderVisibility(placeholder, false);
+
+        if (placeholder?.isConnected) {
+            placeholder.remove();
+        }
+
         clearPlaceholderIdForPre(pre);
     }
 
@@ -114,6 +119,10 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
     const placeholder = getPlaceholderById(getPlaceholderIdForPre(pre));
     setPlaceholderVisibility(placeholder, false);
 
+    if (placeholder?.isConnected) {
+        placeholder.remove();
+    }
+
     pre.style.display = "";
     pre.removeAttribute("data-thread-optimizer-code-collapsed");
     normalizeRevealedCodeBlockLayout(pre);
@@ -125,28 +134,61 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
 }
 
 export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
-    const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
-    if (detachedEntry) {
-        detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
-        restoreDetachedCodeBlockEntry(detachedEntry, {
-            removePlaceholder: true,
-            preserveExpanded: true,
-        });
-        scheduleRefreshCallback?.();
+    if (!(placeholder instanceof HTMLElement)) {
         return;
     }
 
     const placeholderId = getPlaceholderId(placeholder);
-    if (!placeholderId) return;
 
-    const pre = Array.from(document.querySelectorAll("pre")).find(
-        (candidate) => getPlaceholderIdForPre(candidate) === placeholderId
+    if (!placeholderId) {
+        setPlaceholderVisibility(placeholder, false);
+
+        if (placeholder.isConnected) {
+            placeholder.remove();
+        }
+
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
+
+    if (detachedEntry) {
+        detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
+
+        restoreDetachedCodeBlockEntry(detachedEntry, {
+            removePlaceholder: true,
+            preserveExpanded: true,
+        });
+
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    const matchingPre = Array.from(document.querySelectorAll("pre")).find(
+        (candidate) =>
+            candidate instanceof HTMLPreElement &&
+            getPlaceholderIdForPre(candidate) === placeholderId
     );
 
-    if (!(pre instanceof HTMLPreElement)) return;
+    if (matchingPre instanceof HTMLPreElement) {
+        matchingPre.dataset.threadOptimizerCodeExpanded = "true";
 
-    pre.dataset.threadOptimizerCodeExpanded = "true";
-    clearCollapsedCodeBlock(pre, { preserveExpanded: true });
+        clearCollapsedCodeBlock(matchingPre, {
+            preserveExpanded: true,
+        });
+
+        scheduleRefreshCallback?.();
+        return;
+    }
+
+    setPlaceholderVisibility(placeholder, false);
+
+    if (placeholder.isConnected) {
+        placeholder.remove();
+    }
+
+    state.detachedCodeBlocks.delete(placeholderId);
     scheduleRefreshCallback?.();
 }
 
