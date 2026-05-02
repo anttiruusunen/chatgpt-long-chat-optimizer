@@ -3438,10 +3438,21 @@
                     continue;
                 }
 
+                // keep findNodeFromLeaf cache across mutations
+                if (
+                    cacheSlot === "__findNodeFromLeafFrameCache" &&
+                    reason === "store-mutation"
+                ) {
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-store-mutation";
+                    }
+                    continue;
+                }
+
                 // skip unnecessary clears for selected caches
                 if (
-                    (cacheSlot === "__findNodeFromLeafFrameCache" ||
-                        cacheSlot === "__existingNodeFrameCache") &&
+                    cacheSlot === "__existingNodeFrameCache" &&
                     reason !== "store-mutation" &&
                     reason !== "conversation-change" &&
                     reason !== "manual"
