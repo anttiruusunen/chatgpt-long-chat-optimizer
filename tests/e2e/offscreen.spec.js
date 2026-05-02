@@ -4,7 +4,8 @@ import { loadFixtureWithOptimizer } from "./helpers/loadFixtureWithOptimizer.js"
 test("offscreen: fixture keeps assistant sections available", async ({ page }) => {
     await loadFixtureWithOptimizer(page);
 
-    await expect(page.locator('section[data-turn="assistant"]')).toHaveCount(6);
+    await expect(page.locator('section[data-turn="assistant"]')).toHaveCount(1);
+    await expect(page.locator('[data-thread-optimizer-placeholder="true"]')).toBeVisible();
 });
 
 test("offscreen: only latest assistant is marked live", async ({ page }) => {
@@ -41,7 +42,8 @@ test("offscreen: multiple refresh triggers coalesce without breaking DOM", async
 
     await page.waitForTimeout(200);
 
-    await expect(page.locator("section")).toHaveCount(12);
+    await expect(page.locator("section[data-turn]")).toHaveCount(2);
+    await expect(page.locator('[data-thread-optimizer-placeholder="true"]')).toBeVisible();
 });
 
 test("offscreen: completing streaming restores normal assistant shape", async ({ page }) => {

@@ -1,8 +1,5 @@
 import { test, expect } from "@playwright/test";
-import path from "node:path";
-
-const fixturePath = path.resolve("tests/e2e/fixtures/chat.html");
-const fixtureUrl = `file://${fixturePath}`;
+import { loadFixtureWithOptimizer } from "./helpers/loadFixtureWithOptimizer.js";
 
 test("code blocks: large code block is detached and replaced with placeholder", async ({ page }) => {
     await loadFixtureWithOptimizer(page);
@@ -15,7 +12,7 @@ test("code blocks: large code block is detached and replaced with placeholder", 
 });
 
 test("code blocks: reveal restores detached block", async ({ page }) => {
-    await page.goto(fixtureUrl);
+    await loadFixtureWithOptimizer(page);
 
     const placeholder = page.locator('[data-thread-optimizer-code-placeholder="true"]');
 
@@ -33,7 +30,7 @@ test("code blocks: reveal restores detached block", async ({ page }) => {
 });
 
 test("code blocks: no duplicate placeholders created", async ({ page }) => {
-    await page.goto(fixtureUrl);
+    await loadFixtureWithOptimizer(page);
 
     await page.waitForFunction(() =>
         document.querySelector('[data-thread-optimizer-code-placeholder="true"]')

@@ -6,10 +6,9 @@ export const fixtureUrl = `file://${fixturePath}`;
 
 function findBuiltContentScript() {
     const candidates = [
-        "dist/chrome/content/index.js",
-        "build/chrome/content/index.js",
-        "dist/content/index.js",
-        "build/content/index.js",
+        "dist/chrome/content.js",
+        "dist/firefox/content.js",
+        "dist/safari/content.js",
     ];
 
     for (const candidate of candidates) {
