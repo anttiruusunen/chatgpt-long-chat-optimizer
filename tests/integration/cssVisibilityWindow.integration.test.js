@@ -160,6 +160,9 @@ function buildConversation() {
 async function flush() {
     await Promise.resolve();
     await Promise.resolve();
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+    await Promise.resolve();
 }
 
 describe("cssVisibilityWindow integration", () => {

@@ -11,6 +11,7 @@ import {
     restoreOneExchangeFromSoftPruned,
     repruneOneExchangeFromVisibleProtected,
     enforceSoftPrunedLimit,
+    runInitialPrune,
 } from "../../src/content/pruning/prune.js";
 
 function makeSection({
@@ -361,5 +362,69 @@ describe("prune bookkeeping", () => {
 
         expect(incomplete.isConnected).toBe(true);
         expect(getConversationSections()).toContain(incomplete);
+    });
+
+    it("runInitialPrune preserves the latest incomplete assistant section", async () => {
+        vi.useFakeTimers();
+
+        try {
+            window.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+
+            state.featureFlags.pruning = true;
+            state.settings.autoPrune = true;
+            state.settings.historyKeptExchanges = 1;
+            state.didInitialPrune = false;
+
+            const { conversation } = buildConversation(6);
+
+            const incomplete = makeSection({
+                turn: "assistant",
+                testId: "conversation-turn-streaming",
+                text: "partial streamed reply",
+            });
+
+            conversation.appendChild(incomplete);
+            resetConversationDomCacheForTests();
+
+            runInitialPrune(
+                conversation,
+                {
+                    pruneOldSections: (sectionsToKeep, options) =>
+                        pruneOldSections(sectionsToKeep, options, makeDeps()),
+                    refreshObservedSections: vi.fn(),
+                    installStartupPruneMask: vi.fn(),
+                    removeStartupPruneMask: vi.fn(),
+                },
+                { useStartupMask: false }
+            );
+
+            await Promise.resolve();
+            vi.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            expect(state.didInitialPrune).toBe(true);
+            expect(incomplete.isConnected).toBe(true);
+            expect(getConversationSections()).toContain(incomplete);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("still prunes older incomplete-looking assistant sections", () => {
+        const { conversation } = buildConversation(6);
+
+        const olderIncomplete = makeSection({
+            turn: "assistant",
+            testId: "conversation-turn-older-incomplete",
+            text: "older partial-looking assistant",
+        });
+
+        conversation.insertBefore(olderIncomplete, conversation.children[2]);
+        resetConversationDomCacheForTests();
+
+        pruneOldSections(2, { showPlaceholder: true }, makeDeps());
+
+        expect(olderIncomplete.isConnected).toBe(false);
+        expect(getConversationSections()).not.toContain(olderIncomplete);
     });
 });

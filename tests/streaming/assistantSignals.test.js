@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
     hasResponseActions,
+    isIncompleteAssistantSection,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
 } from "../../src/content/streaming/assistantSignals.js";
@@ -170,5 +171,19 @@ describe("assistantSignals", () => {
         section.appendChild(actions);
 
         expect(hasResponseActions(section)).toBe(true);
+    });
+
+    it("treats paragen preference buttons as settled response actions", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+
+        const preferButton = document.createElement("button");
+        preferButton.setAttribute("data-testid", "paragen-prefer-response-button");
+        preferButton.textContent = "Choose this response";
+
+        section.appendChild(preferButton);
+
+        expect(hasResponseActions(section)).toBe(true);
+        expect(isIncompleteAssistantSection(section)).toBe(false);
     });
 });
