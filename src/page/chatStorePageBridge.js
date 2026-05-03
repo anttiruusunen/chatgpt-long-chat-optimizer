@@ -1840,100 +1840,101 @@
             const buildResult = this.buildMessageIdIndex();
             if (!buildResult.ok) return buildResult;
 
-            const original = getStoreMethod(store, "messageIdToExistingNodeId");
-            if (!original) return unavailable("messageIdToExistingNodeId unavailable");
-
-            this.__messageIdIndexOriginal = original;
-
             const bridgeRef = this;
 
-            if (profiled) {
-                store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProfiled(messageId) {
-                    const index = bridgeRef.__messageIdIndex;
-                    const stats = bridgeRef.__messageIdIndexStats;
+            const result = installStoreMethodWrapper({
+                bridge: this,
+                methodName: "messageIdToExistingNodeId",
+                originalSlot: "__messageIdIndexOriginal",
+                installedFlag: "__messageIdIndexInstalled",
+                createWrapper: ({ store, original, bridge }) => {
+                    if (profiled) {
+                        return function indexedMessageIdToExistingNodeIdProfiled(messageId) {
+                            const index = bridge.__messageIdIndex;
+                            const stats = bridge.__messageIdIndexStats;
 
-                    if (index) {
-                        const indexed = index.get(messageId);
+                            if (index) {
+                                const indexed = index.get(messageId);
 
-                        if (indexed !== undefined) {
-                            stats.hits += 1;
-                            return indexed;
+                                if (indexed !== undefined) {
+                                    stats.hits += 1;
+                                    return indexed;
+                                }
+                            }
+
+                            stats.missSinceRebuild += 1;
+
+                            if (stats.missSinceRebuild >= 150) {
+                                stats.missSinceRebuild = 0;
+
+                                bridge.maybeRebuildMessageIdIndex({
+                                    minIntervalMs: 1000,
+                                });
+
+                                const rebuiltIndex = bridge.__messageIdIndex;
+                                const rebuilt = rebuiltIndex?.get(messageId);
+
+                                if (rebuilt !== undefined) {
+                                    stats.hits += 1;
+                                    return rebuilt;
+                                }
+                            } else {
+                                stats.rebuildSkips += 1;
+                            }
+
+                            stats.misses += 1;
+
+                            const result = original.call(store, messageId);
+
+                            if (result) {
+                                stats.fallbackHits += 1;
+                                bridge.__messageIdIndex?.set(messageId, result);
+                            }
+
+                            return result ?? null;
+                        };
+                    }
+
+                    // production
+                    const getIndex = () => bridge.__messageIdIndex;
+                    const maybeRebuildMessageIdIndex = bridge.maybeRebuildMessageIdIndex;
+                    let missSinceRebuild = 0;
+
+                    return function indexedMessageIdToExistingNodeIdProduction(messageId) {
+                        const index = getIndex();
+
+                        if (index) {
+                            const indexed = index.get(messageId);
+                            if (indexed !== undefined) return indexed;
                         }
-                    }
 
-                    stats.missSinceRebuild += 1;
+                        missSinceRebuild += 1;
 
-                    if (stats.missSinceRebuild >= 150) {
-                        stats.missSinceRebuild = 0;
+                        if (missSinceRebuild >= 150) {
+                            missSinceRebuild = 0;
 
-                        bridgeRef.maybeRebuildMessageIdIndex({
-                            minIntervalMs: 1000,
-                        });
+                            maybeRebuildMessageIdIndex.call(bridge, {
+                                minIntervalMs: 1000,
+                            });
 
-                        const rebuiltIndex = bridgeRef.__messageIdIndex;
-                        const rebuilt = rebuiltIndex?.get(messageId);
-
-                        if (rebuilt !== undefined) {
-                            stats.hits += 1;
-                            return rebuilt;
+                            const rebuilt = getIndex()?.get(messageId);
+                            if (rebuilt !== undefined) return rebuilt;
                         }
-                    } else {
-                        stats.rebuildSkips += 1;
-                    }
 
-                    stats.misses += 1;
+                        const result = original.call(store, messageId);
 
-                    const result = original.call(store, messageId);
+                        if (result) {
+                            getIndex()?.set(messageId, result);
+                        }
 
-                    if (result) {
-                        stats.fallbackHits += 1;
-                        bridgeRef.__messageIdIndex?.set(messageId, result);
-                    }
-
-                    return result ?? null;
-                };
-            } else {
-                const getIndex = () => bridgeRef.__messageIdIndex;
-                const maybeRebuildMessageIdIndex = bridgeRef.maybeRebuildMessageIdIndex;
-                let missSinceRebuild = 0;
-
-                store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProduction(messageId) {
-                    const index = getIndex();
-
-                    if (index) {
-                        const indexed = index.get(messageId);
-                        if (indexed !== undefined) return indexed;
-                    }
-
-                    missSinceRebuild += 1;
-
-                    if (missSinceRebuild >= 150) {
-                        missSinceRebuild = 0;
-
-                        maybeRebuildMessageIdIndex.call(bridgeRef, {
-                            minIntervalMs: 1000,
-                        });
-
-                        const rebuilt = getIndex()?.get(messageId);
-                        if (rebuilt !== undefined) return rebuilt;
-                    }
-
-                    const result = original.call(store, messageId);
-
-                    if (result) {
-                        getIndex()?.set(messageId, result);
-                    }
-
-                    return result ?? null;
-                };
-            }
-
-            this.__messageIdIndexInstalled = true;
+                        return result ?? null;
+                    };
+                },
+            });
 
             return {
-                ok: true,
-                installed: true,
-                indexSize: this.__messageIdIndex.size,
+                ...result,
+                indexSize: this.__messageIdIndex?.size ?? 0,
                 profiled,
             };
         },
