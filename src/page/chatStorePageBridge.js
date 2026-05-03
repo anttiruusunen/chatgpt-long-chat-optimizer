@@ -49,8 +49,7 @@
         },
 
         cache: {
-            defaultMaxSize: 5000,
-            findNodeFromLeafMaxSize: 10000,
+            defaultMaxSize: 10000,
         },
 
         promotion: {
@@ -216,6 +215,25 @@
         const minimum = getExpectedMinimumStoreNodeCount();
 
         return nodeCount >= minimum;
+    }
+
+    function requireStore(bridge) {
+        return bridge.__store || null;
+    }
+
+    function unavailable(reason) {
+        return { ok: false, reason };
+    }
+
+    function alreadyInstalled(stats = null) {
+        return stats
+            ? { ok: true, alreadyInstalled: true, stats }
+            : { ok: true, alreadyInstalled: true };
+    }
+
+    function getStoreMethod(store, methodName) {
+        const method = store?.[methodName];
+        return typeof method === "function" ? method : null;
     }
 
     const FRAME_CACHE_SLOTS = [
@@ -1494,12 +1512,8 @@
         },
 
         installStoreProfiler() {
-            if (!this.__store) {
-                return {
-                    ok: false,
-                    reason: "store not registered",
-                };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__storeProfilerInstalled) {
                 return {
@@ -1515,12 +1529,12 @@
 
             const methodNames = Array.from(
                 new Set([
-                    ...Object.keys(this.__store),
-                    ...Object.getOwnPropertyNames(Object.getPrototypeOf(this.__store) || {}),
+                    ...Object.keys(store),
+                    ...Object.getOwnPropertyNames(Object.getPrototypeOf(store) || {}),
                 ])
             ).filter((methodName) => {
                 if (EXCLUDED_PROFILE_METHODS.has(methodName)) return false;
-                return typeof this.__store[methodName] === "function";
+                return typeof store[methodName] === "function";
             });
 
             this.__storeProfile = {
@@ -1532,7 +1546,7 @@
             this.__storeProfilerOriginals = {};
 
             for (const methodName of methodNames) {
-                const original = this.__store[methodName];
+                const original = store[methodName];
 
                 if (typeof original !== "function") continue;
 
@@ -1543,7 +1557,7 @@
                 const shouldCaptureCallSite =
                     methodName === "getNodeByIdOrMessageId";
 
-                this.__store[methodName] = function profiledStoreMethod(...args) {
+                store[methodName] = function profiledStoreMethod(...args) {
                     const startedAt = performance.now();
 
                     if (shouldCaptureCallSite) {
@@ -1580,7 +1594,7 @@
                     }
 
                     try {
-                        return original.apply(bridgeRef.__store, args);
+                        return original.apply(store, args);
                     } catch (error) {
                         const methodProfile = bridgeRef.__storeProfile?.methods?.[methodName];
                         if (methodProfile) methodProfile.errors += 1;
@@ -1714,15 +1728,11 @@
         },
 
         buildMessageIdIndex() {
-            if (!this.__store) {
-                return {
-                    ok: false,
-                    reason: "store not registered",
-                };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             const index = new Map();
-            const nodesValue = this.__store.nodes;
+            const nodesValue = store.nodes;
 
             const addNode = (node) => {
                 if (!node || typeof node !== "object") return;
@@ -1778,12 +1788,8 @@
         installMessageIdIndex({
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) {
-                return {
-                    ok: false,
-                    reason: "store not registered",
-                };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__messageIdIndexInstalled) {
                 return {
@@ -1796,21 +1802,15 @@
             const buildResult = this.buildMessageIdIndex();
             if (!buildResult.ok) return buildResult;
 
-            const original = this.__store.messageIdToExistingNodeId;
-
-            if (typeof original !== "function") {
-                return {
-                    ok: false,
-                    reason: "messageIdToExistingNodeId is not a function",
-                };
-            }
+            const original = getStoreMethod(store, "messageIdToExistingNodeId");
+            if (!original) return unavailable("messageIdToExistingNodeId unavailable");
 
             this.__messageIdIndexOriginal = original;
 
             const bridgeRef = this;
 
             if (profiled) {
-                this.__store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProfiled(messageId) {
+                store.messageIdToExistingNodeId = function indexedMessageIdToExistingNodeIdProfiled(messageId) {
                     const index = bridgeRef.__messageIdIndex;
                     const stats = bridgeRef.__messageIdIndexStats;
 
@@ -1845,7 +1845,7 @@
 
                     stats.misses += 1;
 
-                    const result = original.call(bridgeRef.__store, messageId);
+                    const result = original.call(store, messageId);
 
                     if (result) {
                         stats.fallbackHits += 1;
@@ -1855,7 +1855,6 @@
                     return result ?? null;
                 };
             } else {
-                const store = this.__store;
                 const getIndex = () => bridgeRef.__messageIdIndex;
                 const maybeRebuildMessageIdIndex = bridgeRef.maybeRebuildMessageIdIndex;
                 let missSinceRebuild = 0;
@@ -1952,7 +1951,8 @@
 
             profile.total += 1;
 
-            const store = this.__store;
+            const store = requireStore(this);
+            if (!store) return;
             const leafId =
                 typeof store?.currentLeafId === "function"
                     ? store.currentLeafId()
@@ -2014,7 +2014,8 @@
         },
 
         installLiveGetNodeIfExistsWrapper(original, cacheApi) {
-            const store = this.__store;
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
             const bridgeRef = this;
             const get = cacheApi.get;
             const set = cacheApi.set;
@@ -2024,7 +2025,7 @@
             let activeId = null;
             let activeValue = null;
 
-            this.__store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
+            store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
                 const currentLeafId = getCurrentLeafId();
 
                 // Active streaming leaf: cache only inside the current rAF frame.
@@ -2063,14 +2064,15 @@
         },
 
         installLiveGetNodeIfExistsWrapperProfiled(original, cacheApi) {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
             const bridgeRef = this;
             const stats = this.__existingNodeFrameCacheStats;
-            const store = this.__store;
             const getCurrentLeafId = createCurrentLeafIdReader(store);
             const get = cacheApi.get;
             const set = cacheApi.set;
 
-            this.__store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
+            store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
                 if (ENABLE_NODE_CALLSITE_STATS) {
                     bridgeRef.__nodeCallSiteStats ??= {
                         total: 0,
@@ -2203,7 +2205,8 @@
             maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) return { ok: false, reason: "store not registered" };
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__existingNodeFrameCacheInstalled) {
                 return {
@@ -2213,10 +2216,8 @@
                 };
             }
 
-            const original = this.__store.getNodeIfExists;
-            if (typeof original !== "function") {
-                return { ok: false, reason: "getNodeIfExists unavailable" };
-            }
+            const original = getStoreMethod(store, "getNodeIfExists");
+            if (!original) return unavailable("getNodeIfExists unavailable");
 
             const stats = profiled
                 ? {
@@ -2257,12 +2258,11 @@
             this.__existingNodeFrameCacheStats = stats;
             this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
 
-            const store = this.__store;
             const directIndex = this.__nodeIdDirectIndex;
             const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
 
             if (profiled) {
-                this.__store.getNodeIfExists = function cachedGetNodeIfExistsProfiled(id) {
+                store.getNodeIfExists = function cachedGetNodeIfExistsProfiled(id) {
                     const cached = frameCache.get(id);
                     if (cached !== undefined) return cached;
 
@@ -2335,12 +2335,11 @@
         },
 
         installFindNodeFromLeafFrameCache({
-            maxSize = 10000,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            const store = this.__store;
-
-            if (!store) return { ok: false, reason: "store not registered" };
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__findNodeFromLeafFrameCacheInstalled) {
                 return {
@@ -2350,11 +2349,8 @@
                 };
             }
 
-            const original = store.findNodeFromLeaf;
-
-            if (typeof original !== "function") {
-                return { ok: false, reason: "findNodeFromLeaf unavailable" };
-            }
+            const original = getStoreMethod(store, "findNodeFromLeaf");
+            if (!original) return unavailable("findNodeFromLeaf unavailable");
 
             const stats = profiled
                 ? {
@@ -2776,9 +2772,8 @@
             maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) {
-                return { ok: false, reason: "store not registered" };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__getLeafFromNodeFrameCacheInstalled) {
                 return {
@@ -2788,10 +2783,8 @@
                 };
             }
 
-            const original = this.__store.getLeafFromNode;
-            if (typeof original !== "function") {
-                return { ok: false, reason: "getLeafFromNode unavailable" };
-            }
+            const original = getStoreMethod(store, "getLeafFromNode");
+            if (!original) return unavailable("getLeafFromNode unavailable");
 
             const stats = profiled
                 ? {
@@ -2820,7 +2813,6 @@
             this.__getLeafFromNodeFrameCacheStats = stats;
             this.__getLeafFromNodeFrameCacheOriginal = { getLeafFromNode: original };
 
-            const store = this.__store;
             const get = frameCache.get;
             const set = frameCache.set;
 
@@ -2987,9 +2979,8 @@
             maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) {
-                return { ok: false, reason: "store not registered" };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__branchCacheInstalled) {
                 return {
@@ -2999,16 +2990,16 @@
                 };
             }
 
-            const getBranchOriginal = this.__store.getBranch;
-            const getBranchFromLeafOriginal = this.__store.getBranchFromLeaf;
+            const getBranchOriginal = getStoreMethod(store, "getBranch");
+            const getBranchFromLeafOriginal = getStoreMethod(store, "getBranchFromLeaf");
 
             const originals = {};
 
-            if (typeof getBranchOriginal === "function") {
+            if (getBranchOriginal) {
                 originals.getBranch = getBranchOriginal;
             }
 
-            if (typeof getBranchFromLeafOriginal === "function") {
+            if (getBranchFromLeafOriginal) {
                 originals.getBranchFromLeaf = getBranchFromLeafOriginal;
             }
 
@@ -3083,14 +3074,13 @@
             const bridgeRef = this;
 
             if (typeof getBranchOriginal === "function") {
-                const store = this.__store;
                 const getBranchGet = getBranchCache.get;
                 const getBranchSet = getBranchCache.set;
                 const recordBranchCallSite = ENABLE_BRANCH_CALLSITE_STATS
                     ? bridgeRef.recordBranchCallSite.bind(bridgeRef)
                     : null;
 
-                this.__store.getBranch = function cachedGetBranch(id, ...rest) {
+                store.getBranch = function cachedGetBranch(id, ...rest) {
                     if (recordBranchCallSite) {
                         recordBranchCallSite("getBranch", [id, ...rest]);
                     }
@@ -3107,10 +3097,7 @@
 
             if (typeof getBranchFromLeafOriginal === "function") {
                 if (profiled) {
-
-                    const store = this.__store;
-
-                    this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
+                    store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
                         bridgeRef.recordBranchCallSite?.("getBranchFromLeaf", [id, ...rest]);
                         getBranchFromLeafStats.calls += 1;
 
@@ -3163,11 +3150,10 @@
                         return result ?? null;
                     };
                 } else {
-                    const store = this.__store;
                     const getBranchFromLeafGet = getBranchFromLeafCache.get;
                     const getBranchFromLeafSet = getBranchFromLeafCache.set;
 
-                    this.__store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
+                    store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
                         const key =
                             typeof id === "string" ||
                             typeof id === "number" ||
@@ -3266,9 +3252,8 @@
             maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) {
-                return { ok: false, reason: "store not registered" };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
             if (this.__resolvedNodeFrameCacheInstalled) {
                 return { ok: true, alreadyInstalled: true };
@@ -3459,16 +3444,15 @@
         },
 
         installGetDisplayTurnsCache({
-            maxSize = 5000,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
-            if (!this.__store) return { ok: false, reason: "store not registered" };
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
             if (this.__getDisplayTurnsCacheInstalled) return { ok: true, alreadyInstalled: true };
 
-            const original = this.__store.getDisplayTurns;
-            if (typeof original !== "function") {
-                return { ok: false, reason: "getDisplayTurns unavailable" };
-            }
+            const original = getStoreMethod(store, "getDisplayTurns");
+            if (!original) return unavailable("getDisplayTurns unavailable");
 
             const stats = profiled
                 ? {
@@ -3493,7 +3477,6 @@
                 : null;
 
             const cacheApi = createPersistentCache({ maxSize, stats, profiled });
-            const store = this.__store;
             const bridgeRef = this;
             const get = cacheApi.get;
             const set = cacheApi.set;
@@ -3756,7 +3739,6 @@
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
                 findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache({
-                    maxSize: 10000,
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
                 getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache({
@@ -3773,7 +3755,6 @@
                     : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
                 cleared: null,
                 getDisplayTurnsCache: this.installGetDisplayTurnsCache({
-                    maxSize: 5000,
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
             };
@@ -4028,23 +4009,23 @@
             clearCaches = true,
             rebuildIndex = true,
         } = {}) {
-            if (!this.__store || typeof this.__store[methodName] !== "function") {
-                return { ok: false, reason: `${methodName} unavailable` };
-            }
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
+
+            const original = getStoreMethod(store, methodName);
+            if (!original) return unavailable(`${methodName} unavailable`);
 
             this.__indexRefreshHookOriginals ??= {};
 
             if (this.__indexRefreshHookOriginals[methodName]) {
-                return { ok: true, alreadyInstalled: true };
+                return alreadyInstalled();
             }
-
-            const original = this.__store[methodName];
             this.__indexRefreshHookOriginals[methodName] = original;
 
             const bridgeRef = this;
 
-            this.__store[methodName] = function indexedMutationWrapper(...args) {
-                const result = original.apply(bridgeRef.__store, args);
+            store[methodName] = function indexedMutationWrapper(...args) {
+                const result = original.apply(store, args);
 
                 if (clearCaches) {
                     bridgeRef.clearStoreReadCache?.("store-mutation");
