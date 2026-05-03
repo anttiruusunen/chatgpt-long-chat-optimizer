@@ -2397,18 +2397,14 @@
                     calls: 0,
                     misses: 0,
                     fallbackCalls: 0,
-
                     sourceKeyMisses: 0,
                     sourceKeyFastHits: 0,
-
                     liveHits: 0,
                     liveMisses: 0,
                     normalHits: 0,
                     normalMisses: 0,
-
                     predicateMemoHits: 0,
                     predicateMemoMisses: 0,
-
                     activeLeafOriginalTests: 0,
                     ancestorNodeTests: 0,
                     ancestorMemoHits: 0,
@@ -2422,7 +2418,6 @@
                     normalCacheReturnsNull: 0,
                     normalOriginalReturnsNode: 0,
                     normalOriginalReturnsNull: 0,
-
                     cached: 0,
                     evictions: 0,
                     maxSize,
@@ -2437,20 +2432,14 @@
                     lastClearReason: null,
                 };
 
-            // leafId -> Map(predicateSourceId -> node | CACHE_MISS)
             const sourceCache = new Map();
             const insertionOrder = [];
 
-            // Important:
-            // WeakMap avoids repeated String(fn) for the same function object,
-            // Map preserves dedupe across different function objects with same source.
             const predicateSourceIdByFn = new WeakMap();
             const predicateSourceIdBySource = new Map();
             let nextPredicateSourceId = 1;
 
             const ancestorChainCache = new Map();
-
-            // predicateSourceId -> Map(nodeId -> boolean)
             const predicateNodeResultCache = new Map();
 
             const bridgeRef = this;
@@ -2468,7 +2457,6 @@
                 if (id !== undefined) return id;
 
                 const source = String(predicateFn).slice(0, 500);
-
                 id = predicateSourceIdBySource.get(source);
 
                 if (id === undefined) {
@@ -2484,33 +2472,8 @@
                 return rootIdIsFn ? rootIdValue.call(store) : rootIdValue;
             }
 
-            function getAncestorChainWithoutLeafProfiled(leafId, rootId) {
-                const cached = ancestorChainCache.get(leafId);
-
-                if (cached !== undefined) {
-                    stats.ancestorChainHits += 1;
-                    return cached;
-                }
-
-                stats.ancestorChainMisses += 1;
-
-                const chain = [];
-                let node = getNode(store, leafId);
-                let guard = 0;
-
-                while (node && node.parentId && node.id !== rootId && guard < 2000) {
-                    node = getNode(store, node.parentId);
-
-                    if (!node || node.id === leafId) break;
-
-                    chain.push(node);
-
-                    if (node.id === rootId) break;
-                    guard += 1;
-                }
-
-                ancestorChainCache.set(leafId, chain);
-                return chain;
+            function testPredicate(predicateFn, node) {
+                return Boolean(predicateFn.call(store, node));
             }
 
             function getAncestorChainWithoutLeaf(leafId, rootId) {
@@ -2547,39 +2510,16 @@
                 return memo;
             }
 
-            function testDormantNodeProfiled(predicateFn, predicateSourceId, node) {
+            function testDormantNode(predicateFn, predicateSourceId, node) {
                 const nodeId = node?.id;
                 if (!nodeId) return false;
-
-                stats.ancestorNodeTests += 1;
-
-                const memo = getPredicateNodeMemo(predicateSourceId);
-                const cached = memo.get(nodeId);
-
-                if (cached !== undefined) {
-                    stats.predicateMemoHits += 1;
-                    stats.ancestorMemoHits += 1;
-                    return cached;
-                }
-
-                stats.predicateMemoMisses += 1;
-                stats.ancestorMemoMisses += 1;
-
-                const result = Boolean(predicateFn(node));
-                memo.set(nodeId, result);
-
-                return result;
-            }
-
-            function testDormantNode(predicateFn, predicateSourceId, node) {
-                const nodeId = node.id;
 
                 const memo = getPredicateNodeMemo(predicateSourceId);
                 const cached = memo.get(nodeId);
 
                 if (cached !== undefined) return cached;
 
-                const result = Boolean(predicateFn(node));
+                const result = testPredicate(predicateFn, node);
                 memo.set(nodeId, result);
 
                 return result;
@@ -2637,17 +2577,49 @@
 
                         stats.activeLeafOriginalTests += 1;
 
-                        if (activeNode && predicateFn(activeNode)) {
+                        if (activeNode && testPredicate(predicateFn, activeNode)) {
                             liveCache.set(predicateSourceId, activeNode);
                             return activeNode;
                         }
 
-                        const chain = getAncestorChainWithoutLeafProfiled(leafId, getRootId());
+                        const cachedChain = ancestorChainCache.get(leafId);
+                        const chain = getAncestorChainWithoutLeaf(leafId, getRootId());
+
+                        if (cachedChain !== undefined) {
+                            stats.ancestorChainHits += 1;
+                        } else {
+                            stats.ancestorChainMisses += 1;
+                        }
 
                         for (let i = 0, len = chain.length; i < len; i += 1) {
                             const node = chain[i];
+                            const nodeId = node?.id;
+                            if (!nodeId) continue;
 
-                            if (testDormantNodeProfiled(predicateFn, predicateSourceId, node)) {
+                            stats.ancestorNodeTests += 1;
+
+                            const memo = getPredicateNodeMemo(predicateSourceId);
+                            const cachedPredicate = memo.get(nodeId);
+
+                            if (cachedPredicate !== undefined) {
+                                stats.predicateMemoHits += 1;
+                                stats.ancestorMemoHits += 1;
+
+                                if (cachedPredicate) {
+                                    liveCache.set(predicateSourceId, node);
+                                    return node;
+                                }
+
+                                continue;
+                            }
+
+                            stats.predicateMemoMisses += 1;
+                            stats.ancestorMemoMisses += 1;
+
+                            const matched = testPredicate(predicateFn, node);
+                            memo.set(nodeId, matched);
+
+                            if (matched) {
                                 liveCache.set(predicateSourceId, node);
                                 return node;
                             }
@@ -2735,7 +2707,7 @@
 
                         const activeNode = getNode(store, leafId);
 
-                        if (activeNode && predicateFn(activeNode)) {
+                        if (activeNode && testPredicate(predicateFn, activeNode)) {
                             liveCache.set(predicateSourceId, activeNode);
                             return activeNode;
                         }
