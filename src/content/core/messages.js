@@ -56,6 +56,8 @@ export function registerRuntimeMessageHandlers({
             }
 
             if (message.action === "settings-updated") {
+                const prevPruning = state.featureFlags.pruning;
+                const prevAutoPrune = state.settings.autoPrune;
                 const previousOffscreenEnabled = state.featureFlags.offscreenOptimization;
 
                 state.settings.historyKeptExchanges = Math.max(
@@ -78,7 +80,15 @@ export function registerRuntimeMessageHandlers({
 
                 state.debugLoggingEnabled = state.settings.enableDebugLogging;
 
+                // ✅ CRITICAL: sync feature flags properly
                 syncFeatureFlagsFromSettings();
+
+                const nextPruning = state.featureFlags.pruning;
+                const nextAutoPrune = state.settings.autoPrune;
+
+                const pruningJustEnabled =
+                    (!prevPruning && nextPruning) ||
+                    (!prevAutoPrune && nextAutoPrune);
 
                 postToPageBridge("thread-optimizer:set-store-read-optimization", {
                     enabled: state.featureFlags.storeReadOptimization,
@@ -95,7 +105,13 @@ export function registerRuntimeMessageHandlers({
 
                 if (state.settings.autoPrune && state.featureFlags.pruning) {
                     if (!state.didInitialPrune) {
-                        waitForContainerAndInitialPrune();
+                        pruneOldSections(
+                            state.settings.historyKeptExchanges,
+                            { showPlaceholder: true }
+                        );
+
+                        state.didInitialPrune = true;
+                        refreshObservedSections();
                     } else {
                         scheduleAutoPrune();
                     }

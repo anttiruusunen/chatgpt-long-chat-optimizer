@@ -6,22 +6,35 @@ const RECORD_TYPE = "thread-optimizer:record-pruned-message-id";
 
 const MAX_MESSAGE_ID_LENGTH = 300;
 
-function extractMessageIdFromSection(section) {
+export function extractMessageId(section) {
     if (!(section instanceof HTMLElement)) {
         return null;
     }
 
-    const directMessageId =
+    // 1. self
+    const direct =
         section.getAttribute("data-message-id") ||
         section.dataset.messageId;
 
-    if (directMessageId) {
-        return directMessageId;
+    if (direct) return direct;
+
+    // 2. children
+    const child = section.querySelector("[data-message-id]");
+    if (child instanceof HTMLElement) {
+        const id = child.getAttribute("data-message-id");
+        if (id) return id;
     }
 
-    const messageIdElement = section.querySelector("[data-message-id]");
-    if (messageIdElement instanceof HTMLElement) {
-        return messageIdElement.getAttribute("data-message-id");
+    // 🔥 3. ancestors (THIS WAS MISSING)
+    let parent = section.parentElement;
+    while (parent) {
+        const id =
+            parent.getAttribute("data-message-id") ||
+            parent.dataset.messageId;
+
+        if (id) return id;
+
+        parent = parent.parentElement;
     }
 
     return null;
@@ -57,20 +70,25 @@ export function postThreadOptimizerBridgeMessage(message) {
         return false;
     }
 
+    const targetOrigin =
+        window.location.origin && window.location.origin !== "null"
+            ? window.location.origin
+            : "*";
+
     window.postMessage(
         {
             ...message,
             source: RECORD_SOURCE,
             token,
         },
-        window.location.origin
+        targetOrigin
     );
 
     return true;
 }
 
 export function recordPrunedSectionMessageForManualBridgeDelete(section) {
-    const messageId = normalizeMessageId(extractMessageIdFromSection(section));
+    const messageId = normalizeMessageId(extractMessageId(section));
 
     if (!messageId) {
         debugLog("[Thread Optimizer] no message id found on pruned section", {
