@@ -3420,10 +3420,15 @@
                     frameClears: 0,
                     maxSize,
                     lastClearReason: null,
+
                     liveHits: 0,
                     liveMisses: 0,
                     prefixHits: 0,
                     prefixMisses: 0,
+
+                    tailPatchHits: 0,
+                    tailPatchMisses: 0,
+                    tailPatchRejected: 0,
                 }
                 : null;
 
@@ -3439,21 +3444,66 @@
             let liveFrame = -1;
             let liveLeafId = null;
             let liveValue = undefined;
-            let liveUsesLeft = 0;
 
             bridgeRef.__displayTurnsRafFrame = 0;
+
             function bumpDisplayTurnsRafFrame() {
                 bridgeRef.__displayTurnsRafFrame =
                     (bridgeRef.__displayTurnsRafFrame + 1) | 0;
                 requestAnimationFrame(bumpDisplayTurnsRafFrame);
             }
+
             requestAnimationFrame(bumpDisplayTurnsRafFrame);
+
+            function patchLastTurnWithMessage(templateTurn, freshMessage, leafId) {
+                if (!templateTurn || !freshMessage) return null;
+
+                const messages = templateTurn.messages;
+                const messageGroups = templateTurn.messageGroups;
+
+                if (!Array.isArray(messages) || messages.length === 0) return null;
+                if (!Array.isArray(messageGroups) || messageGroups.length === 0) return null;
+
+                const lastMessageIndex = messages.length - 1;
+                const oldLastMessage = messages[lastMessageIndex];
+
+                if (oldLastMessage?.id !== leafId) return null;
+
+                const lastGroupIndex = messageGroups.length - 1;
+                const oldLastGroup = messageGroups[lastGroupIndex];
+                const groupMessages = oldLastGroup?.messages;
+
+                if (!Array.isArray(groupMessages) || groupMessages.length === 0) return null;
+
+                const lastGroupMessageIndex = groupMessages.length - 1;
+                const oldLastGroupMessage = groupMessages[lastGroupMessageIndex];
+
+                if (oldLastGroupMessage?.id !== leafId) return null;
+
+                const patchedMessages = messages.slice();
+                patchedMessages[lastMessageIndex] = freshMessage;
+
+                const patchedGroupMessages = groupMessages.slice();
+                patchedGroupMessages[lastGroupMessageIndex] = freshMessage;
+
+                const patchedGroups = messageGroups.slice();
+                patchedGroups[lastGroupIndex] = {
+                    ...oldLastGroup,
+                    messages: patchedGroupMessages,
+                };
+
+                return {
+                    ...templateTurn,
+                    messages: patchedMessages,
+                    messageGroups: patchedGroups,
+                };
+            }
 
             this.__getDisplayTurnsCache = cacheApi.cache;
             this.__getDisplayTurnsCacheStats = stats;
             this.__getDisplayTurnsCacheOriginal = { getDisplayTurns: original };
 
-            this.__store.getDisplayTurns = function cachedGetDisplayTurns(leafId, ...rest) {
+            store.getDisplayTurns = function cachedGetDisplayTurns(leafId, ...rest) {
                 const currentLeafId =
                     typeof store.currentLeafId === "function"
                         ? store.currentLeafId()
@@ -3467,57 +3517,73 @@
                     if (
                         liveFrame === frame &&
                         liveLeafId === leafId &&
-                        liveValue !== undefined &&
-                        liveUsesLeft > 0
+                        liveValue !== undefined
                     ) {
-                        liveUsesLeft -= 1;
-                        if (stats) stats.liveHits = (stats.liveHits || 0) + 1;
+                        if (stats) stats.liveHits += 1;
                         return liveValue;
                     }
 
                     const prefixEntry = activePrefixCache.get(leafId);
 
-                    // Same-frame prefix fast path.
-                    // Only reuse if we already have a live value from this frame,
-                    // so the final turn is known-good/fresh for this render cycle.
-                    if (
-                        prefixEntry?.prefix &&
-                        Array.isArray(prefixEntry.prefix) &&
-                        liveFrame === frame &&
-                        liveLeafId === leafId &&
-                        Array.isArray(liveValue) &&
-                        liveValue.length > prefixEntry.prefix.length
-                    ) {
-                        const freshLastTurn = liveValue[liveValue.length - 1];
-                        const patched = prefixEntry.prefix.concat(freshLastTurn);
+                    if (prefixEntry) {
+                        const freshNode = store.getNodeIfExists?.(leafId) ?? null;
+                        const freshMessage = freshNode?.message ?? null;
 
-                        liveValue = patched;
-                        liveUsesLeft = 4;
+                        const patchedLastTurn = patchLastTurnWithMessage(
+                            prefixEntry.lastTurnTemplate,
+                            freshMessage,
+                            leafId
+                        );
 
-                        if (stats) {
-                            stats.prefixHits = (stats.prefixHits || 0) + 1;
-                            stats.liveHits = (stats.liveHits || 0) + 1;
+                        if (patchedLastTurn) {
+                            const patched = prefixEntry.prefix.concat(patchedLastTurn);
+
+                            liveFrame = frame;
+                            liveLeafId = leafId;
+                            liveValue = patched;
+
+                            if (stats) {
+                                stats.prefixHits += 1;
+                                stats.tailPatchHits += 1;
+                                stats.liveHits += 1;
+                            }
+
+                            return patched;
                         }
 
-                        return patched;
+                        if (stats) {
+                            stats.tailPatchMisses += 1;
+                            stats.tailPatchRejected += 1;
+                        }
                     }
 
-                    if (stats) stats.liveMisses = (stats.liveMisses || 0) + 1;
+                    if (stats) stats.liveMisses += 1;
 
                     const result = original.call(store, leafId, ...rest) ?? null;
 
                     if (Array.isArray(result) && result.length > 1) {
-                        activePrefixCache.set(leafId, {
-                            prefix: result.slice(0, -1),
-                        });
+                        const lastTurn = result[result.length - 1];
+                        const lastMessage = lastTurn?.messages?.[lastTurn.messages.length - 1];
+                        const lastGroup = lastTurn?.messageGroups?.[lastTurn.messageGroups.length - 1];
+                        const lastGroupMessage =
+                            lastGroup?.messages?.[lastGroup.messages.length - 1];
 
-                        if (stats) stats.prefixMisses = (stats.prefixMisses || 0) + 1;
+                        if (
+                            lastMessage?.id === leafId &&
+                            lastGroupMessage?.id === leafId
+                        ) {
+                            activePrefixCache.set(leafId, {
+                                prefix: result.slice(0, -1),
+                                lastTurnTemplate: lastTurn,
+                            });
+                        }
+
+                        if (stats) stats.prefixMisses += 1;
                     }
 
                     liveFrame = frame;
                     liveLeafId = leafId;
                     liveValue = result;
-                    liveUsesLeft = 4;
 
                     return result;
                 }
@@ -3527,6 +3593,7 @@
 
                 const result = original.call(store, leafId, ...rest);
                 set(leafId, result ?? null);
+
                 return result ?? null;
             };
 
@@ -3556,6 +3623,9 @@
                 liveMisses: stats?.liveMisses ?? 0,
                 prefixHits: stats?.prefixHits ?? 0,
                 prefixMisses: stats?.prefixMisses ?? 0,
+                tailPatchHits: stats?.tailPatchHits ?? 0,
+                tailPatchMisses: stats?.tailPatchMisses ?? 0,
+                tailPatchRejected: stats?.tailPatchRejected ?? 0,
                 lastClearReason: stats?.lastClearReason ?? null,
             };
         },
