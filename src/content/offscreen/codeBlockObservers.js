@@ -15,19 +15,32 @@ function nodeContainsPre(node) {
 }
 
 function nodeIsOrContainsMarkdown(node) {
-    if (!(node instanceof Element)) return false;
-    return node.classList.contains("markdown") || Boolean(node.querySelector(".markdown"));
+    if (!(node instanceof Element)) {
+        return false;
+    }
+
+    return (
+        node.classList.contains("markdown") ||
+        Boolean(node.querySelector(".markdown"))
+    );
 }
 
 export function latestAssistantHasResponseActions() {
     const latestAssistant = getLatestAssistantSection();
-    if (!latestAssistant) return false;
+
+    if (!latestAssistant) {
+        return false;
+    }
+
     return hasResponseActions(latestAssistant);
 }
 
 export function isStreamingLatestAssistantSection(section) {
     const latestAssistant = getLatestAssistantSection();
-    if (!latestAssistant || section !== latestAssistant) return false;
+
+    if (!latestAssistant || section !== latestAssistant) {
+        return false;
+    }
 
     return (
         !latestAssistantHasResponseActions() &&
@@ -37,28 +50,38 @@ export function isStreamingLatestAssistantSection(section) {
 
 function getLatestAssistantMarkdownRoot() {
     const latestAssistant = getLatestAssistantSection();
+
     if (!(latestAssistant instanceof HTMLElement)) {
         return null;
     }
 
     const markdown = latestAssistant.querySelector(".markdown");
+
     return markdown instanceof HTMLElement ? markdown : null;
 }
 
-function findRelevantMarkdownMutation(mutations) {
+function mutationTouchesCodeBlockOrMarkdown(mutations) {
     for (const mutation of mutations) {
         if (mutation.type !== "childList") {
             continue;
         }
 
         for (const node of mutation.addedNodes) {
-            if (isPreElement(node) || nodeContainsPre(node) || nodeIsOrContainsMarkdown(node)) {
+            if (
+                isPreElement(node) ||
+                nodeContainsPre(node) ||
+                nodeIsOrContainsMarkdown(node)
+            ) {
                 return true;
             }
         }
 
         for (const node of mutation.removedNodes) {
-            if (isPreElement(node) || nodeContainsPre(node) || nodeIsOrContainsMarkdown(node)) {
+            if (
+                isPreElement(node) ||
+                nodeContainsPre(node) ||
+                nodeIsOrContainsMarkdown(node)
+            ) {
                 return true;
             }
         }
@@ -75,16 +98,28 @@ export function disconnectCodeBlockStructureObserver() {
 
     state.observedCodeBlockStructureRoot = null;
     state.observedCodeBlockStructureSection = null;
+
     debugLog("Offscreen code blocks: disconnected structure observer");
 }
 
+/**
+ * Watches the latest streaming assistant for code-block structure changes.
+ *
+ * Streaming can create, replace, or remove markdown/code block nodes while a
+ * response is still being generated. This observer is intentionally scoped to
+ * the latest streaming assistant so older turns do not trigger refresh churn.
+ */
 export function ensureLiveCodeBlockStructureObserver({
     onRelevantStructureChange,
 } = {}) {
     const latestAssistant = getLatestAssistantSection();
 
-    if (!latestAssistant?.isConnected || !isStreamingLatestAssistantSection(latestAssistant)) {
+    if (
+        !latestAssistant?.isConnected ||
+        !isStreamingLatestAssistantSection(latestAssistant)
+    ) {
         disconnectCodeBlockStructureObserver();
+
         return {
             mode: "disconnected",
             rootType: null,
@@ -109,7 +144,7 @@ export function ensureLiveCodeBlockStructureObserver({
     disconnectCodeBlockStructureObserver();
 
     state.codeBlockStructureObserver = new MutationObserver((mutations) => {
-        if (!findRelevantMarkdownMutation(mutations)) {
+        if (!mutationTouchesCodeBlockOrMarkdown(mutations)) {
             return;
         }
 
@@ -134,6 +169,9 @@ export function ensureLiveCodeBlockStructureObserver({
     };
 }
 
+/**
+ * Backwards-compatible aliases for older tests/imports.
+ */
 export const ensureLiveCodeBlockMutationObserver =
     ensureLiveCodeBlockStructureObserver;
 

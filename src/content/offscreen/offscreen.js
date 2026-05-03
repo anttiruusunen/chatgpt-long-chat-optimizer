@@ -25,12 +25,15 @@ function getStyleRoot() {
 }
 
 function setSectionLiveOverride(section, isLive) {
-    if (!(section instanceof HTMLElement)) return;
+    if (!(section instanceof HTMLElement)) {
+        return;
+    }
 
     if (isLive) {
         if (section.getAttribute(OFFSCREEN_LIVE_ATTR) !== "true") {
             section.setAttribute(OFFSCREEN_LIVE_ATTR, "true");
         }
+
         return;
     }
 
@@ -56,15 +59,16 @@ function collectSectionCssModePlan() {
     };
 }
 
-function applySectionCssModePlan(plan) {
-    const { root, enabled } = plan;
-
-    if (!root) return;
+function applySectionCssModePlan({ root, enabled }) {
+    if (!root) {
+        return;
+    }
 
     if (enabled) {
         if (root.getAttribute(OFFSCREEN_ROOT_ATTR) !== "true") {
             root.setAttribute(OFFSCREEN_ROOT_ATTR, "true");
         }
+
         return;
     }
 
@@ -73,14 +77,20 @@ function applySectionCssModePlan(plan) {
     }
 }
 
+/**
+ * Computes which assistant section must stay fully live.
+ *
+ * CSS content-visibility can safely skip old turns, but the latest assistant
+ * needs a live override while it streams and while ChatGPT continues mutating
+ * its action/code-block DOM.
+ */
 function collectLiveSectionPlan() {
     const previousLiveSection = getCurrentLiveSection();
     const enabled = Boolean(state.featureFlags.offscreenOptimization);
     const nextLiveSection = enabled ? getLatestAssistantSection() : null;
 
     const needsBootstrapCleanup =
-        !previousLiveSection ||
-        !previousLiveSection.isConnected;
+        !previousLiveSection || !previousLiveSection.isConnected;
 
     const sectionsToClear =
         enabled && needsBootstrapCleanup
@@ -99,16 +109,14 @@ function collectLiveSectionPlan() {
     };
 }
 
-function applyLiveSectionPlan(plan) {
-    const {
-        enabled,
-        previousLiveSection,
-        nextLiveSection,
-        needsBootstrapCleanup,
-        sectionsToClear,
-        replyStreaming,
-    } = plan;
-
+function applyLiveSectionPlan({
+    enabled,
+    previousLiveSection,
+    nextLiveSection,
+    needsBootstrapCleanup,
+    sectionsToClear,
+    replyStreaming,
+}) {
     if (!enabled) {
         if (previousLiveSection) {
             setSectionLiveOverride(previousLiveSection, false);
@@ -130,6 +138,7 @@ function applyLiveSectionPlan(plan) {
         if (replyStreaming) {
             debugLog("Offscreen: latest assistant already pinned live during active reply");
         }
+
         return;
     }
 
@@ -163,9 +172,11 @@ function applyOffscreenSectionPlan(plan) {
 
 function clearCurrentLiveSection() {
     const currentLiveSection = getCurrentLiveSection();
+
     if (currentLiveSection) {
         setSectionLiveOverride(currentLiveSection, false);
     }
+
     state.offscreenLiveSection = null;
 }
 
@@ -174,7 +185,11 @@ function clearStaleLiveOverridesExcept(sectionToKeep) {
 
     for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i];
-        if (section === sectionToKeep) continue;
+
+        if (section === sectionToKeep) {
+            continue;
+        }
+
         setSectionLiveOverride(section, false);
     }
 }
@@ -183,12 +198,10 @@ function syncSectionCssMode() {
     applySectionCssModePlan(collectSectionCssModePlan());
 }
 
-function syncLiveSectionState() {
-    applyLiveSectionPlan(collectLiveSectionPlan());
-}
-
 export function clearOffscreenOptimization(section) {
-    if (!(section instanceof HTMLElement)) return;
+    if (!(section instanceof HTMLElement)) {
+        return;
+    }
 
     if (getCurrentLiveSection() === section) {
         state.offscreenLiveSection = null;
@@ -197,33 +210,42 @@ export function clearOffscreenOptimization(section) {
     setSectionLiveOverride(section, false);
 }
 
+/**
+ * Ensures section offscreening is enabled/disabled through root CSS state.
+ *
+ * Individual sections are not measured here anymore; the current system relies
+ * on CSS content-visibility plus a live override for the latest assistant.
+ */
 export function ensureSectionCssOffscreenMode() {
-    const plan = collectOffscreenSectionPlan();
-    applyOffscreenSectionPlan(plan);
+    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
 
     debugLog("Offscreen: section offscreening is CSS-driven");
     return null;
 }
 
 export function handleReplyStreamingStarted() {
-    const plan = collectOffscreenSectionPlan();
-    applyOffscreenSectionPlan(plan);
+    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
 
     reconcileLatestStreamingAssistantCodeBlocksNow();
     scheduleOffscreenRefresh("reply-streaming-started");
+
     debugLog("Offscreen: reply streaming started");
 }
 
-export function resetOffscreenOptimization({ clearMeasurements = false } = {}) {
+export function resetOffscreenOptimization({
+    clearMeasurements = false,
+} = {}) {
     clearCurrentLiveSection();
     clearStaleLiveOverridesExcept(null);
     syncSectionCssMode();
+
     resetCodeBlockOptimization({ clearMeasurements });
 
     if (state.offscreenRefreshTimer) {
         clearTimeout(state.offscreenRefreshTimer);
         state.offscreenRefreshTimer = null;
     }
+
     state.isOffscreenRefreshScheduled = false;
 
     debugLog("Offscreen: reset optimization state", {
@@ -233,8 +255,7 @@ export function resetOffscreenOptimization({ clearMeasurements = false } = {}) {
 }
 
 export function refreshObservedSections() {
-    const plan = collectOffscreenSectionPlan();
-    applyOffscreenSectionPlan(plan);
+    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
 
     if (!state.featureFlags.offscreenOptimization) {
         resetCodeBlockOptimization();
@@ -259,24 +280,20 @@ export function scheduleOffscreenRefresh(reason = "unknown") {
 }
 
 export function setOffscreenOptimizationEnabled(enabled) {
+    state.featureFlags.offscreenOptimization = Boolean(enabled);
+
+    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
+
     if (!enabled) {
-        state.featureFlags.offscreenOptimization = false;
-
-        const plan = collectOffscreenSectionPlan();
-        applyOffscreenSectionPlan(plan);
-
         clearStaleLiveOverridesExcept(null);
         resetCodeBlockOptimization({ clearMeasurements: true });
+
         debugLog("Offscreen: feature disabled");
         return;
     }
 
-    state.featureFlags.offscreenOptimization = true;
-
-    const plan = collectOffscreenSectionPlan();
-    applyOffscreenSectionPlan(plan);
-
     scheduleOffscreenRefresh("feature-enabled");
+
     debugLog("Offscreen: feature enabled");
 }
 

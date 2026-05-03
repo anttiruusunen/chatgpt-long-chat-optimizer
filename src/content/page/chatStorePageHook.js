@@ -1,5 +1,6 @@
 (() => {
     const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
+
     const METHOD_NAMES = [
         "messageIdToExistingNodeId",
         "getNodeIfExists",
@@ -15,11 +16,16 @@
     const patchedChunkArrays = new WeakSet();
 
     function isObjectLike(value) {
-        return value !== null && (typeof value === "object" || typeof value === "function");
+        return (
+            value !== null &&
+            (typeof value === "object" || typeof value === "function")
+        );
     }
 
     function looksLikeChatStore(value) {
-        if (!isObjectLike(value)) return false;
+        if (!isObjectLike(value)) {
+            return false;
+        }
 
         try {
             return METHOD_NAMES.every((name) => typeof value[name] === "function");
@@ -39,6 +45,7 @@
 
         try {
             const nodes = store.nodes;
+
             if (Array.isArray(nodes)) {
                 nodeCount = nodes.length;
             } else if (nodes && typeof nodes === "object") {
@@ -62,6 +69,13 @@
         };
     }
 
+    /**
+     * Page-context bridge exposed to the content script.
+     *
+     * The content script cannot directly access ChatGPT's internal JS objects,
+     * so this hook runs in page context and discovers the chat store through
+     * Webpack module/factory inspection.
+     */
     const bridge = {
         __installed: true,
         __version: 3,
@@ -131,31 +145,35 @@
             this.__meta = meta;
 
             console.log("[thread-optimizer bridge] store registered", this.status());
+
             return true;
         },
 
         resolveNodeIdFromMessageId(messageId) {
             const store = this.__store;
+
             if (!store) {
                 this.__lastError = "store not registered";
                 return null;
             }
 
             try {
-                const nodeId = store.messageIdToExistingNodeId(messageId);
-                return nodeId ?? null;
+                return store.messageIdToExistingNodeId(messageId) ?? null;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
+
                 console.warn(
                     "[thread-optimizer bridge] messageIdToExistingNodeId failed",
                     error
                 );
+
                 return null;
             }
         },
 
         getNodeByMessageId(messageId) {
             const store = this.__store;
+
             if (!store) {
                 this.__lastError = "store not registered";
                 return null;
@@ -170,13 +188,16 @@
                 return store.getNodeIfExists(nodeId) ?? null;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
+
                 console.warn("[thread-optimizer bridge] getNodeIfExists failed", error);
+
                 return null;
             }
         },
 
         deleteMessageById(messageId) {
             const store = this.__store;
+
             if (!store) {
                 this.__lastError = "store not registered";
                 return false;
@@ -194,7 +215,9 @@
                 return true;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
+
                 console.warn("[thread-optimizer bridge] deleteNode failed", error);
+
                 return false;
             }
         },
@@ -208,6 +231,10 @@
         return bridge.registerStore(store, { source });
     }
 
+    /**
+     * Patches a discovered store prototype so the first real method call
+     * registers the live store instance.
+     */
     function patchPrototype(proto, source) {
         if (!proto || patchedPrototypes.has(proto)) {
             return false;
@@ -225,11 +252,11 @@
 
         for (const name of METHOD_NAMES) {
             const original = proto[name];
-            if (typeof original !== "function") {
-                continue;
-            }
 
-            if (original.__threadOptimizerWrapped) {
+            if (
+                typeof original !== "function" ||
+                original.__threadOptimizerWrapped
+            ) {
                 continue;
             }
 
@@ -265,6 +292,10 @@
         return true;
     }
 
+    /**
+     * Recursively inspects Webpack exports for either a store instance or a
+     * prototype that contains the methods needed by the bridge.
+     */
     function inspectExportValue(value, source, depth = 0, seen = new WeakSet()) {
         if (!isObjectLike(value)) return false;
         if (seen.has(value)) return false;
@@ -279,12 +310,14 @@
 
         try {
             const proto = Object.getPrototypeOf(value);
+
             if (patchPrototype(proto, `${source}:prototype`)) {
                 return true;
             }
         } catch {}
 
         let keys;
+
         try {
             keys = Object.keys(value);
         } catch {
@@ -301,11 +334,10 @@
                 continue;
             }
 
-            if (!isObjectLike(child)) {
-                continue;
-            }
-
-            if (inspectExportValue(child, `${source}.${key}`, depth + 1, seen)) {
+            if (
+                isObjectLike(child) &&
+                inspectExportValue(child, `${source}.${key}`, depth + 1, seen)
+            ) {
                 return true;
             }
         }
@@ -313,6 +345,10 @@
         return false;
     }
 
+    /**
+     * Wraps Webpack module factories so exports can be inspected after each
+     * module initializes.
+     */
     function wrapFactory(factory, moduleId, chunkLabel) {
         if (typeof factory !== "function") {
             return factory;
@@ -334,12 +370,14 @@
                     module?.exports,
                     `webpack:${chunkLabel}:${String(moduleId)}:module.exports`
                 );
+
                 inspectExportValue(
                     exportsObject,
                     `webpack:${chunkLabel}:${String(moduleId)}:exports`
                 );
             } catch (error) {
                 bridge.__lastError = String(error?.message || error);
+
                 console.warn("[thread-optimizer bridge] export inspection failed", error);
             }
 
@@ -382,12 +420,14 @@
         }
     }
 
+    /**
+     * Patches Webpack chunk arrays, including future `.push()` calls.
+     *
+     * This catches both chunks that already loaded before our hook and chunks
+     * that load later during navigation/lazy loading.
+     */
     function patchChunkArray(chunkArray, label) {
-        if (!Array.isArray(chunkArray)) {
-            return;
-        }
-
-        if (patchedChunkArrays.has(chunkArray)) {
+        if (!Array.isArray(chunkArray) || patchedChunkArrays.has(chunkArray)) {
             return;
         }
 
@@ -418,6 +458,7 @@
         bridge.__hookRuns += 1;
 
         let keys;
+
         try {
             keys = Object.getOwnPropertyNames(window);
         } catch {
@@ -426,11 +467,13 @@
 
         for (let i = 0; i < keys.length; i += 1) {
             const key = keys[i];
+
             if (!key.startsWith("webpackChunk")) {
                 continue;
             }
 
             let value;
+
             try {
                 value = window[key];
             } catch {
@@ -453,6 +496,7 @@
         patchWebpackChunkGlobals();
 
         attempts += 1;
+
         if (bridge.hasStore() || attempts >= maxAttempts) {
             window.clearInterval(timer);
         }

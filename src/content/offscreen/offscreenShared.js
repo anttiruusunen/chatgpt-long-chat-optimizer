@@ -10,13 +10,31 @@ export function getCurrentObserverRoot() {
     return getConversationScrollContainer() ?? null;
 }
 
+function normalizeMeasuredHeight(height) {
+    return Math.max(1, Math.round(height || DEFAULT_INTRINSIC_HEIGHT));
+}
+
+function measureElementHeight(element) {
+    return (
+        element.getBoundingClientRect().height ||
+        element.scrollHeight ||
+        DEFAULT_INTRINSIC_HEIGHT
+    );
+}
+
+/**
+ * Section height is cached so content-visibility can reserve layout space
+ * while old conversation turns are skipped by the browser.
+ */
 export function getStoredMeasuredHeight(section) {
     const existing = Number(section.dataset.threadOptimizerHeight);
+
     return existing > 0 ? existing : null;
 }
 
 export function setMeasuredHeight(section, height) {
-    const rounded = Math.max(1, Math.round(height || DEFAULT_INTRINSIC_HEIGHT));
+    const rounded = normalizeMeasuredHeight(height);
+
     section.dataset.threadOptimizerHeight = String(rounded);
 
     if (section.getAttribute(OFFSCREEN_OPT_ATTR) === "true") {
@@ -26,15 +44,15 @@ export function setMeasuredHeight(section, height) {
     return rounded;
 }
 
-export function invalidateMeasuredHeight(section) {
-    delete section.dataset.threadOptimizerHeight;
+export function ensureMeasuredHeight(section) {
+    return (
+        getStoredMeasuredHeight(section) ??
+        setMeasuredHeight(section, measureElementHeight(section))
+    );
 }
 
-export function ensureMeasuredHeight(section) {
-    return getStoredMeasuredHeight(section) ?? setMeasuredHeight(
-        section,
-        section.getBoundingClientRect().height || section.scrollHeight || DEFAULT_INTRINSIC_HEIGHT
-    );
+export function invalidateMeasuredHeight(section) {
+    delete section.dataset.threadOptimizerHeight;
 }
 
 export function clearOffscreenOptimization(section) {
@@ -43,13 +61,19 @@ export function clearOffscreenOptimization(section) {
     section.removeAttribute(OFFSCREEN_OPT_ATTR);
 }
 
+/**
+ * Code block height is tracked separately from section height because large
+ * <pre> nodes can be detached/restored independently.
+ */
 export function getStoredCodeBlockHeight(pre) {
     const existing = Number(pre.dataset.threadOptimizerCodeHeight);
+
     return existing > 0 ? existing : null;
 }
 
 export function setCodeBlockHeight(pre, height) {
-    const rounded = Math.max(1, Math.round(height || DEFAULT_INTRINSIC_HEIGHT));
+    const rounded = normalizeMeasuredHeight(height);
+
     pre.dataset.threadOptimizerCodeHeight = String(rounded);
 
     if (pre.getAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR) === "true") {
@@ -60,9 +84,9 @@ export function setCodeBlockHeight(pre, height) {
 }
 
 export function ensureCodeBlockHeight(pre) {
-    return getStoredCodeBlockHeight(pre) ?? setCodeBlockHeight(
-        pre,
-        pre.getBoundingClientRect().height || pre.scrollHeight || DEFAULT_INTRINSIC_HEIGHT
+    return (
+        getStoredCodeBlockHeight(pre) ??
+        setCodeBlockHeight(pre, measureElementHeight(pre))
     );
 }
 

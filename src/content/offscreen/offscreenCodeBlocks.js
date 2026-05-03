@@ -39,11 +39,45 @@ import {
     scheduleUiPipelineTask,
 } from "../core/uiPipelineScheduler.js";
 
-const CODE_BLOCKS_PROCESSED_ATTR = "data-thread-optimizer-codeblocks-processed";
+const CODE_BLOCKS_PROCESSED_ATTR =
+    "data-thread-optimizer-codeblocks-processed";
 const LARGE_CODE_LIVE_ATTR = "data-thread-optimizer-large-code-live";
 const CODE_BLOCK_REFRESH_TASK = "code-block-refresh";
 
 let codeBlockRevealClickListenerInstalled = false;
+
+function isCodeBlockOptimizationEligible(pre) {
+    if (!(pre instanceof HTMLPreElement) || !pre.isConnected) {
+        return false;
+    }
+
+    const section = pre.closest('section[data-turn="assistant"]');
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    // Do not insert placeholders inside CodeMirror/editor internals.
+    if (
+        pre.closest(
+            [
+                ".cm-editor",
+                ".cm-scroller",
+                ".cm-content",
+                ".cm-line",
+                ".cm-gutters",
+                '[data-thread-optimizer-code-placeholder="true"]',
+                '[data-writing-block="true"]',
+                ".writing-block-editor",
+                '.ProseMirror[contenteditable="true"]',
+                '[contenteditable="true"]',
+            ].join(",")
+        )
+    ) {
+        return false;
+    }
+
+    return Boolean(pre.querySelector("code") || pre.textContent?.trim());
+}
 
 function removeInvalidNestedCodePlaceholders(root = document) {
     const placeholders = root.querySelectorAll(
@@ -61,13 +95,15 @@ function removeInvalidNestedCodePlaceholders(root = document) {
 }
 
 function markSectionCodeBlocksProcessed(section) {
-    if (!(section instanceof HTMLElement)) return;
-    section.setAttribute(CODE_BLOCKS_PROCESSED_ATTR, "true");
+    if (section instanceof HTMLElement) {
+        section.setAttribute(CODE_BLOCKS_PROCESSED_ATTR, "true");
+    }
 }
 
 function clearSectionCodeBlocksProcessed(section) {
-    if (!(section instanceof HTMLElement)) return;
-    section.removeAttribute(CODE_BLOCKS_PROCESSED_ATTR);
+    if (section instanceof HTMLElement) {
+        section.removeAttribute(CODE_BLOCKS_PROCESSED_ATTR);
+    }
 }
 
 function areSectionCodeBlocksProcessed(section) {
@@ -78,7 +114,9 @@ function areSectionCodeBlocksProcessed(section) {
 }
 
 function setLargeCodeLiveMarker(pre, isLive) {
-    if (!(pre instanceof HTMLPreElement)) return;
+    if (!(pre instanceof HTMLPreElement)) {
+        return;
+    }
 
     if (isLive) {
         pre.setAttribute(LARGE_CODE_LIVE_ATTR, "true");
@@ -95,14 +133,13 @@ function clearLiveMarkersForCodeBlocks(codeBlocks) {
 }
 
 function getCodeBlockRoot(section) {
-    if (!(section instanceof HTMLElement)) return null;
-
-    const markdown = section.querySelector(".markdown");
-    if (markdown instanceof HTMLElement) {
-        return markdown;
+    if (!(section instanceof HTMLElement)) {
+        return null;
     }
 
-    return section;
+    const markdown = section.querySelector(".markdown");
+
+    return markdown instanceof HTMLElement ? markdown : section;
 }
 
 function getCodeBlocksForSection(section) {
@@ -162,6 +199,7 @@ function collectPreNodesFromNode(node, out) {
 
     if (node instanceof Element) {
         const nested = node.querySelectorAll("pre");
+
         for (let i = 0; i < nested.length; i += 1) {
             out.push(nested[i]);
         }
@@ -203,8 +241,8 @@ function updateStreamingCodeBlocksFromMutations(section, mutations) {
 
     if (removed.length > 0) {
         const removedSet = new Set(removed);
-        codeBlocks = codeBlocks.filter((pre) =>
-            !removedSet.has(pre) && isCodeBlockOptimizationEligible(pre)
+        codeBlocks = codeBlocks.filter(
+            (pre) => !removedSet.has(pre) && isCodeBlockOptimizationEligible(pre)
         );
     } else {
         codeBlocks = codeBlocks.filter((pre) =>
@@ -215,11 +253,7 @@ function updateStreamingCodeBlocksFromMutations(section, mutations) {
     for (let i = 0; i < added.length; i += 1) {
         const pre = added[i];
 
-        if (!isCodeBlockOptimizationEligible(pre)) {
-            continue;
-        }
-
-        if (!codeBlocks.includes(pre)) {
+        if (isCodeBlockOptimizationEligible(pre) && !codeBlocks.includes(pre)) {
             codeBlocks.push(pre);
         }
     }
@@ -234,13 +268,17 @@ function updateStreamingCodeBlocksFromMutations(section, mutations) {
     };
 }
 
+/**
+ * Collapses a code block either by hiding it in place or fully detaching it.
+ *
+ * Settled messages can safely detach large blocks. Streaming messages only
+ * collapse in place because React may still be reconciling the <pre>.
+ */
 function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
     if (!isCodeBlockOptimizationEligible(pre)) {
         return false;
     }
 
-    // New DOM contract: if the code block is already live/expanded,
-    // do not create or show our placeholder.
     if (
         pre.hasAttribute(LARGE_CODE_LIVE_ATTR) ||
         pre.dataset.threadOptimizerCodeExpanded === "true"
@@ -279,18 +317,24 @@ function applyCollapsedCodeBlock(pre, { detach = false } = {}) {
 }
 
 function ensureCodeBlockRevealClickListener() {
-    if (codeBlockRevealClickListenerInstalled) return;
+    if (codeBlockRevealClickListenerInstalled) {
+        return;
+    }
 
     document.addEventListener(
         "click",
         (event) => {
             const target = event.target;
-            if (!(target instanceof Element)) return;
+            if (!(target instanceof Element)) {
+                return;
+            }
 
             const placeholder = target.closest(
                 `[${CODE_BLOCK_PLACEHOLDER_ATTR}="true"]`
             );
-            if (!(placeholder instanceof HTMLElement)) return;
+            if (!(placeholder instanceof HTMLElement)) {
+                return;
+            }
 
             if (
                 placeholder.closest(
@@ -302,27 +346,26 @@ function ensureCodeBlockRevealClickListener() {
             }
 
             const revealButton = target.closest("button");
+            if (!revealButton || !isRevealButtonElement(revealButton)) {
+                return;
+            }
 
-            if (revealButton && isRevealButtonElement(revealButton)) {
-                event.preventDefault();
-                event.stopPropagation();
+            event.preventDefault();
+            event.stopPropagation();
 
-                // Do not reveal during streaming.
-                // ChatGPT/React may still be mutating the code block DOM, and restoring
-                // the detached <pre> during that phase can cause the block to disappear.
-                if (isReplyStreaming()) {
-                    return;
-                }
+            // Revealing while streaming can fight React and lose the real <pre>.
+            if (isReplyStreaming()) {
+                return;
+            }
 
-                const hostSection = placeholder.closest("section");
+            const hostSection = placeholder.closest("section");
 
+            clearSectionCodeBlocksProcessed(hostSection);
+
+            try {
+                revealCollapsedCodeBlockFromPlaceholder(placeholder);
+            } finally {
                 clearSectionCodeBlocksProcessed(hostSection);
-
-                try {
-                    revealCollapsedCodeBlockFromPlaceholder(placeholder);
-                } finally {
-                    clearSectionCodeBlocksProcessed(hostSection);
-                }
             }
         },
         true
@@ -346,7 +389,10 @@ function reconcileDetachedCodeBlocks() {
     for (const entry of Array.from(state.detachedCodeBlocks.values())) {
         const { pre, placeholder } = entry;
 
-        if (!(pre instanceof HTMLPreElement) || !(placeholder instanceof HTMLElement)) {
+        if (
+            !(pre instanceof HTMLPreElement) ||
+            !(placeholder instanceof HTMLElement)
+        ) {
             state.detachedCodeBlocks.delete(entry.id);
             continue;
         }
@@ -377,6 +423,23 @@ function reconcileDetachedCodeBlocks() {
     }
 }
 
+function createClearCodeBlockAction(pre, { preserveExpanded = false, live = false } = {}) {
+    return {
+        type: "clear",
+        pre,
+        preserveExpanded,
+        live,
+    };
+}
+
+function createCollapseCodeBlockAction(pre, { detach }) {
+    return {
+        type: "collapse",
+        pre,
+        detach,
+    };
+}
+
 function getSettledCodeBlockActions(section, providedCodeBlocks) {
     const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
     const actions = [];
@@ -385,40 +448,61 @@ function getSettledCodeBlockActions(section, providedCodeBlocks) {
         const pre = codeBlocks[i];
 
         if (!isLargeCodeBlock(pre)) {
-            actions.push({
-                type: "clear",
-                pre,
-                preserveExpanded: false,
-                live: false,
-            });
+            actions.push(createClearCodeBlockAction(pre));
             continue;
         }
 
         if (pre.dataset.threadOptimizerCodeExpanded === "true") {
-            actions.push({
-                type: "clear",
-                pre,
+            actions.push(createClearCodeBlockAction(pre, {
                 preserveExpanded: true,
                 live: true,
-            });
+            }));
             continue;
         }
 
         if (!state.featureFlags.codeBlockCollapse) {
-            actions.push({
-                type: "clear",
-                pre,
+            actions.push(createClearCodeBlockAction(pre, {
                 preserveExpanded: true,
                 live: true,
-            });
+            }));
             continue;
         }
 
-        actions.push({
-            type: "collapse",
-            pre,
-            detach: true,
-        });
+        actions.push(createCollapseCodeBlockAction(pre, { detach: true }));
+    }
+
+    return actions;
+}
+
+function getStreamingCodeBlockActions(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
+    const actions = [];
+
+    for (let i = 0; i < codeBlocks.length; i += 1) {
+        const pre = codeBlocks[i];
+
+        if (!isLargeCodeBlock(pre)) {
+            actions.push(createClearCodeBlockAction(pre));
+            continue;
+        }
+
+        if (pre.dataset.threadOptimizerCodeExpanded === "true") {
+            actions.push(createClearCodeBlockAction(pre, {
+                preserveExpanded: true,
+                live: true,
+            }));
+            continue;
+        }
+
+        if (!state.featureFlags.codeBlockCollapse) {
+            actions.push(createClearCodeBlockAction(pre, {
+                preserveExpanded: true,
+                live: true,
+            }));
+            continue;
+        }
+
+        actions.push(createCollapseCodeBlockAction(pre, { detach: false }));
     }
 
     return actions;
@@ -455,12 +539,23 @@ function applyCodeBlockActions(actions) {
 
 function getSettledCodeBlockPlan(section, providedCodeBlocks) {
     const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
-    const actions = getSettledCodeBlockActions(section, codeBlocks);
 
     return {
         section,
         codeBlocks,
-        actions,
+        actions: getSettledCodeBlockActions(section, codeBlocks),
+        codeBlockCount: codeBlocks.length,
+        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
+    };
+}
+
+export function getStreamingCodeBlockPlan(section, providedCodeBlocks) {
+    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
+
+    return {
+        section,
+        codeBlocks,
+        actions: getStreamingCodeBlockActions(section, codeBlocks),
         codeBlockCount: codeBlocks.length,
         lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
     };
@@ -480,78 +575,6 @@ function applySettledCodeBlockPlan(plan) {
     markSectionCodeBlocksProcessed(section);
 }
 
-function getStreamingCodeBlockActions(section, providedCodeBlocks) {
-    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
-    const qualifyingCodeBlocks = [];
-    const actions = [];
-
-    for (let i = 0; i < codeBlocks.length; i += 1) {
-        if (isLargeCodeBlock(codeBlocks[i])) {
-            qualifyingCodeBlocks.push(codeBlocks[i]);
-        }
-    }
-
-    const lastQualifyingStreamingBlock =
-        qualifyingCodeBlocks[qualifyingCodeBlocks.length - 1] ?? null;
-
-    for (let i = 0; i < codeBlocks.length; i += 1) {
-        const pre = codeBlocks[i];
-
-        if (!isLargeCodeBlock(pre)) {
-            actions.push({
-                type: "clear",
-                pre,
-                preserveExpanded: false,
-                live: false,
-            });
-            continue;
-        }
-
-        if (pre.dataset.threadOptimizerCodeExpanded === "true") {
-            actions.push({
-                type: "clear",
-                pre,
-                preserveExpanded: true,
-                live: true,
-            });
-            continue;
-        }
-
-        // During streaming, never detach.
-        // React/ChatGPT may still be reconciling the message DOM.
-        // Detaching + restoring during stream can cause the real <pre> to disappear.
-        if (!state.featureFlags.codeBlockCollapse) {
-            actions.push({
-                type: "clear",
-                pre,
-                preserveExpanded: true,
-                live: true,
-            });
-            continue;
-        }
-
-        actions.push({
-            type: "collapse",
-            pre,
-            detach: false,
-        });
-    }
-
-    return actions;
-}
-
-export function getStreamingCodeBlockPlan(section, providedCodeBlocks) {
-    const codeBlocks = providedCodeBlocks ?? getCodeBlocksForSection(section);
-
-    return {
-        section,
-        codeBlocks,
-        actions: getStreamingCodeBlockActions(section, codeBlocks),
-        codeBlockCount: codeBlocks.length,
-        lastPre: codeBlocks[codeBlocks.length - 1] ?? null,
-    };
-}
-
 function applyStreamingCodeBlockPlan(plan) {
     clearLiveMarkersForCodeBlocks(plan.codeBlocks);
     applyCodeBlockActions(plan.actions);
@@ -560,7 +583,9 @@ function applyStreamingCodeBlockPlan(plan) {
 
 function processStreamingSection(section, codeBlocks) {
     const plan = getStreamingCodeBlockPlan(section, codeBlocks);
+
     applyStreamingCodeBlockPlan(plan);
+
     return plan;
 }
 
@@ -584,6 +609,21 @@ function updateStreamingTrackingFromPlan(section, plan) {
     state.streamingCodeBlockLastCount = plan.codeBlockCount;
 }
 
+function ensureStreamingObserverOnly(section) {
+    state.streamingCodeBlockLastSection = section;
+    state.streamingCodeBlockLastPre = null;
+    state.streamingCodeBlockLastCount = 0;
+    state.streamingCodeBlocks = [];
+
+    syncStreamingStructureObserver();
+}
+
+/**
+ * Keeps streaming code block tracking incremental.
+ *
+ * A full scan is expensive during token streaming, so mutations update the
+ * tracked <pre> list when possible and only fall back to scans on section change.
+ */
 function syncStreamingStructureObserver() {
     const streamingSection = getStreamingSectionToProcess();
 
@@ -597,10 +637,11 @@ function syncStreamingStructureObserver() {
         onRelevantStructureChange: (mutations) => {
             scheduleCodeBlockRefresh("streaming-codeblock-structure");
 
-            const {
-                codeBlocks,
-                touchedPre,
-            } = updateStreamingCodeBlocksFromMutations(streamingSection, mutations);
+            const { codeBlocks, touchedPre } =
+                updateStreamingCodeBlocksFromMutations(
+                    streamingSection,
+                    mutations
+                );
 
             if (!touchedPre) {
                 return;
@@ -617,35 +658,29 @@ function syncStreamingStructureObserver() {
     });
 }
 
-function ensureStreamingObserverOnly(section) {
-    state.streamingCodeBlockLastSection = section;
-    state.streamingCodeBlockLastPre = null;
-    state.streamingCodeBlockLastCount = 0;
-    state.streamingCodeBlocks = [];
-    syncStreamingStructureObserver();
-}
-
 export function reconcileLatestStreamingAssistantCodeBlocksNow() {
-    if (!state.featureFlags.largeCodeBlockOptimization) return;
-    if (!isReplyStreaming()) return;
+    if (!state.featureFlags.largeCodeBlockOptimization || !isReplyStreaming()) {
+        return;
+    }
 
     const section = getStreamingSectionToProcess();
-    if (!section) return;
+    if (!section) {
+        return;
+    }
 
     const codeBlocks = syncStreamingCodeBlocksFromFullScan(section);
-    const codeBlockCount = codeBlocks.length;
 
-    if (codeBlockCount === 0) {
+    if (codeBlocks.length === 0) {
         ensureStreamingObserverOnly(section);
         return;
     }
 
-    const lastPre = codeBlocks[codeBlockCount - 1];
+    const lastPre = codeBlocks[codeBlocks.length - 1];
 
     const shouldProcess =
         section !== state.streamingCodeBlockLastSection ||
         lastPre !== state.streamingCodeBlockLastPre ||
-        codeBlockCount !== state.streamingCodeBlockLastCount;
+        codeBlocks.length !== state.streamingCodeBlockLastCount;
 
     if (!shouldProcess) {
         syncStreamingStructureObserver();
@@ -653,8 +688,8 @@ export function reconcileLatestStreamingAssistantCodeBlocksNow() {
     }
 
     const plan = processStreamingSection(section, codeBlocks);
-    updateStreamingTrackingFromPlan(section, plan);
 
+    updateStreamingTrackingFromPlan(section, plan);
     syncStreamingStructureObserver();
 }
 
@@ -676,6 +711,7 @@ export function resetCodeBlockOptimization({ clearMeasurements = false } = {}) {
     scheduleDomWriteBatch(() => {
         for (let i = 0; i < currentCodeBlocks.length; i += 1) {
             const pre = currentCodeBlocks[i];
+
             clearCodeBlockOffscreenOptimization(pre);
             clearCollapsedCodeBlock(pre, { preserveExpanded: true });
             setLargeCodeLiveMarker(pre, false);
@@ -725,13 +761,13 @@ function collectSettledCodeBlockPlans(sections) {
 
     for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i];
-        if (!(section instanceof HTMLElement)) continue;
 
-        if (areSectionCodeBlocksProcessed(section)) {
-            continue;
+        if (
+            section instanceof HTMLElement &&
+            !areSectionCodeBlocksProcessed(section)
+        ) {
+            plans.push(getSettledCodeBlockPlan(section));
         }
-
-        plans.push(getSettledCodeBlockPlan(section));
     }
 
     return plans;
@@ -745,7 +781,9 @@ function applySettledCodeBlockPlans(plans) {
 
 function processSettledSections(sections) {
     const plans = collectSettledCodeBlockPlans(sections);
+
     applySettledCodeBlockPlans(plans);
+
     return plans.length;
 }
 
@@ -779,6 +817,7 @@ export function refreshObservedCodeBlocks() {
             sectionsProcessed: 1,
             detachedCodeBlocks: state.detachedCodeBlocks.size,
         });
+
         return;
     }
 
@@ -802,55 +841,6 @@ registerUiPipelineTask(CODE_BLOCK_REFRESH_TASK, () => {
     }
 });
 
-function isCodeBlockOptimizationEligible(pre) {
-    if (!(pre instanceof HTMLPreElement)) {
-        return false;
-    }
-
-    if (!pre.isConnected) {
-        return false;
-    }
-
-    const section = pre.closest('section[data-turn="assistant"]');
-    if (!(section instanceof HTMLElement)) {
-        return false;
-    }
-
-    // Do not collapse CodeMirror internals.
-    // ChatGPT code viewers may render nested <pre> / content nodes inside
-    // .cm-editor/.cm-scroller. Inserting our placeholder there creates
-    // "Reveal code block" UI inside an already-rendered code block.
-    if (
-        pre.closest(
-            [
-                ".cm-editor",
-                ".cm-scroller",
-                ".cm-content",
-                ".cm-line",
-                ".cm-gutters",
-            ].join(",")
-        )
-    ) {
-        return false;
-    }
-
-    if (
-        pre.closest(
-            [
-                '[data-thread-optimizer-code-placeholder="true"]',
-                '[data-writing-block="true"]',
-                ".writing-block-editor",
-                '.ProseMirror[contenteditable="true"]',
-                '[contenteditable="true"]',
-            ].join(",")
-        )
-    ) {
-        return false;
-    }
-
-    if (!pre.querySelector("code") && !pre.textContent?.trim()) {
-        return false;
-    }
-
-    return true;
-}
+configureCodeBlockOptimization({
+    scheduleRefresh: scheduleCodeBlockRefresh,
+});

@@ -23,35 +23,21 @@ function collectMarkedOutOfWindowSections() {
 }
 
 function clearOutOfWindowAttr(section) {
-    if (section?.hasAttribute?.(OUT_OF_WINDOW_ATTR)) {
-        section.removeAttribute(OUT_OF_WINDOW_ATTR);
-        return true;
+    if (!section?.hasAttribute?.(OUT_OF_WINDOW_ATTR)) {
+        return false;
     }
 
-    return false;
+    section.removeAttribute(OUT_OF_WINDOW_ATTR);
+    return true;
 }
 
 function setOutOfWindowAttr(section) {
-    if (section?.getAttribute?.(OUT_OF_WINDOW_ATTR) !== "true") {
-        section.setAttribute(OUT_OF_WINDOW_ATTR, "true");
-        return true;
+    if (section?.getAttribute?.(OUT_OF_WINDOW_ATTR) === "true") {
+        return false;
     }
 
-    return false;
-}
-
-function clearTrackedCssVisibilityWindow() {
-    let clearedCount = 0;
-
-    for (const section of currentlyHiddenSections) {
-        if (clearOutOfWindowAttr(section)) {
-            clearedCount += 1;
-        }
-    }
-
-    currentlyHiddenSections.clear();
-
-    return clearedCount;
+    section.setAttribute(OUT_OF_WINDOW_ATTR, "true");
+    return true;
 }
 
 function clearAllMarkedCssVisibilityWindow() {
@@ -85,9 +71,18 @@ export function getCssHiddenSections({
     const eligibleVisibleSections = getEligibleVisibleSections(sections);
     const visibleWindow = new Set(eligibleVisibleSections.slice(-visibleLimit));
 
-    return eligibleVisibleSections.filter((section) => !visibleWindow.has(section));
+    return eligibleVisibleSections.filter(
+        (section) => !visibleWindow.has(section)
+    );
 }
 
+/**
+ * Computes the CSS visibility window.
+ *
+ * Real pruning removes older turns from the DOM. This lighter layer keeps only
+ * the newest visible exchange fully rendered and marks older still-mounted
+ * sections as out-of-window for CSS content-visibility.
+ */
 function collectCssVisibilityWindowPlan({
     sections = getConversationSections(),
     visibleLimit = getVisibleSectionsLimit(),
@@ -113,10 +108,8 @@ function applyCssVisibilityWindowDiff(sectionsToHide) {
     let markedCount = 0;
 
     for (const section of currentlyHiddenSections) {
-        if (!nextHiddenSections.has(section)) {
-            if (clearOutOfWindowAttr(section)) {
-                clearedCount += 1;
-            }
+        if (!nextHiddenSections.has(section) && clearOutOfWindowAttr(section)) {
+            clearedCount += 1;
         }
     }
 
@@ -134,6 +127,12 @@ function applyCssVisibilityWindowDiff(sectionsToHide) {
     };
 }
 
+/**
+ * Cleans up sections marked by an older/stale pass.
+ *
+ * This makes sync idempotent even if tracked state was reset by tests,
+ * navigation, or extension reloads.
+ */
 function reconcileExternallyMarkedSections(sectionsToHide) {
     const nextHiddenSections = new Set(sectionsToHide);
     const markedSections = collectMarkedOutOfWindowSections();
@@ -143,10 +142,8 @@ function reconcileExternallyMarkedSections(sectionsToHide) {
     for (let i = 0; i < markedSections.length; i += 1) {
         const section = markedSections[i];
 
-        if (!nextHiddenSections.has(section)) {
-            if (clearOutOfWindowAttr(section)) {
-                clearedCount += 1;
-            }
+        if (!nextHiddenSections.has(section) && clearOutOfWindowAttr(section)) {
+            clearedCount += 1;
         }
     }
 
@@ -169,9 +166,10 @@ export function syncCssVisibilityWindow() {
     if (plan.sections.length === 0) {
         const clearedCount = clearAllMarkedCssVisibilityWindow();
 
-        debugLog("CSS visibility window: skipped sync because there are no conversation sections", {
-            clearedCount,
-        });
+        debugLog(
+            "CSS visibility window: skipped sync because there are no conversation sections",
+            { clearedCount }
+        );
 
         return [];
     }

@@ -1,8 +1,16 @@
 let domWriteExecutor = (fn) => fn();
+
 let pendingDomWrites = [];
 let isDomWriteFlushScheduled = false;
 let isDomWriteFlushing = false;
 
+/**
+ * Flushes queued DOM writes as one guarded batch.
+ *
+ * Writes scheduled while a flush is already running are deferred to a new
+ * microtask. That keeps execution predictable and avoids recursive mutation
+ * batches.
+ */
 function flushDomWriteBatch() {
     if (pendingDomWrites.length === 0) {
         isDomWriteFlushScheduled = false;
@@ -10,6 +18,7 @@ function flushDomWriteBatch() {
     }
 
     const writes = pendingDomWrites;
+
     pendingDomWrites = [];
     isDomWriteFlushScheduled = false;
     isDomWriteFlushing = true;
@@ -32,10 +41,17 @@ function flushDomWriteBatch() {
     return writes.length;
 }
 
+/**
+ * Allows the DOM mutation guard to wrap every batch.
+ *
+ * In production this is installed by domMutationGuard.js; tests can reset it
+ * back to a direct executor.
+ */
 export function setDomWriteBatchExecutor(executor) {
-    domWriteExecutor = typeof executor === "function"
-        ? executor
-        : ((fn) => fn());
+    domWriteExecutor =
+        typeof executor === "function"
+            ? executor
+            : ((fn) => fn());
 }
 
 export function scheduleDomWriteBatch(writeFn) {

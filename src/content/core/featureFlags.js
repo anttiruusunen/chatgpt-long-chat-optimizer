@@ -1,11 +1,19 @@
 import { state } from "./state.js";
 
+/**
+ * Sync runtime feature flags from persisted user settings.
+ *
+ * This is the single source of truth for mapping settings → featureFlags.
+ * Keep this flat and explicit so it’s easy to audit and extend.
+ */
 export function syncFeatureFlagsFromSettings() {
-    state.featureFlags.pruning = Boolean(state.settings.enablePruning);
-    state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
-    state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-    state.featureFlags.storeReadOptimization = Boolean(state.settings.enableStoreReadOptimization);
-    state.featureFlags.codeBlockScrollbars = Boolean(state.settings.enableCodeBlockScrollbars);
-    state.featureFlags.userMessageClamp = Boolean(state.settings.enableUserMessageClamp);
-    state.featureFlags.codeBlockCollapse = Boolean(state.settings.enableCodeBlockCollapse);
+    const { settings, featureFlags } = state;
+
+    featureFlags.pruning = Boolean(settings.enablePruning);
+    featureFlags.offscreenOptimization = Boolean(settings.enableOffscreenOptimization);
+    featureFlags.largeCodeBlockOptimization = Boolean(settings.enableLargeCodeBlockOptimization);
+    featureFlags.storeReadOptimization = Boolean(settings.enableStoreReadOptimization);
+    featureFlags.codeBlockScrollbars = Boolean(settings.enableCodeBlockScrollbars);
+    featureFlags.userMessageClamp = Boolean(settings.enableUserMessageClamp);
+    featureFlags.codeBlockCollapse = Boolean(settings.enableCodeBlockCollapse);
 }

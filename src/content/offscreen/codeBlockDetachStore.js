@@ -20,17 +20,26 @@ export function configureDetachStore({ scheduleRefresh } = {}) {
 export function getDetachedEntryForPlaceholder(placeholder) {
     const id = getPlaceholderId(placeholder);
     if (!id) return null;
+
     return state.detachedCodeBlocks.get(id) ?? null;
 }
 
 export function getDetachedEntryForPre(pre) {
     const id = getPlaceholderIdForPre(pre);
     if (!id) return null;
+
     return state.detachedCodeBlocks.get(id) ?? null;
 }
 
+/**
+ * Records a detached <pre> together with enough DOM context to restore it.
+ *
+ * The placeholder keeps the layout stable while the heavy code block is
+ * removed from the live DOM.
+ */
 export function storeDetachedCodeBlock(pre, placeholder) {
     const id = getPlaceholderId(placeholder);
+
     setPlaceholderIdForPre(pre, id);
     setPlaceholderVisibility(placeholder, true);
 
@@ -46,7 +55,9 @@ export function storeDetachedCodeBlock(pre, placeholder) {
 }
 
 function normalizeRevealedCodeBlockLayout(pre) {
-    if (!(pre instanceof HTMLPreElement)) return;
+    if (!(pre instanceof HTMLPreElement)) {
+        return;
+    }
 
     pre.style.display = "block";
     pre.style.position = "relative";
@@ -57,16 +68,28 @@ function normalizeRevealedCodeBlockLayout(pre) {
     pre.style.maxWidth = "100%";
 }
 
+/**
+ * Restores a detached code block next to its placeholder.
+ *
+ * `preserveExpanded` keeps user intent across refreshes so an explicitly
+ * revealed code block is not collapsed again immediately.
+ */
 export function restoreDetachedCodeBlockEntry(
     entry,
-    { removePlaceholder = true, preserveExpanded = true } = {}
+    {
+        removePlaceholder = true,
+        preserveExpanded = true,
+    } = {}
 ) {
     if (!entry) return null;
 
     const { pre, placeholder } = entry;
     const placeholderId = entry.id ?? getPlaceholderId(placeholder);
 
-    if (placeholder?.parentElement && pre.parentElement !== placeholder.parentElement) {
+    if (
+        placeholder?.parentElement &&
+        pre.parentElement !== placeholder.parentElement
+    ) {
         placeholder.parentElement.insertBefore(pre, placeholder.nextSibling);
     }
 
@@ -96,7 +119,9 @@ export function restoreDetachedCodeBlockEntry(
     return pre;
 }
 
-export function restoreAllDetachedCodeBlocks({ preserveExpanded = true } = {}) {
+export function restoreAllDetachedCodeBlocks({
+    preserveExpanded = true,
+} = {}) {
     for (const entry of Array.from(state.detachedCodeBlocks.values())) {
         restoreDetachedCodeBlockEntry(entry, {
             removePlaceholder: true,
@@ -105,7 +130,12 @@ export function restoreAllDetachedCodeBlocks({ preserveExpanded = true } = {}) {
     }
 }
 
-export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
+export function clearCollapsedCodeBlock(
+    pre,
+    {
+        preserveExpanded = true,
+    } = {}
+) {
     const detachedEntry = getDetachedEntryForPre(pre);
 
     if (detachedEntry) {
@@ -117,6 +147,7 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
     }
 
     const placeholder = getPlaceholderById(getPlaceholderIdForPre(pre));
+
     setPlaceholderVisibility(placeholder, false);
 
     if (placeholder?.isConnected) {
@@ -133,6 +164,13 @@ export function clearCollapsedCodeBlock(pre, { preserveExpanded = true } = {}) {
     }
 }
 
+/**
+ * Reveals a collapsed code block from its placeholder.
+ *
+ * Handles both optimized cases:
+ * - the <pre> was fully detached and tracked in state.detachedCodeBlocks
+ * - the <pre> is still present but hidden/collapsed in the DOM
+ */
 export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
     if (!(placeholder instanceof HTMLElement)) {
         return;
@@ -192,6 +230,13 @@ export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
     scheduleRefreshCallback?.();
 }
 
+/**
+ * Repairs stale detached-code-block state.
+ *
+ * This can happen if ChatGPT mutates the surrounding DOM while a block is
+ * detached. We either restore the <pre> to its original parent or discard the
+ * stale entry if that parent no longer exists.
+ */
 export function selfHealDetachedCodeBlockEntry(entry) {
     if (!entry) return null;
 
@@ -203,7 +248,8 @@ export function selfHealDetachedCodeBlockEntry(entry) {
     }
 
     const parent =
-        entry.originalParent instanceof HTMLElement && entry.originalParent.isConnected
+        entry.originalParent instanceof HTMLElement &&
+        entry.originalParent.isConnected
             ? entry.originalParent
             : null;
 

@@ -44,17 +44,27 @@ function getVisibleSectionsLimit() {
     return VISIBLE_EXCHANGES * SECTIONS_PER_EXCHANGE;
 }
 
-function getRecoverableSectionsLimit(historyKeptExchanges = state.settings.historyKeptExchanges) {
+function getRecoverableSectionsLimit(
+    historyKeptExchanges = state.settings.historyKeptExchanges
+) {
     const safeExchanges = Math.max(1, Number(historyKeptExchanges) || 1);
+
     return safeExchanges * SECTIONS_PER_EXCHANGE;
 }
 
-function getSoftPrunedSectionsLimit(historyKeptExchanges = state.settings.historyKeptExchanges) {
-    return Math.max(0, getRecoverableSectionsLimit(historyKeptExchanges) - getVisibleSectionsLimit());
+function getSoftPrunedSectionsLimit(
+    historyKeptExchanges = state.settings.historyKeptExchanges
+) {
+    return Math.max(
+        0,
+        getRecoverableSectionsLimit(historyKeptExchanges) -
+            getVisibleSectionsLimit()
+    );
 }
 
 function updateHiddenCounts() {
-    state.totalHiddenCount = state.softPrunedSections.length + state.hardEvictedCount;
+    state.totalHiddenCount =
+        state.softPrunedSections.length + state.hardEvictedCount;
     state.hiddenCount = state.totalHiddenCount;
     state.isPruned = state.totalHiddenCount > 0;
 }
@@ -69,6 +79,47 @@ function getFirstAndLastVisibleSections() {
     };
 }
 
+function refreshPruneChrome({
+    showPlaceholder = true,
+    refreshObservedSections,
+    visibleSectionsChanged = false,
+} = {}) {
+    const { firstVisibleSection, lastVisibleSection } =
+        getFirstAndLastVisibleSections();
+
+    const placeholderChanged = showPlaceholder
+        ? ensurePlaceholderState(firstVisibleSection)
+        : false;
+
+    ensureTopRestoreSentinelState(firstVisibleSection);
+    ensureBottomPruneSentinelState(lastVisibleSection);
+
+    if (visibleSectionsChanged) {
+        refreshObservedSections?.();
+    }
+
+    return placeholderChanged;
+}
+
+function getLatestIncompleteAssistantSection(sections) {
+    const latestSection = sections[sections.length - 1];
+
+    if (
+        latestSection?.getAttribute("data-turn") === "assistant" &&
+        isIncompleteAssistantSection(latestSection)
+    ) {
+        return latestSection;
+    }
+
+    return null;
+}
+
+/**
+ * Permanently removes sections that exceed the recoverable soft-prune buffer.
+ *
+ * Before removal, we record message ids for the page bridge so the matching
+ * ChatGPT store nodes can be deleted manually when available.
+ */
 function hardEvictSectionsWithManualBridgeRecords(sections) {
     let evictedCount = 0;
     let recordedCount = 0;
@@ -100,10 +151,12 @@ function hardEvictSectionsWithManualBridgeRecords(sections) {
 export function enforceSoftPrunedLimit() {
     const maxSoftPrunedSections = getSoftPrunedSectionsLimit();
 
-    if (maxSoftPrunedSections != null && state.softPrunedSections.length > maxSoftPrunedSections) {
-        const overflowCount = state.softPrunedSections.length - maxSoftPrunedSections;
+    if (state.softPrunedSections.length > maxSoftPrunedSections) {
+        const overflowCount =
+            state.softPrunedSections.length - maxSoftPrunedSections;
         const evicted = state.softPrunedSections.splice(0, overflowCount);
-        const { evictedCount, recordedCount } = hardEvictSectionsWithManualBridgeRecords(evicted);
+        const { evictedCount, recordedCount } =
+            hardEvictSectionsWithManualBridgeRecords(evicted);
 
         state.hardEvictedCount += evictedCount;
 
@@ -125,11 +178,7 @@ export function restoreOneExchangeFromSoftPruned({
     withDomMutationGuard,
     refreshObservedSections,
 }) {
-    if (!state.featureFlags.pruning) {
-        return { visibleSectionsChanged: false, restoredSectionsCount: 0 };
-    }
-
-    if (!state.softPrunedSections.length) {
+    if (!state.featureFlags.pruning || !state.softPrunedSections.length) {
         return { visibleSectionsChanged: false, restoredSectionsCount: 0 };
     }
 
@@ -150,7 +199,10 @@ export function restoreOneExchangeFromSoftPruned({
     let lastRestoredSection = null;
 
     withDomMutationGuard(() => {
-        const restoreCount = Math.min(SECTIONS_PER_EXCHANGE, state.softPrunedSections.length);
+        const restoreCount = Math.min(
+            SECTIONS_PER_EXCHANGE,
+            state.softPrunedSections.length
+        );
         const sectionsToRestore = state.softPrunedSections.splice(
             state.softPrunedSections.length - restoreCount,
             restoreCount
@@ -176,18 +228,10 @@ export function restoreOneExchangeFromSoftPruned({
         visibleSectionsChanged = restoredSectionsCount > 0;
         updateHiddenCounts();
 
-        const {
-            firstVisibleSection,
-            lastVisibleSection,
-        } = getFirstAndLastVisibleSections();
-
-        ensurePlaceholderState(firstVisibleSection);
-        ensureTopRestoreSentinelState(firstVisibleSection);
-        ensureBottomPruneSentinelState(lastVisibleSection);
-
-        if (visibleSectionsChanged) {
-            refreshObservedSections();
-        }
+        refreshPruneChrome({
+            refreshObservedSections,
+            visibleSectionsChanged,
+        });
 
         debugLog("Prune: restored one exchange from soft-pruned buffer", {
             restoredSectionsCount,
@@ -238,9 +282,14 @@ export function repruneOneExchangeFromVisibleProtected({
     let anchorTopBefore = null;
 
     withDomMutationGuard(() => {
-        const sectionsToReprune = protectedVisibleSections.slice(0, SECTIONS_PER_EXCHANGE);
+        const sectionsToReprune = protectedVisibleSections.slice(
+            0,
+            SECTIONS_PER_EXCHANGE
+        );
 
-        anchorSection = sectionsToReprune[sectionsToReprune.length - 1]?.nextElementSibling ?? null;
+        anchorSection =
+            sectionsToReprune[sectionsToReprune.length - 1]?.nextElementSibling ??
+            null;
         anchorTopBefore = anchorSection?.getBoundingClientRect().top ?? null;
 
         for (const section of sectionsToReprune) {
@@ -249,23 +298,17 @@ export function repruneOneExchangeFromVisibleProtected({
 
         reprunedSectionsCount = softPruneSections(sectionsToReprune);
         invalidateConversationDomCache();
+
         state.softPrunedSections.push(...sectionsToReprune);
+
         visibleSectionsChanged = reprunedSectionsCount > 0;
 
         enforceSoftPrunedLimit();
 
-        const {
-            firstVisibleSection,
-            lastVisibleSection,
-        } = getFirstAndLastVisibleSections();
-
-        ensurePlaceholderState(firstVisibleSection);
-        ensureTopRestoreSentinelState(firstVisibleSection);
-        ensureBottomPruneSentinelState(lastVisibleSection);
-
-        if (visibleSectionsChanged) {
-            refreshObservedSections();
-        }
+        refreshPruneChrome({
+            refreshObservedSections,
+            visibleSectionsChanged,
+        });
 
         debugLog("Prune: repruned one exchange from protected visible sections", {
             reprunedSectionsCount,
@@ -291,7 +334,9 @@ export function restoreAllSections({
     withDomMutationGuard,
     refreshObservedSections,
 }) {
-    if (!state.featureFlags.pruning) return { visibleSectionsChanged: false };
+    if (!state.featureFlags.pruning) {
+        return { visibleSectionsChanged: false };
+    }
 
     ensureObserverAttached();
 
@@ -305,7 +350,8 @@ export function restoreAllSections({
 
     withDomMutationGuard(() => {
         const restoredCount = state.softPrunedSections.length;
-        const firstVisibleSectionBeforeRestore = getConversationSections()[0] ?? null;
+        const firstVisibleSectionBeforeRestore =
+            getConversationSections()[0] ?? null;
 
         removePlaceholder();
         removeTopRestoreSentinel();
@@ -324,18 +370,10 @@ export function restoreAllSections({
 
         updateHiddenCounts();
 
-        const {
-            firstVisibleSection,
-            lastVisibleSection,
-        } = getFirstAndLastVisibleSections();
-
-        ensurePlaceholderState(firstVisibleSection);
-        ensureTopRestoreSentinelState(firstVisibleSection);
-        ensureBottomPruneSentinelState(lastVisibleSection);
-
-        if (visibleSectionsChanged) {
-            refreshObservedSections();
-        }
+        refreshPruneChrome({
+            refreshObservedSections,
+            visibleSectionsChanged,
+        });
 
         debugLog("Prune: restored soft-pruned sections", {
             restoredCount,
@@ -348,6 +386,14 @@ export function restoreAllSections({
     return { visibleSectionsChanged };
 }
 
+/**
+ * Main pruning pass.
+ *
+ * Keeps the latest exchange visible, keeps restored/protected sections visible,
+ * preserves the latest incomplete assistant during reload/startup, soft-prunes
+ * recoverable older sections, and hard-evicts overflow beyond the configured
+ * history buffer.
+ */
 export function pruneOldSections(
     historyKeptExchanges = state.settings.historyKeptExchanges,
     options = {},
@@ -378,37 +424,44 @@ export function pruneOldSections(
     }
 
     const detachedSoftPrunedSections = state.softPrunedSections.filter(
-        (section) => section instanceof Element && !getConversationTurnRoot(section)?.isConnected
+        (section) =>
+            section instanceof Element &&
+            !getConversationTurnRoot(section)?.isConnected
     );
 
     const logicalSections = detachedSoftPrunedSections.concat(currentVisibleSections);
 
     const visibleSectionsLimit = getVisibleSectionsLimit();
-    const softPrunedSectionsLimit = getSoftPrunedSectionsLimit(historyKeptExchanges);
+    const softPrunedSectionsLimit =
+        getSoftPrunedSectionsLimit(historyKeptExchanges);
 
-    const latestVisibleSections = currentVisibleSections.slice(-visibleSectionsLimit);
+    const latestVisibleSections =
+        currentVisibleSections.slice(-visibleSectionsLimit);
     const protectedVisibleSections = getProtectedVisibleSections();
     const incompleteLatestAssistantSection =
-        currentVisibleSections[currentVisibleSections.length - 1]?.getAttribute("data-turn") === "assistant" &&
-        isIncompleteAssistantSection(currentVisibleSections[currentVisibleSections.length - 1])
-            ? currentVisibleSections[currentVisibleSections.length - 1]
-            : null;
+        getLatestIncompleteAssistantSection(currentVisibleSections);
 
     const targetVisibleSet = new Set([
         ...latestVisibleSections,
         ...protectedVisibleSections,
-        ...(incompleteLatestAssistantSection ? [incompleteLatestAssistantSection] : []),
+        ...(incompleteLatestAssistantSection
+            ? [incompleteLatestAssistantSection]
+            : []),
     ]);
 
     const pruneableLogicalSections = logicalSections.filter(
         (section) => !targetVisibleSet.has(section)
     );
 
-    const evictCutoff = Math.max(0, pruneableLogicalSections.length - softPrunedSectionsLimit);
+    const evictCutoff = Math.max(
+        0,
+        pruneableLogicalSections.length - softPrunedSectionsLimit
+    );
+
     const sectionsToEvictNow = pruneableLogicalSections.slice(0, evictCutoff);
     const sectionsToSoftPrune = pruneableLogicalSections.slice(evictCutoff);
-    const sectionsToKeepVisible = logicalSections.filter(
-        (section) => targetVisibleSet.has(section)
+    const sectionsToKeepVisible = logicalSections.filter((section) =>
+        targetVisibleSet.has(section)
     );
 
     let visibleSectionsChanged = false;
@@ -420,31 +473,30 @@ export function pruneOldSections(
         const previousHardEvictedCount = state.hardEvictedCount;
         const previousSoftPrunedSections = state.softPrunedSections;
 
-        let evictedCount = 0;
-        let recordedCount = 0;
-        let softPrunedCount = 0;
-        let restoredCount = 0;
-
         removePlaceholder();
         removeTopRestoreSentinel();
         removeBottomPruneSentinel();
 
-        const hardEvictResult = hardEvictSectionsWithManualBridgeRecords(sectionsToEvictNow);
-        evictedCount = hardEvictResult.evictedCount;
-        recordedCount = hardEvictResult.recordedCount;
+        const { evictedCount, recordedCount } =
+            hardEvictSectionsWithManualBridgeRecords(sectionsToEvictNow);
 
-        softPrunedCount = softPruneSections(sectionsToSoftPrune);
+        const softPrunedCount = softPruneSections(sectionsToSoftPrune);
 
         const sectionsToRestore = sectionsToKeepVisible.filter((section) => {
             const turnRoot = getConversationTurnRoot(section);
             return !turnRoot?.isConnected;
         });
 
-        restoredCount = restoreSoftPrunedSections(sectionsToRestore, container);
+        const restoredCount = restoreSoftPrunedSections(
+            sectionsToRestore,
+            container
+        );
+
         invalidateConversationDomCache();
 
         state.softPrunedSections = [...sectionsToSoftPrune];
         state.hardEvictedCount += evictedCount;
+
         updateHiddenCounts();
 
         const countsChanged =
@@ -456,16 +508,14 @@ export function pruneOldSections(
                 (section, index) => state.softPrunedSections[index] !== section
             );
 
-        visibleSectionsChanged = evictedCount > 0 || softPrunedCount > 0 || restoredCount > 0;
+        visibleSectionsChanged =
+            evictedCount > 0 || softPrunedCount > 0 || restoredCount > 0;
 
-        const {
-            firstVisibleSection,
-            lastVisibleSection,
-        } = getFirstAndLastVisibleSections();
-
-        placeholderChanged = showPlaceholder ? ensurePlaceholderState(firstVisibleSection) : false;
-        ensureTopRestoreSentinelState(firstVisibleSection);
-        ensureBottomPruneSentinelState(lastVisibleSection);
+        placeholderChanged = refreshPruneChrome({
+            showPlaceholder,
+            refreshObservedSections,
+            visibleSectionsChanged,
+        });
 
         const domChanged = visibleSectionsChanged || placeholderChanged;
 
@@ -479,10 +529,6 @@ export function pruneOldSections(
                 hardEvictedCount: state.hardEvictedCount,
             });
             return;
-        }
-
-        if (visibleSectionsChanged) {
-            refreshObservedSections();
         }
 
         debugLog("Prune: prune cycle completed", {
@@ -505,6 +551,13 @@ export function pruneOldSections(
     return { visibleSectionsChanged, placeholderChanged };
 }
 
+/**
+ * Runs the startup prune behind an optional temporary mask.
+ *
+ * The mask prevents old turns from flashing during page load. A follow-up
+ * stabilization frame refreshes placeholder/sentinel/offscreen state after
+ * the DOM has settled.
+ */
 export function runInitialPrune(
     container,
     {
@@ -529,18 +582,17 @@ export function runInitialPrune(
 
     requestAnimationFrame(() => {
         try {
-            const result = pruneOldSections(state.settings.historyKeptExchanges, { showPlaceholder: false });
+            const result = pruneOldSections(
+                state.settings.historyKeptExchanges,
+                { showPlaceholder: false }
+            );
 
             state.didInitialPrune = true;
 
-            const {
-                firstVisibleSection,
-                lastVisibleSection,
-            } = getFirstAndLastVisibleSections();
-
-            const placeholderChanged = ensurePlaceholderState(firstVisibleSection);
-            ensureTopRestoreSentinelState(firstVisibleSection);
-            ensureBottomPruneSentinelState(lastVisibleSection);
+            const placeholderChanged = refreshPruneChrome({
+                refreshObservedSections,
+                visibleSectionsChanged: false,
+            });
 
             debugLog("Prune: initial prune completed", {
                 ...result,
@@ -556,26 +608,24 @@ export function runInitialPrune(
         } finally {
             if (!useStartupMask) {
                 const latestContainer = getConversationContainer();
+
                 if (latestContainer) {
-                    const {
-                        firstVisibleSection,
-                        lastVisibleSection,
-                    } = getFirstAndLastVisibleSections();
-
-                    ensurePlaceholderState(firstVisibleSection);
-                    ensureTopRestoreSentinelState(firstVisibleSection);
-                    ensureBottomPruneSentinelState(lastVisibleSection);
-                    refreshObservedSections();
-
-                    debugLog("Prune: post-initial stabilization refresh completed without startup mask", {
-                        hasContainer: Boolean(latestContainer),
-                        hasFirstVisibleSection: Boolean(firstVisibleSection),
-                        hasLastVisibleSection: Boolean(lastVisibleSection),
-                        softPrunedSections: state.softPrunedSections.length,
-                        totalHiddenCount: state.totalHiddenCount,
-                        useStartupMask,
+                    refreshPruneChrome({
+                        refreshObservedSections,
+                        visibleSectionsChanged: true,
                     });
+
+                    debugLog(
+                        "Prune: post-initial stabilization refresh completed without startup mask",
+                        {
+                            hasContainer: Boolean(latestContainer),
+                            softPrunedSections: state.softPrunedSections.length,
+                            totalHiddenCount: state.totalHiddenCount,
+                            useStartupMask,
+                        }
+                    );
                 }
+
                 return;
             }
 
@@ -584,26 +634,21 @@ export function runInitialPrune(
 
                 requestAnimationFrame(() => {
                     const latestContainer = getConversationContainer();
+
                     if (!latestContainer) {
                         removeStartupPruneMask?.();
                         return;
                     }
 
-                    const {
-                        firstVisibleSection,
-                        lastVisibleSection,
-                    } = getFirstAndLastVisibleSections();
+                    refreshPruneChrome({
+                        refreshObservedSections,
+                        visibleSectionsChanged: true,
+                    });
 
-                    ensurePlaceholderState(firstVisibleSection);
-                    ensureTopRestoreSentinelState(firstVisibleSection);
-                    ensureBottomPruneSentinelState(lastVisibleSection);
-                    refreshObservedSections();
                     removeStartupPruneMask?.();
 
                     debugLog("Prune: post-initial stabilization refresh completed", {
                         hasContainer: Boolean(latestContainer),
-                        hasFirstVisibleSection: Boolean(firstVisibleSection),
-                        hasLastVisibleSection: Boolean(lastVisibleSection),
                         softPrunedSections: state.softPrunedSections.length,
                         totalHiddenCount: state.totalHiddenCount,
                         useStartupMask,

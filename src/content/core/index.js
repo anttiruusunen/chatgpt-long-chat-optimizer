@@ -4,9 +4,7 @@ import {
     getConversationContainer,
     invalidateConversationDomCache,
 } from "./dom.js";
-import {
-    removePlaceholder,
-} from "../pruning/pruneUi.js";
+import { removePlaceholder } from "../pruning/pruneUi.js";
 import {
     handleReplyStreamingStarted,
     setOffscreenOptimizationEnabled,
@@ -24,9 +22,7 @@ import {
     installReplyTimingListeners,
     ensureReplyCompletionPoll,
 } from "../streaming/replyTiming.js";
-import {
-    disconnectSentinelObservers,
-} from "../pruning/sentinelObservers.js";
+import { disconnectSentinelObservers } from "../pruning/sentinelObservers.js";
 import {
     ensureQolStyles,
     syncCodeBlockScrollbarStyles,
@@ -72,20 +68,29 @@ function isLinkNavigationReason(reason) {
     );
 }
 
+/**
+ * Link/sidebar navigation can briefly leave the old conversation container in
+ * the DOM while ChatGPT renders the new one. Wait for a fresh container before
+ * running initial prune so we do not prune the previous thread by mistake.
+ */
 function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
     const generation = ++navigationPruneGeneration;
     const startedAt = performance.now();
+
     const MAX_WAIT_MS = 2500;
     const POLL_MS = 100;
 
     clearPendingNavigationPrune();
 
     function attempt() {
-        if (generation !== navigationPruneGeneration) return;
+        if (generation !== navigationPruneGeneration) {
+            return;
+        }
 
         invalidateConversationDomCache();
 
         const container = getConversationContainer();
+
         const previousGone =
             previousContainer instanceof Element && !previousContainer.isConnected;
         const containerChanged =
@@ -115,6 +120,12 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
     pendingNavigationPruneTimer = setTimeout(attempt, POLL_MS);
 }
 
+/**
+ * Clears per-conversation pruning state before a new thread is initialized.
+ *
+ * Soft-pruned nodes belong to a specific conversation DOM. Keeping them across
+ * navigation can restore/prune nodes into the wrong thread.
+ */
 function resetConversationLifecycleForNavigation() {
     clearPendingNavigationPrune();
     invalidateConversationDomCache();
@@ -132,6 +143,7 @@ function resetConversationLifecycleForNavigation() {
     if (state.topRestoreSentinel?.isConnected) {
         state.topRestoreSentinel.remove();
     }
+
     if (state.bottomPruneSentinel?.isConnected) {
         state.bottomPruneSentinel.remove();
     }
@@ -144,6 +156,7 @@ function resetConversationLifecycleForNavigation() {
     state.isBottomPruneArmed = true;
 
     disconnectSentinelObservers();
+
     debugLog("Index: reset conversation lifecycle state for navigation");
 }
 
@@ -179,18 +192,20 @@ function rearmInitialPruneForNavigation(reason) {
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         }
+
         return;
     }
 
     if (!hasContainer) {
         waitForContainerAndInitialPrune();
-    } else {
-        scheduleConversationChromeSync({
-            reason: "navigation-rearm-with-container",
-            forceCss: true,
-            includeStreaming: true,
-        });
+        return;
     }
+
+    scheduleConversationChromeSync({
+        reason: "navigation-rearm-with-container",
+        forceCss: true,
+        includeStreaming: true,
+    });
 }
 
 const observerDeps = createObserverDeps({
@@ -236,13 +251,25 @@ configureConversationMaintenance({
     withDomMutationGuard,
 });
 
+/**
+ * Main content-script bootstrap.
+ *
+ * Order matters:
+ * 1. load settings and feature flags
+ * 2. install UI/style/bridge integrations
+ * 3. install lifecycle listeners
+ * 4. attach observers and run the first prune/chrome sync
+ */
 async function initialize() {
     state.settings = await getSettings();
     state.debugLoggingEnabled = Boolean(state.settings.enableDebugLogging);
+
     syncFeatureFlagsFromSettings();
+
     ensureQolStyles();
     syncCodeBlockScrollbarStyles();
     syncUserMessageClampStyles();
+
     syncStoreReadOptimizationToPageWithRetry();
     syncPruningStateToPageBridge();
 
@@ -280,23 +307,30 @@ async function initialize() {
         } else {
             waitForContainerAndInitialPrune();
         }
+    } else if (!hasContainer) {
+        waitForContainerAndInitialPrune();
     } else {
-        if (!hasContainer) {
-            waitForContainerAndInitialPrune();
-        } else {
-            scheduleRefreshPostPruneState();
-        }
+        scheduleRefreshPostPruneState();
     }
 
     scheduleConversationChromeSync({
         reason: "initialize",
         forceCss: true,
     });
+
     ensureReplyCompletionPoll();
 }
 
+/**
+ * Reacts to popup/settings changes after startup.
+ *
+ * This mirrors the initialization path, but only refreshes the systems affected
+ * by changed settings so toggles stay cheap.
+ */
 ext.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync") return;
+    if (areaName !== "sync") {
+        return;
+    }
 
     let historyKeptChanged = false;
     let offscreenFlagChanged = false;
@@ -319,36 +353,50 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     }
 
     if (changes.enableOffscreenOptimization) {
-        state.settings.enableOffscreenOptimization = Boolean(changes.enableOffscreenOptimization.newValue);
+        state.settings.enableOffscreenOptimization = Boolean(
+            changes.enableOffscreenOptimization.newValue
+        );
         offscreenFlagChanged = true;
     }
 
     if (changes.enableLargeCodeBlockOptimization) {
-        state.settings.enableLargeCodeBlockOptimization = Boolean(changes.enableLargeCodeBlockOptimization.newValue);
+        state.settings.enableLargeCodeBlockOptimization = Boolean(
+            changes.enableLargeCodeBlockOptimization.newValue
+        );
         largeCodeBlockFlagChanged = true;
     }
 
     if (changes.enableDebugLogging) {
-        state.settings.enableDebugLogging = Boolean(changes.enableDebugLogging.newValue);
+        state.settings.enableDebugLogging = Boolean(
+            changes.enableDebugLogging.newValue
+        );
         state.debugLoggingEnabled = state.settings.enableDebugLogging;
     }
 
     if (changes.enableStoreReadOptimization) {
-        state.settings.enableStoreReadOptimization = Boolean(changes.enableStoreReadOptimization.newValue);
+        state.settings.enableStoreReadOptimization = Boolean(
+            changes.enableStoreReadOptimization.newValue
+        );
         storeReadOptimizationFlagChanged = true;
     }
 
     if (changes.enableCodeBlockScrollbars) {
-        state.settings.enableCodeBlockScrollbars = Boolean(changes.enableCodeBlockScrollbars.newValue);
+        state.settings.enableCodeBlockScrollbars = Boolean(
+            changes.enableCodeBlockScrollbars.newValue
+        );
     }
 
     if (changes.enableUserMessageClamp) {
-        state.settings.enableUserMessageClamp = Boolean(changes.enableUserMessageClamp.newValue);
+        state.settings.enableUserMessageClamp = Boolean(
+            changes.enableUserMessageClamp.newValue
+        );
         userMessageClampChanged = true;
     }
 
     if (changes.enableCodeBlockCollapse) {
-        state.settings.enableCodeBlockCollapse = Boolean(changes.enableCodeBlockCollapse.newValue);
+        state.settings.enableCodeBlockCollapse = Boolean(
+            changes.enableCodeBlockCollapse.newValue
+        );
         codeBlockCollapseChanged = true;
     }
 
@@ -394,6 +442,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (!state.didInitialPrune) {
             const container = getConversationContainer();
+
             if (container) {
                 runInitialPrune(container);
             } else {

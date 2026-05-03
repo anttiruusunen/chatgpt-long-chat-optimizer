@@ -6,12 +6,6 @@ import {
 
 const STRUCTURAL_STOP_TAGS = new Set(["MAIN", "BODY", "HTML"]);
 
-/**
- * =========================
- * Cache Layer
- * =========================
- */
-
 let domCacheVersion = 0;
 
 let cachedContainer = null;
@@ -38,38 +32,45 @@ export function invalidateConversationDomCache() {
     cachedScrollContainerVersion = -1;
 }
 
-/**
- * =========================
- * Core helpers
- * =========================
- */
+export function isConversationSection(element) {
+    if (!(element instanceof HTMLElement)) return false;
+    if (element.tagName !== "SECTION") return false;
 
-export function isConversationSection(el) {
-    if (!(el instanceof HTMLElement)) return false;
-    if (el.tagName !== "SECTION") return false;
-    if (el.hasAttribute(PLACEHOLDER_ATTR)) return false;
-    if (el.hasAttribute(TOP_RESTORE_SENTINEL_ATTR)) return false;
-    if (el.hasAttribute(BOTTOM_PRUNE_SENTINEL_ATTR)) return false;
+    if (
+        element.hasAttribute(PLACEHOLDER_ATTR) ||
+        element.hasAttribute(TOP_RESTORE_SENTINEL_ATTR) ||
+        element.hasAttribute(BOTTOM_PRUNE_SENTINEL_ATTR)
+    ) {
+        return false;
+    }
 
-    const testId = el.getAttribute("data-testid") || "";
-    const hasConversationTestId = testId.startsWith("conversation-turn-");
-    const hasTurnAttr = el.hasAttribute("data-turn");
+    const testId = element.getAttribute("data-testid") || "";
 
-    return hasConversationTestId || hasTurnAttr;
+    return (
+        testId.startsWith("conversation-turn-") ||
+        element.hasAttribute("data-turn")
+    );
 }
 
 function getLastConversationSectionInDocument() {
     const sections = Array.from(document.querySelectorAll("section"));
+
     for (let i = sections.length - 1; i >= 0; i -= 1) {
         if (isConversationSection(sections[i])) {
             return sections[i];
         }
     }
+
     return null;
 }
 
+/**
+ * ChatGPT marks the current bottom turn with data-scroll-anchor when possible.
+ * If that marker is missing, fall back to the last conversation section.
+ */
 export function getAnchorSection() {
     const anchored = document.querySelector('section[data-scroll-anchor="true"]');
+
     if (isConversationSection(anchored)) {
         return anchored;
     }
@@ -79,7 +80,10 @@ export function getAnchorSection() {
 
 function getConversationSectionsWithin(root) {
     if (!(root instanceof HTMLElement)) return [];
-    return Array.from(root.querySelectorAll("section")).filter(isConversationSection);
+
+    return Array.from(root.querySelectorAll("section")).filter(
+        isConversationSection
+    );
 }
 
 function countConversationSectionsWithin(root) {
@@ -92,6 +96,7 @@ function hasOnlyCurrentAsElementChild(parent, current) {
     }
 
     const elementChildren = Array.from(parent.children);
+
     return elementChildren.length === 1 && elementChildren[0] === current;
 }
 
@@ -100,11 +105,12 @@ export function getConversationTurnRoot(section) {
 }
 
 /**
- * =========================
- * Mount node (cached)
- * =========================
+ * Returns the DOM node that should be removed/restored for a conversation turn.
+ *
+ * ChatGPT often wraps each <section> in one or more single-child layout nodes.
+ * Removing only the section can leave empty wrappers behind, so we climb through
+ * safe single-child wrappers until we reach a structural boundary.
  */
-
 export function getConversationSectionMountNode(section) {
     if (!isConversationSection(section)) return null;
 
@@ -119,6 +125,7 @@ export function getConversationSectionMountNode(section) {
             version: domCacheVersion,
             node: explicitWrapper,
         });
+
         return explicitWrapper;
     }
 
@@ -166,11 +173,11 @@ export function getConversationSectionMountNode(section) {
 }
 
 /**
- * =========================
- * Container (cached)
- * =========================
+ * Finds the smallest ancestor that contains the visible conversation turns.
+ *
+ * The container is derived from the current anchor instead of hardcoded
+ * selectors so the extension survives ChatGPT DOM reshuffles.
  */
-
 export function getConversationContainer() {
     if (
         cachedContainerVersion === domCacheVersion &&
@@ -184,29 +191,29 @@ export function getConversationContainer() {
     if (!anchor) return null;
 
     const anchorMountNode =
-        getConversationSectionMountNode(anchor) || anchor.parentElement || anchor;
+        getConversationSectionMountNode(anchor) ||
+        anchor.parentElement ||
+        anchor;
 
     let current = anchorMountNode.parentElement;
+
     while (current instanceof HTMLElement) {
         const conversationSections = getConversationSectionsWithin(current);
+
         if (conversationSections.length > 1) {
             cachedContainer = current;
             cachedContainerVersion = domCacheVersion;
             return current;
         }
+
         current = current.parentElement;
     }
 
     cachedContainer = anchorMountNode.parentElement || null;
     cachedContainerVersion = domCacheVersion;
+
     return cachedContainer;
 }
-
-/**
- * =========================
- * Sections (cached)
- * =========================
- */
 
 export function getConversationSections() {
     if (
@@ -222,21 +229,23 @@ export function getConversationSections() {
 
     cachedSections = getConversationSectionsWithin(container);
     cachedSectionsVersion = domCacheVersion;
+
     return cachedSections;
 }
 
 /**
- * =========================
- * Consumers
- * =========================
+ * Returns the most recent sections relative to the current scroll anchor.
+ *
+ * This is used by pruning so "recent" follows ChatGPT's anchor when it exists,
+ * rather than blindly using the physical end of the DOM.
  */
-
 export function getRecentSections(sectionsToKeep) {
     const sections = getConversationSections();
     if (sections.length === 0) return [];
 
     const anchor = getAnchorSection();
     const anchorIndex = anchor ? sections.indexOf(anchor) : -1;
+
     const endIndex = anchorIndex >= 0 ? anchorIndex + 1 : sections.length;
     const startIndex = Math.max(0, endIndex - sectionsToKeep);
 
@@ -255,6 +264,12 @@ export function getLatestAssistantSection() {
     return null;
 }
 
+/**
+ * Finds the scrollable ancestor for the conversation.
+ *
+ * Falls back to the document scroller because ChatGPT's scroll container can
+ * change between layouts, logged-out states, and test fixtures.
+ */
 export function getConversationScrollContainer() {
     if (
         cachedScrollContainerVersion === domCacheVersion &&
@@ -275,6 +290,7 @@ export function getConversationScrollContainer() {
     }
 
     let current = container.parentElement;
+
     while (current instanceof HTMLElement) {
         const style = window.getComputedStyle(current);
         const overflowY = style.overflowY;
@@ -297,6 +313,7 @@ export function getConversationScrollContainer() {
 
     cachedScrollContainer = fallbackScrollContainer;
     cachedScrollContainerVersion = domCacheVersion;
+
     return cachedScrollContainer;
 }
 

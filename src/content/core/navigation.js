@@ -1,15 +1,17 @@
 let navigationWatcherInstalled = false;
 let lastKnownLocationKey = "";
 let scheduledCheckTimers = new Set();
+
 let originalPushState = null;
 let originalReplaceState = null;
+
 let currentNavigationCallback = null;
 
 function getCurrentLocationKey() {
     return `${location.pathname}${location.search}${location.hash}`;
 }
 
-function clearScheduledCheck() {
+function clearScheduledChecks() {
     for (const timer of scheduledCheckTimers) {
         clearTimeout(timer);
     }
@@ -17,7 +19,19 @@ function clearScheduledCheck() {
     scheduledCheckTimers.clear();
 }
 
-function scheduleNavigationCheck(reason, { delayMs = 0, alwaysNotify = false } = {}) {
+/**
+ * Schedules a delayed URL check.
+ *
+ * ChatGPT navigation often updates the URL before the new conversation DOM is
+ * fully mounted, so click-triggered checks use short follow-up delays.
+ */
+function scheduleNavigationCheck(
+    reason,
+    {
+        delayMs = 0,
+        alwaysNotify = false,
+    } = {}
+) {
     const timer = setTimeout(() => {
         scheduledCheckTimers.delete(timer);
 
@@ -29,6 +43,7 @@ function scheduleNavigationCheck(reason, { delayMs = 0, alwaysNotify = false } =
         }
 
         lastKnownLocationKey = nextKey;
+
         currentNavigationCallback?.({
             reason,
             locationKey: nextKey,
@@ -53,12 +68,21 @@ function isConversationNavigationLink(element) {
     );
 }
 
+/**
+ * Sidebar/recent-chat clicks can reuse the same URL briefly while React swaps
+ * content. We notify once shortly after the click and again after a longer
+ * delay so the lifecycle code can wait for a fresh container.
+ */
 function handleDocumentClick(event) {
     const target = event.target;
-    if (!(target instanceof Element)) return;
+    if (!(target instanceof Element)) {
+        return;
+    }
 
     const link = target.closest("a");
-    if (!isConversationNavigationLink(link)) return;
+    if (!isConversationNavigationLink(link)) {
+        return;
+    }
 
     scheduleNavigationCheck("conversation-link-click", {
         delayMs: 150,
@@ -72,10 +96,7 @@ function handleDocumentClick(event) {
 }
 
 function handleHistoryNavigation(reason) {
-    scheduleNavigationCheck(reason, {
-        delayMs: 0,
-        alwaysNotify: false,
-    });
+    scheduleNavigationCheck(reason);
 }
 
 function patchHistoryMethods() {
@@ -119,6 +140,13 @@ function handleHashChange() {
     handleHistoryNavigation("hashchange");
 }
 
+/**
+ * Installs navigation detection for ChatGPT's SPA routing.
+ *
+ * We combine patched history methods, pop/hash listeners, and captured link
+ * clicks because no single signal reliably covers all sidebar and conversation
+ * navigation paths.
+ */
 export function installConversationNavigationWatcher({ onNavigationDetected }) {
     currentNavigationCallback = onNavigationDetected;
 
@@ -137,7 +165,7 @@ export function installConversationNavigationWatcher({ onNavigationDetected }) {
 }
 
 export function resetConversationNavigationWatcherForTests() {
-    clearScheduledCheck();
+    clearScheduledChecks();
 
     if (navigationWatcherInstalled) {
         document.removeEventListener("click", handleDocumentClick, true);

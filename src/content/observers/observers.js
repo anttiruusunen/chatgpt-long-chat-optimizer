@@ -29,13 +29,19 @@ function nodeLooksLikeTurnMount(node) {
         return false;
     }
 
-    if (node.hasAttribute("data-turn-id-container")) {
-        return true;
-    }
-
-    return nodeIsOrContainsConversationSection(node);
+    return (
+        node.hasAttribute("data-turn-id-container") ||
+        nodeIsOrContainsConversationSection(node)
+    );
 }
 
+/**
+ * Returns true only for direct child-list mutations on the observed
+ * conversation container that add/remove conversation turn mounts.
+ *
+ * We observe the container with subtree:false, so this intentionally ignores
+ * internal streaming edits inside the latest assistant message.
+ */
 export function mutationNeedsPrune(mutation, container) {
     if (mutation.type !== "childList") return false;
     if (!(container instanceof Element)) return false;
@@ -65,7 +71,9 @@ function summarizeMutations(mutations, container) {
     let pruneRelevantMutations = 0;
 
     for (const mutation of mutations) {
-        if (mutation.type !== "childList") continue;
+        if (mutation.type !== "childList") {
+            continue;
+        }
 
         childListCount += 1;
         addedNodeCount += mutation.addedNodes.length;
@@ -101,6 +109,13 @@ function summarizeMutations(mutations, container) {
     };
 }
 
+/**
+ * Main MutationObserver handler.
+ *
+ * Mutations caused by our own DOM writes are ignored via state.isApplyingDomChanges.
+ * External ChatGPT mutations that add/remove turns either bootstrap the first
+ * prune or schedule the normal auto-prune pass.
+ */
 export function handleObservedMutations(
     mutations,
     {
@@ -109,7 +124,9 @@ export function handleObservedMutations(
         bootstrapInitialPrune,
     }
 ) {
-    if (state.isApplyingDomChanges) return;
+    if (state.isApplyingDomChanges) {
+        return;
+    }
 
     const container = state.observedContainer;
     let shouldConsiderPrune = false;
@@ -157,11 +174,14 @@ export function disconnectObserver() {
     if (state.observer) {
         state.observer.disconnect();
     }
+
     state.observedContainer = null;
 }
 
 export function attachObserverToContainer(container, deps) {
-    if (!container) return;
+    if (!container) {
+        return;
+    }
 
     if (!state.observer) {
         state.observer = new MutationObserver((mutations) =>
@@ -181,12 +201,17 @@ export function attachObserverToContainer(container, deps) {
     });
 
     state.observedContainer = container;
-    debugLog("[Thread Optimizer] Auto-prune observer attached to conversation container");
+
+    debugLog(
+        "[Thread Optimizer] Auto-prune observer attached to conversation container"
+    );
 }
 
 export function ensureObserverAttached(deps) {
     const container = getConversationContainer();
-    if (!container) return false;
+    if (!container) {
+        return false;
+    }
 
     attachObserverToContainer(container, deps);
     return true;
@@ -215,12 +240,21 @@ function tryAttachAndRun({ attachObserverToContainer, runInitialPrune }) {
     runInitialPrune(container);
 
     debugLog("Observers: found conversation container during deferred initialization");
+
     return true;
 }
 
-export function waitForContainerAndInitialPrune(
-    { attachObserverToContainer, runInitialPrune }
-) {
+/**
+ * Waits for ChatGPT's conversation container to exist, then attaches the
+ * observer and runs initial prune.
+ *
+ * Uses both a MutationObserver and a polling fallback because ChatGPT can mount
+ * the conversation DOM before or after our content script initializes.
+ */
+export function waitForContainerAndInitialPrune({
+    attachObserverToContainer,
+    runInitialPrune,
+}) {
     if (tryAttachAndRun({ attachObserverToContainer, runInitialPrune })) {
         return;
     }
@@ -251,7 +285,10 @@ export function waitForContainerAndInitialPrune(
 
             if (pollAttempts >= MAX_POLL_ATTEMPTS) {
                 clearInitWaiters();
-                debugLog("Observers: stopped init polling without finding conversation container");
+
+                debugLog(
+                    "Observers: stopped init polling without finding conversation container"
+                );
             }
         }, 250);
 

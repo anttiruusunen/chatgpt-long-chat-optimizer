@@ -4,9 +4,10 @@ import {
 } from "../core/state.js";
 
 const PLACEHOLDER_ID_ATTR = "data-thread-optimizer-code-placeholder-id";
-const PRE_PLACEHOLDER_ID_DATASET_KEY = "threadOptimizerCodePlaceholderId";
 const PLACEHOLDER_HIDDEN_ATTR = "data-thread-optimizer-code-placeholder-hidden";
 const REVEAL_BUTTON_ATTR = "data-thread-optimizer-code-reveal";
+
+const PRE_PLACEHOLDER_ID_DATASET_KEY = "threadOptimizerCodePlaceholderId";
 
 function isCodeBlockPlaceholderElement(element) {
     return (
@@ -38,8 +39,7 @@ export function isLargeCodeBlock(pre) {
         return false;
     }
 
-    const normalizedText = getNormalizedCodeBlockText(pre);
-    return normalizedText.length > 0;
+    return getNormalizedCodeBlockText(pre).length > 0;
 }
 
 export function getPlaceholderId(placeholder) {
@@ -57,8 +57,10 @@ export function ensurePlaceholderId(placeholder) {
     }
 
     const id = String(state.nextDetachedCodeBlockId ?? 1);
+
     state.nextDetachedCodeBlockId = Number(id) + 1;
     placeholder.setAttribute(PLACEHOLDER_ID_ATTR, id);
+
     return id;
 }
 
@@ -92,11 +94,15 @@ export function clearPlaceholderIdForPre(pre) {
 }
 
 export function getPlaceholderById(id) {
-    if (!id) return null;
+    if (!id) {
+        return null;
+    }
 
     const placeholders = document.querySelectorAll(`[${PLACEHOLDER_ID_ATTR}]`);
+
     for (let i = 0; i < placeholders.length; i += 1) {
         const placeholder = placeholders[i];
+
         if (
             placeholder instanceof HTMLElement &&
             placeholder.getAttribute(PLACEHOLDER_ID_ATTR) === String(id)
@@ -123,15 +129,20 @@ export function getRevealButtonForPlaceholder(placeholder) {
     return placeholder.querySelector(`button[${REVEAL_BUTTON_ATTR}="true"]`);
 }
 
+/**
+ * Creates the lightweight UI shown in place of an optimized code block.
+ *
+ * The placeholder keeps scroll layout stable while the heavy <pre> is detached
+ * or hidden, and gives the user a direct way to reveal it.
+ */
 export function createCodeBlockPlaceholder() {
     const placeholder = document.createElement("div");
+
     placeholder.setAttribute(CODE_BLOCK_PLACEHOLDER_ATTR, "true");
     placeholder.setAttribute(PLACEHOLDER_HIDDEN_ATTR, "false");
 
     const label = document.createElement("span");
     label.textContent = "Code block hidden";
-
-    const spacer = document.createTextNode(" ");
 
     const revealButton = document.createElement("button");
     revealButton.type = "button";
@@ -139,10 +150,11 @@ export function createCodeBlockPlaceholder() {
     revealButton.textContent = "Show code block";
 
     placeholder.appendChild(label);
-    placeholder.appendChild(spacer);
+    placeholder.appendChild(document.createTextNode(" "));
     placeholder.appendChild(revealButton);
 
     ensurePlaceholderId(placeholder);
+
     return placeholder;
 }
 
@@ -161,6 +173,7 @@ export function updatePlaceholderLabel(placeholder) {
     }
 
     const button = getRevealButtonForPlaceholder(placeholder);
+
     if (button && button.textContent !== "Show code block") {
         button.textContent = "Show code block";
     }
@@ -172,6 +185,7 @@ export function setPlaceholderVisibility(placeholder, visible) {
     }
 
     const isVisible = Boolean(visible);
+
     placeholder.hidden = !isVisible;
     placeholder.setAttribute(
         PLACEHOLDER_HIDDEN_ATTR,
@@ -190,6 +204,12 @@ export function isPlaceholderHidden(placeholder) {
     );
 }
 
+/**
+ * Ensures a code block has exactly one connected placeholder.
+ *
+ * The id link between <pre> and placeholder lets us survive DOM reshuffles and
+ * repeated refresh passes without creating duplicate placeholders.
+ */
 export function ensurePlaceholderForPre(pre) {
     if (!(pre instanceof HTMLPreElement)) {
         return null;
@@ -198,7 +218,10 @@ export function ensurePlaceholderForPre(pre) {
     const existingId = getPlaceholderIdForPre(pre);
     const existingPlaceholder = getPlaceholderById(existingId);
 
-    if (existingPlaceholder instanceof HTMLElement && existingPlaceholder.isConnected) {
+    if (
+        existingPlaceholder instanceof HTMLElement &&
+        existingPlaceholder.isConnected
+    ) {
         setPlaceholderVisibility(existingPlaceholder, true);
         return existingPlaceholder;
     }

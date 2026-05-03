@@ -18,6 +18,42 @@ function postToPageBridge(type, payload = {}) {
     });
 }
 
+function applySettingsFromMessage(message) {
+    state.settings.historyKeptExchanges = Math.max(
+        1,
+        Number(message.historyKeptExchanges) ||
+            state.settings.historyKeptExchanges
+    );
+
+    state.settings.autoPrune = Boolean(message.autoPrune);
+    state.settings.enablePruning = Boolean(message.enablePruning);
+    state.settings.enableOffscreenOptimization = Boolean(
+        message.enableOffscreenOptimization
+    );
+    state.settings.enableLargeCodeBlockOptimization = Boolean(
+        message.enableLargeCodeBlockOptimization
+    );
+    state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
+    state.settings.enableStoreReadOptimization = Boolean(
+        message.enableStoreReadOptimization
+    );
+    state.settings.enableCodeBlockScrollbars = Boolean(
+        message.enableCodeBlockScrollbars
+    );
+    state.settings.enableUserMessageClamp = Boolean(
+        message.enableUserMessageClamp
+    );
+    state.settings.enableCodeBlockCollapse = Boolean(
+        message.enableCodeBlockCollapse
+    );
+}
+
+/**
+ * Runtime messages are the popup/debug control plane.
+ *
+ * Most feature toggles also flow through storage.onChanged in index.js, but
+ * popup-driven updates use this path so the active tab can react immediately.
+ */
 export function registerRuntimeMessageHandlers({
     pruneOldSections,
     restoreAllSections,
@@ -33,11 +69,16 @@ export function registerRuntimeMessageHandlers({
             if (message.action === "prune-now") {
                 const historyKeptExchanges = Math.max(
                     1,
-                    Number(message.historyKeptExchanges) || state.settings.historyKeptExchanges
+                    Number(message.historyKeptExchanges) ||
+                        state.settings.historyKeptExchanges
                 );
 
                 state.settings.historyKeptExchanges = historyKeptExchanges;
-                pruneOldSections(historyKeptExchanges, { showPlaceholder: true });
+
+                pruneOldSections(historyKeptExchanges, {
+                    showPlaceholder: true,
+                });
+
                 state.didInitialPrune = true;
 
                 debugLog("Messages: handled prune-now", {
@@ -50,45 +91,26 @@ export function registerRuntimeMessageHandlers({
 
             if (message.action === "restore-all") {
                 restoreAllSections();
+
                 debugLog("Messages: handled restore-all");
+
                 sendResponse({ ok: true });
                 return true;
             }
 
             if (message.action === "settings-updated") {
-                const prevPruning = state.featureFlags.pruning;
-                const prevAutoPrune = state.settings.autoPrune;
-                const previousOffscreenEnabled = state.featureFlags.offscreenOptimization;
+                const previousOffscreenEnabled =
+                    state.featureFlags.offscreenOptimization;
 
-                state.settings.historyKeptExchanges = Math.max(
-                    1,
-                    Number(message.historyKeptExchanges) || state.settings.historyKeptExchanges
-                );
-                state.settings.autoPrune = Boolean(message.autoPrune);
-
-                state.settings.enablePruning = Boolean(message.enablePruning);
-                state.settings.enableOffscreenOptimization = Boolean(message.enableOffscreenOptimization);
-                state.settings.enableLargeCodeBlockOptimization = Boolean(message.enableLargeCodeBlockOptimization);
-                state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
-                state.settings.enableStoreReadOptimization = Boolean(message.enableStoreReadOptimization);
-                state.settings.enableCodeBlockScrollbars = Boolean(message.enableCodeBlockScrollbars);
-                state.settings.enableUserMessageClamp = Boolean(message.enableUserMessageClamp);
-                state.settings.enableCodeBlockCollapse = Boolean(message.enableCodeBlockCollapse);
+                applySettingsFromMessage(message);
 
                 syncCodeBlockScrollbarStyles();
                 syncUserMessageClampStyles();
 
                 state.debugLoggingEnabled = state.settings.enableDebugLogging;
 
-                // ✅ CRITICAL: sync feature flags properly
+                // Keep featureFlags as the canonical runtime view of settings.
                 syncFeatureFlagsFromSettings();
-
-                const nextPruning = state.featureFlags.pruning;
-                const nextAutoPrune = state.settings.autoPrune;
-
-                const pruningJustEnabled =
-                    (!prevPruning && nextPruning) ||
-                    (!prevAutoPrune && nextAutoPrune);
 
                 postToPageBridge("thread-optimizer:set-store-read-optimization", {
                     enabled: state.featureFlags.storeReadOptimization,
@@ -97,14 +119,21 @@ export function registerRuntimeMessageHandlers({
 
                 applySoftPrunedLimitToCurrentState();
 
-                if (previousOffscreenEnabled !== state.featureFlags.offscreenOptimization) {
-                    setOffscreenOptimizationEnabled(state.featureFlags.offscreenOptimization);
+                if (
+                    previousOffscreenEnabled !==
+                    state.featureFlags.offscreenOptimization
+                ) {
+                    setOffscreenOptimizationEnabled(
+                        state.featureFlags.offscreenOptimization
+                    );
                 } else if (state.featureFlags.offscreenOptimization) {
                     refreshObservedSections();
                 }
 
                 if (state.settings.autoPrune && state.featureFlags.pruning) {
                     if (!state.didInitialPrune) {
+                        // Runtime enable can happen after the DOM is already mounted,
+                        // so prune directly instead of waiting for startup observers.
                         pruneOldSections(
                             state.settings.historyKeptExchanges,
                             { showPlaceholder: true }
@@ -143,22 +172,32 @@ export function registerRuntimeMessageHandlers({
             }
 
             if (message.action === "debug-log-state") {
-                const payload = globalThis.__THREAD_OPTIMIZER_DEBUG__?.getState?.() ?? null;
+                const payload =
+                    globalThis.__THREAD_OPTIMIZER_DEBUG__?.getState?.() ?? null;
+
                 console.log("[Thread Optimizer Debug] State", payload);
+
                 sendResponse({ ok: true });
                 return true;
             }
 
             if (message.action === "debug-log-buckets") {
-                const payload = globalThis.__THREAD_OPTIMIZER_DEBUG__?.getBuckets?.() ?? null;
+                const payload =
+                    globalThis.__THREAD_OPTIMIZER_DEBUG__?.getBuckets?.() ?? null;
+
                 console.log("[Thread Optimizer Debug] Buckets", payload);
+
                 sendResponse({ ok: true });
                 return true;
             }
 
             if (message.action === "debug-log-logical") {
-                const payload = globalThis.__THREAD_OPTIMIZER_DEBUG__?.getLogicalSections?.() ?? null;
+                const payload =
+                    globalThis.__THREAD_OPTIMIZER_DEBUG__?.getLogicalSections?.() ??
+                    null;
+
                 console.log("[Thread Optimizer Debug] Logical sections", payload);
+
                 sendResponse({ ok: true });
                 return true;
             }

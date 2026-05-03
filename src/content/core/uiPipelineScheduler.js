@@ -15,6 +15,12 @@ export function registerUiPipelineTask(name, task) {
     registeredTasks.set(name, task);
 }
 
+/**
+ * Schedules a named UI task to run in the next DOM write batch.
+ *
+ * Multiple requests for the same task are coalesced, while reasons are retained
+ * for debug logs so we can understand what triggered the batch.
+ */
 export function scheduleUiPipelineTask(name, reason = "unknown") {
     if (!registeredTasks.has(name)) {
         debugLog("UI pipeline: skipped unknown task", {
@@ -45,6 +51,12 @@ export function scheduleUiPipelineTask(name, reason = "unknown") {
     });
 }
 
+/**
+ * Flushes all pending UI pipeline tasks.
+ *
+ * This is intentionally task-level coalescing rather than callback-level
+ * queuing: each subsystem gets one chance to reconcile its current state.
+ */
 export function flushUiPipelineTasks() {
     if (pendingTaskNames.size === 0) {
         isUiPipelineScheduled = false;
@@ -68,10 +80,7 @@ export function flushUiPipelineTasks() {
             continue;
         }
 
-        task({
-            reasons,
-        });
-
+        task({ reasons });
         flushedCount += 1;
     }
 

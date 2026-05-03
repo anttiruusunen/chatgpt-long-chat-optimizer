@@ -1,8 +1,19 @@
 import { state } from "./state.js";
 import { postThreadOptimizerBridgeMessage } from "../bridge/chatStoreBridgeClient.js";
 
+const BRIDGE_SYNC_RETRY_DELAY_MS = 200;
+const STORE_READ_OPTIMIZATION_MAX_SYNC_MS = 5000;
+
+/**
+ * Sends current pruning state to the page bridge once it is installed.
+ *
+ * The page bridge loads asynchronously because it must run in page context,
+ * so startup sync uses a short retry loop.
+ */
 export function syncPruningStateToPageBridge(retries = 10) {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") {
+        return;
+    }
 
     const bridge = window.__threadOptimizerChatStoreBridge;
 
@@ -14,22 +25,32 @@ export function syncPruningStateToPageBridge(retries = 10) {
                 ? state.hiddenCount || 0
                 : 0,
         });
+
         return;
     }
 
     if (retries > 0) {
         setTimeout(() => {
             syncPruningStateToPageBridge(retries - 1);
-        }, 200);
+        }, BRIDGE_SYNC_RETRY_DELAY_MS);
     }
 }
 
-export function syncStoreReadOptimizationToPageWithRetry(retries = 10, totalTime = 0) {
-    if (typeof window === "undefined") return;
+/**
+ * Sends store-read optimization settings to the page bridge.
+ *
+ * This uses a time cap rather than retry count alone so a missing/failed page
+ * bridge cannot retry indefinitely.
+ */
+export function syncStoreReadOptimizationToPageWithRetry(
+    retries = 10,
+    totalTimeMs = 0
+) {
+    if (typeof window === "undefined") {
+        return;
+    }
 
     const bridge = window.__threadOptimizerChatStoreBridge;
-    const RETRY_DELAY = 200;
-    const MAX_TOTAL_TIME = 5000; // 5 seconds cap
 
     if (bridge?.__installed) {
         postThreadOptimizerBridgeMessage({
@@ -37,12 +58,19 @@ export function syncStoreReadOptimizationToPageWithRetry(retries = 10, totalTime
             enabled: state.featureFlags.storeReadOptimization,
             debug: state.debugLoggingEnabled,
         });
+
         return;
     }
 
-    if (retries > 0 && totalTime < MAX_TOTAL_TIME) {
+    if (
+        retries > 0 &&
+        totalTimeMs < STORE_READ_OPTIMIZATION_MAX_SYNC_MS
+    ) {
         setTimeout(() => {
-            syncStoreReadOptimizationToPageWithRetry(retries - 1, totalTime + RETRY_DELAY);
-        }, RETRY_DELAY);
+            syncStoreReadOptimizationToPageWithRetry(
+                retries - 1,
+                totalTimeMs + BRIDGE_SYNC_RETRY_DELAY_MS
+            );
+        }, BRIDGE_SYNC_RETRY_DELAY_MS);
     }
 }
