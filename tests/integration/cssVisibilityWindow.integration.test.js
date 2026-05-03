@@ -158,11 +158,15 @@ function buildConversation() {
 }
 
 async function flush() {
-    await Promise.resolve();
-    await Promise.resolve();
-    vi.advanceTimersByTime(0);
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+
+        if (vi.getTimerCount() > 0) {
+            vi.runOnlyPendingTimers();
+        }
+
+        await Promise.resolve();
+    }
 }
 
 describe("cssVisibilityWindow integration", () => {
@@ -198,9 +202,12 @@ describe("cssVisibilityWindow integration", () => {
     });
 
     afterEach(() => {
+        vi.clearAllTimers();
         vi.useRealTimers();
+
         globalThis.requestAnimationFrame = originalRAF;
         globalThis.cancelAnimationFrame = originalCAF;
+
         document.body.innerHTML = "";
         document.head.innerHTML = "";
     });
@@ -210,11 +217,6 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-
-        await flush();
-        vi.advanceTimersByTime(0);
-        await flush();
-        vi.advanceTimersByTime(0);
         await flush();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;

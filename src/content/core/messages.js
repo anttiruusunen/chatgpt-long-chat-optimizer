@@ -7,6 +7,12 @@ import {
 } from "../ui/qolStyles.js";
 import { postThreadOptimizerBridgeMessage } from "../bridge/chatStoreBridgeClient.js";
 
+function getBooleanMessageSetting(message, key, fallback) {
+    return Object.prototype.hasOwnProperty.call(message, key)
+        ? Boolean(message[key])
+        : fallback;
+}
+
 function getHiddenExchangesCount() {
     return Math.floor((Number(state.hiddenCount) || 0) / 2);
 }
@@ -19,32 +25,65 @@ function postToPageBridge(type, payload = {}) {
 }
 
 function applySettingsFromMessage(message) {
-    state.settings.historyKeptExchanges = Math.max(
-        1,
-        Number(message.historyKeptExchanges) ||
-            state.settings.historyKeptExchanges
+    if (Object.prototype.hasOwnProperty.call(message, "historyKeptExchanges")) {
+        state.settings.historyKeptExchanges = Math.max(
+            1,
+            Number(message.historyKeptExchanges) || state.settings.historyKeptExchanges
+        );
+    }
+
+    state.settings.autoPrune = getBooleanMessageSetting(
+        message,
+        "autoPrune",
+        state.settings.autoPrune
     );
 
-    state.settings.autoPrune = Boolean(message.autoPrune);
-    state.settings.enablePruning = Boolean(message.enablePruning);
-    state.settings.enableOffscreenOptimization = Boolean(
-        message.enableOffscreenOptimization
+    state.settings.enablePruning = getBooleanMessageSetting(
+        message,
+        "enablePruning",
+        state.settings.enablePruning
     );
-    state.settings.enableLargeCodeBlockOptimization = Boolean(
-        message.enableLargeCodeBlockOptimization
+
+    state.settings.enableOffscreenOptimization = getBooleanMessageSetting(
+        message,
+        "enableOffscreenOptimization",
+        state.settings.enableOffscreenOptimization
     );
-    state.settings.enableDebugLogging = Boolean(message.enableDebugLogging);
-    state.settings.enableStoreReadOptimization = Boolean(
-        message.enableStoreReadOptimization
+
+    state.settings.enableLargeCodeBlockOptimization = getBooleanMessageSetting(
+        message,
+        "enableLargeCodeBlockOptimization",
+        state.settings.enableLargeCodeBlockOptimization
     );
-    state.settings.enableCodeBlockScrollbars = Boolean(
-        message.enableCodeBlockScrollbars
+
+    state.settings.enableDebugLogging = getBooleanMessageSetting(
+        message,
+        "enableDebugLogging",
+        state.settings.enableDebugLogging
     );
-    state.settings.enableUserMessageClamp = Boolean(
-        message.enableUserMessageClamp
+
+    state.settings.enableStoreReadOptimization = getBooleanMessageSetting(
+        message,
+        "enableStoreReadOptimization",
+        state.settings.enableStoreReadOptimization
     );
-    state.settings.enableCodeBlockCollapse = Boolean(
-        message.enableCodeBlockCollapse
+
+    state.settings.enableCodeBlockScrollbars = getBooleanMessageSetting(
+        message,
+        "enableCodeBlockScrollbars",
+        state.settings.enableCodeBlockScrollbars
+    );
+
+    state.settings.enableUserMessageClamp = getBooleanMessageSetting(
+        message,
+        "enableUserMessageClamp",
+        state.settings.enableUserMessageClamp
+    );
+
+    state.settings.enableCodeBlockCollapse = getBooleanMessageSetting(
+        message,
+        "enableCodeBlockCollapse",
+        state.settings.enableCodeBlockCollapse
     );
 }
 

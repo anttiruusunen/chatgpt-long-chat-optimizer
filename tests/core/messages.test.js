@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { state, DEFAULT_SETTINGS } from "../../src/content/core/state.js";
+import { ext } from "../../src/shared/ext.js";
 
 const mockRefs = vi.hoisted(() => ({
     runtimeListener: null,
@@ -313,5 +315,96 @@ describe("core/messages", () => {
         } finally {
             errorSpy.mockRestore();
         }
+    });
+
+    it("settings-updated preserves existing settings when optional keys are omitted", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state, DEFAULT_SETTINGS } = stateModule;
+        const { registerRuntimeMessageHandlers } = messagesModule;
+
+        state.settings = {
+            ...DEFAULT_SETTINGS,
+            enablePruning: true,
+            enableOffscreenOptimization: true,
+            enableLargeCodeBlockOptimization: true,
+            enableDebugLogging: true,
+            enableStoreReadOptimization: true,
+            enableCodeBlockScrollbars: true,
+            enableUserMessageClamp: true,
+            enableCodeBlockCollapse: true,
+            autoPrune: true,
+            historyKeptExchanges: 10,
+        };
+
+        state.featureFlags = {
+            pruning: true,
+            offscreenOptimization: true,
+            largeCodeBlockOptimization: true,
+            storeReadOptimization: true,
+            codeBlockScrollbars: true,
+            userMessageClamp: true,
+            codeBlockCollapse: true,
+        };
+
+        const syncFeatureFlagsFromSettings = vi.fn(() => {
+            state.featureFlags.pruning = Boolean(state.settings.enablePruning);
+            state.featureFlags.offscreenOptimization = Boolean(
+                state.settings.enableOffscreenOptimization
+            );
+            state.featureFlags.largeCodeBlockOptimization = Boolean(
+                state.settings.enableLargeCodeBlockOptimization
+            );
+            state.featureFlags.storeReadOptimization = Boolean(
+                state.settings.enableStoreReadOptimization
+            );
+            state.featureFlags.codeBlockScrollbars = Boolean(
+                state.settings.enableCodeBlockScrollbars
+            );
+            state.featureFlags.userMessageClamp = Boolean(
+                state.settings.enableUserMessageClamp
+            );
+            state.featureFlags.codeBlockCollapse = Boolean(
+                state.settings.enableCodeBlockCollapse
+            );
+        });
+
+        registerRuntimeMessageHandlers({
+            pruneOldSections: vi.fn(),
+            restoreAllSections: vi.fn(),
+            scheduleAutoPrune: vi.fn(),
+            waitForContainerAndInitialPrune: vi.fn(),
+            refreshObservedSections: vi.fn(),
+            applySoftPrunedLimitToCurrentState: vi.fn(),
+            setOffscreenOptimizationEnabled: vi.fn(),
+            syncFeatureFlagsFromSettings,
+        });
+
+        const listener = mockRefs.runtimeListener;
+        expect(listener).toBeDefined();
+
+        const sendResponse = vi.fn();
+
+        listener(
+            {
+                action: "settings-updated",
+                historyKeptExchanges: 5,
+                autoPrune: true,
+                enablePruning: true,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(state.settings.historyKeptExchanges).toBe(5);
+        expect(state.settings.autoPrune).toBe(true);
+        expect(state.settings.enablePruning).toBe(true);
+        expect(state.settings.enableOffscreenOptimization).toBe(true);
+        expect(state.settings.enableLargeCodeBlockOptimization).toBe(true);
+        expect(state.settings.enableDebugLogging).toBe(true);
+        expect(state.settings.enableStoreReadOptimization).toBe(true);
+        expect(state.settings.enableCodeBlockScrollbars).toBe(true);
+        expect(state.settings.enableUserMessageClamp).toBe(true);
+        expect(state.settings.enableCodeBlockCollapse).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 });
