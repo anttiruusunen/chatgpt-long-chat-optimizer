@@ -267,6 +267,44 @@
         stats.lastClearReason = null;
     }
 
+    function installStoreMethodWrapper({
+        bridge,
+        methodName,
+        originalSlot,
+        installedFlag,
+        unavailableReason = `${methodName} unavailable`,
+        createWrapper,
+    }) {
+        const store = requireStore(bridge);
+        if (!store) return unavailable("store not registered");
+
+        if (bridge[installedFlag]) {
+            return alreadyInstalled();
+        }
+
+        const original = getStoreMethod(store, methodName);
+        if (!original) return unavailable(unavailableReason);
+
+        bridge[originalSlot] = {
+            ...(bridge[originalSlot] || {}),
+            [methodName]: original,
+        };
+
+        store[methodName] = createWrapper({
+            store,
+            original,
+            bridge,
+        });
+
+        bridge[installedFlag] = true;
+
+        return {
+            ok: true,
+            installed: true,
+            methods: [methodName],
+        };
+    }
+
     function uninstallMethodFrameCache({
         bridge,
         originalSlot,
@@ -2783,9 +2821,6 @@
                 };
             }
 
-            const original = getStoreMethod(store, "getLeafFromNode");
-            if (!original) return unavailable("getLeafFromNode unavailable");
-
             const stats = profiled
                 ? {
                     hits: 0,
@@ -2811,44 +2846,46 @@
 
             this.__getLeafFromNodeFrameCache = frameCache.cache;
             this.__getLeafFromNodeFrameCacheStats = stats;
-            this.__getLeafFromNodeFrameCacheOriginal = { getLeafFromNode: original };
 
             const get = frameCache.get;
             const set = frameCache.set;
 
-            store.getLeafFromNode = function cachedGetLeafFromNode(id) {
-                const key =
-                    typeof id === "string" ||
-                    typeof id === "number" ||
-                    typeof id === "boolean" ||
-                    id == null
-                        ? id
-                        : id.id ?? id.nodeId ?? id.message?.id ?? id;
+            const result = installStoreMethodWrapper({
+                bridge: this,
+                methodName: "getLeafFromNode",
+                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
+                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
+                createWrapper: ({ store, original }) => function cachedGetLeafFromNode(id) {
+                    const key =
+                        typeof id === "string" ||
+                        typeof id === "number" ||
+                        typeof id === "boolean" ||
+                        id == null
+                            ? id
+                            : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
-                const cached = get(key);
-                if (cached !== undefined) return cached;
+                    const cached = get(key);
+                    if (cached !== undefined) return cached;
 
-                const result = original.call(store, id);
-                const leafId = typeof result === "string" ? result : result?.id ?? null;
+                    const leaf = original.call(store, id);
+                    const leafId = typeof leaf === "string" ? leaf : leaf?.id ?? null;
 
-                set(key, result ?? null);
+                    set(key, leaf ?? null);
 
-                if (leafId && leafId !== key) {
-                    set(leafId, result ?? null);
-                }
+                    if (leafId && leafId !== key) {
+                        set(leafId, leaf ?? null);
+                    }
 
-                return result ?? null;
-            };
-
-            this.__getLeafFromNodeFrameCacheInstalled = true;
+                    return leaf ?? null;
+                },
+            });
 
             return {
-                ok: true,
-                installed: true,
-                methods: ["getLeafFromNode"],
+                ...result,
                 profiled,
             };
         },
+
         uninstallGetLeafFromNodeFrameCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
