@@ -1959,15 +1959,44 @@
 
         installLiveGetNodeIfExistsWrapper(original, cacheApi) {
             const store = this.__store;
+            const bridgeRef = this;
             const get = cacheApi.get;
             const set = cacheApi.set;
+            const getCurrentLeafId = createCurrentLeafIdReader(store);
+
+            let activeFrame = -1;
+            let activeId = null;
+            let activeValue = null;
 
             this.__store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
+                const currentLeafId = getCurrentLeafId();
+
+                // Active streaming leaf: cache only inside the current rAF frame.
+                if (id === currentLeafId) {
+                    const frame = bridgeRef.__displayTurnsRafFrame || 0;
+
+                    if (
+                        activeFrame === frame &&
+                        activeId === id
+                    ) {
+                        return activeValue;
+                    }
+
+                    const result = original.call(store, id) ?? null;
+
+                    activeFrame = frame;
+                    activeId = id;
+                    activeValue = result;
+
+                    return result;
+                }
+
                 const cached = get(id);
                 if (cached !== undefined) return cached;
 
                 const result = original.call(store, id);
-                if (result && result.message.status !== "in_progress") {
+
+                if (result && result.message?.status !== "in_progress") {
                     set(id, result);
                 }
 
