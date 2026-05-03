@@ -59,9 +59,9 @@
 
         flags: {
             debug: false,
+            cacheProfiling: false,
             storeProfiler: false,
             branchCallSites: false,
-            cacheProfiling: false,
             nodeCallSites: false,
         },
     };
@@ -2802,13 +2802,16 @@
                     cached: 0,
                     evictions: 0,
                     frameClears: 0,
+                    skippedClears: 0,
+                    activeLeafRafHits: 0,
+                    activeLeafRafMisses: 0,
                     maxSize,
-                    mode: "profiled:persistent",
+                    mode: "profiled:persistent+active-leaf-raf-node",
                     lastClearReason: null,
                 }
                 : {
                     maxSize,
-                    mode: "production:persistent",
+                    mode: "production:persistent+active-leaf-raf-node",
                     lastClearReason: null,
                 };
 
@@ -2820,6 +2823,12 @@
 
             this.__getLeafFromNodeFrameCache = frameCache.cache;
             this.__getLeafFromNodeFrameCacheStats = stats;
+
+            const bridgeRef = this;
+
+            let activeLeafFrame = -1;
+            let activeLeafKey = null;
+            let activeLeafValue = null;
 
             const result = installStoreMethodWrapper({
                 bridge: this,
@@ -2839,19 +2848,50 @@
                                 ? id
                                 : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
+                        const currentLeafId =
+                            typeof store.currentLeafId === "function"
+                                ? store.currentLeafId()
+                                : store.currentLeafId;
+
+                        if (key === currentLeafId) {
+                            const frame =
+                                bridgeRef.__displayTurnsRafFrame ||
+                                bridgeRef.__liveNodeReadFrame ||
+                                0;
+
+                            if (
+                                activeLeafFrame === frame &&
+                                activeLeafKey === key &&
+                                activeLeafValue !== null
+                            ) {
+                                if (stats) stats.activeLeafRafHits += 1;
+                                return activeLeafValue;
+                            }
+
+                            const result = original.call(store, id) ?? null;
+
+                            activeLeafFrame = frame;
+                            activeLeafKey = key;
+                            activeLeafValue = result;
+
+                            if (stats) stats.activeLeafRafMisses += 1;
+
+                            return result;
+                        }
+
                         const cached = get(key);
                         if (cached !== undefined) return cached;
 
-                        const result = original.call(store, id);
-                        const leafId = typeof result === "string" ? result : result?.id ?? null;
+                        const result = original.call(store, id) ?? null;
 
-                        set(key, result ?? null);
+                        set(key, result);
 
+                        const leafId = result?.id ?? null;
                         if (leafId && leafId !== key) {
-                            set(leafId, result ?? null);
+                            set(leafId, result);
                         }
 
-                        return result ?? null;
+                        return result;
                     };
                 },
             });
