@@ -2848,36 +2848,38 @@
             this.__getLeafFromNodeFrameCache = frameCache.cache;
             this.__getLeafFromNodeFrameCacheStats = stats;
 
-            const get = frameCache.get;
-            const set = frameCache.set;
-
             const result = installStoreMethodWrapper({
                 bridge: this,
                 methodName: "getLeafFromNode",
                 originalSlot: "__getLeafFromNodeFrameCacheOriginal",
                 installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-                createWrapper: ({ store, original }) => function cachedGetLeafFromNode(id) {
-                    const key =
-                        typeof id === "string" ||
-                        typeof id === "number" ||
-                        typeof id === "boolean" ||
-                        id == null
-                            ? id
-                            : id.id ?? id.nodeId ?? id.message?.id ?? id;
+                createWrapper: ({ store, original }) => {
+                    const get = frameCache.get;
+                    const set = frameCache.set;
 
-                    const cached = get(key);
-                    if (cached !== undefined) return cached;
+                    return function cachedGetLeafFromNode(id) {
+                        const key =
+                            typeof id === "string" ||
+                            typeof id === "number" ||
+                            typeof id === "boolean" ||
+                            id == null
+                                ? id
+                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
-                    const leaf = original.call(store, id);
-                    const leafId = typeof leaf === "string" ? leaf : leaf?.id ?? null;
+                        const cached = get(key);
+                        if (cached !== undefined) return cached;
 
-                    set(key, leaf ?? null);
+                        const result = original.call(store, id);
+                        const leafId = typeof result === "string" ? result : result?.id ?? null;
 
-                    if (leafId && leafId !== key) {
-                        set(leafId, leaf ?? null);
-                    }
+                        set(key, result ?? null);
 
-                    return leaf ?? null;
+                        if (leafId && leafId !== key) {
+                            set(leafId, result ?? null);
+                        }
+
+                        return result ?? null;
+                    };
                 },
             });
 
