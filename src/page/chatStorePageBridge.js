@@ -38,15 +38,34 @@
 
     installBridgeSafely();
 
-    const BRIDGE_VERSION = 8;
+    const CONFIG = {
+        bridgeVersion: 8,
 
-    const MAX_FIBERS = 4000;
-    const MAX_OBJECTS = 15000;
-    const DISCOVERY_RETRY_MS = 1200;
-    const MAX_DISCOVERY_RUNS = 30;
-    const DEFAULT_CACHE_MAX_SIZE = 5000;
-    const PROMOTION_INTERVAL_MS = 10000;
-    const PROMOTION_INITIAL_DELAY_MS = 8000;
+        discovery: {
+            maxFibers: 4000,
+            maxObjects: 15000,
+            retryMs: 1200,
+            maxRuns: 30,
+        },
+
+        cache: {
+            defaultMaxSize: 5000,
+            findNodeFromLeafMaxSize: 10000,
+        },
+
+        promotion: {
+            intervalMs: 10000,
+            initialDelayMs: 8000,
+        },
+
+        flags: {
+            debug: false,
+            storeProfiler: false,
+            branchCallSites: false,
+            cacheProfiling: false,
+            nodeCallSites: false,
+        },
+    };
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
@@ -89,11 +108,11 @@
         return;
     }
 
-    const ENABLE_DEBUG = false;
-    const ENABLE_STORE_PROFILER = ENABLE_DEBUG;
-    const ENABLE_BRANCH_CALLSITE_STATS = ENABLE_DEBUG;
-    const ENABLE_CACHE_PROFILING = ENABLE_DEBUG;
-    const ENABLE_NODE_CALLSITE_STATS = ENABLE_DEBUG;
+    const ENABLE_DEBUG = CONFIG.flags.debug;
+    const ENABLE_STORE_PROFILER = CONFIG.flags.storeProfiler || ENABLE_DEBUG;
+    const ENABLE_BRANCH_CALLSITE_STATS = CONFIG.flags.branchCallSites || ENABLE_DEBUG;
+    const ENABLE_CACHE_PROFILING = CONFIG.flags.cacheProfiling || ENABLE_DEBUG;
+    const ENABLE_NODE_CALLSITE_STATS = CONFIG.flags.nodeCallSites || ENABLE_DEBUG;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -208,6 +227,14 @@
         ["__getDisplayTurnsCache", "__getDisplayTurnsCacheStats"],
     ];
 
+    function getCacheSnapshot(bridge, installedFlag, cacheSlot, statsSlot) {
+        return {
+            installed: Boolean(bridge[installedFlag]),
+            size: bridge[cacheSlot]?.size ?? 0,
+            stats: bridge[statsSlot] ?? null,
+        };
+    }
+
     function resetFrameCacheStats(stats, cache) {
         if (!stats) return;
 
@@ -243,6 +270,12 @@
         bridge[originalSlot] = null;
 
         return { ok: true, uninstalled: true };
+    }
+
+    function clearBridgeSlots(bridge, slots) {
+        for (let i = 0; i < slots.length; i += 1) {
+            bridge[slots[i]] = null;
+        }
     }
 
     function isObjectLike(value) {
@@ -855,7 +888,7 @@
 
     const bridge = {
         __installed: true,
-        __version: BRIDGE_VERSION,
+        __version: CONFIG.bridgeVersion,
 
         __store: null,
         __registeredAt: null,
@@ -998,63 +1031,87 @@
 
         resetInstalledStoreEnhancements() {
             this.__storeProfilerInstalled = false;
-            this.__storeProfilerOriginals = null;
-            this.__storeProfile = null;
+            clearBridgeSlots(this, [
+                "__storeProfilerOriginals",
+                "__storeProfile",
+            ]);
 
             this.__messageIdIndexInstalled = false;
-            this.__messageIdIndexOriginal = null;
-            this.__messageIdIndex = null;
+            clearBridgeSlots(this, [
+                "__messageIdIndexOriginal",
+                "__messageIdIndex",
+            ]);
 
             this.__existingNodeFrameCacheInstalled = false;
-            this.__existingNodeFrameCacheOriginal = null;
-            this.__existingNodeFrameCache = null;
-            this.__existingNodeFrameCacheStats = null;
-            this.__existingNodeFrameCacheMode = null;
-            this.__existingNodeFrameCacheApi = null;
+            clearBridgeSlots(this, [
+                "__existingNodeFrameCacheOriginal",
+                "__existingNodeFrameCache",
+                "__existingNodeFrameCacheStats",
+                "__existingNodeFrameCacheMode",
+                "__existingNodeFrameCacheApi",
+            ]);
 
             this.__findNodeFromLeafFrameCacheInstalled = false;
-            this.__findNodeFromLeafFrameCacheOriginal = null;
-            this.__findNodeFromLeafFrameCache = null;
-            this.__findNodeFromLeafFrameCacheStats = null;
-            this.__findNodeFromLeafCacheController = null;
+            clearBridgeSlots(this, [
+                "__findNodeFromLeafFrameCacheOriginal",
+                "__findNodeFromLeafFrameCache",
+                "__findNodeFromLeafFrameCacheStats",
+                "__findNodeFromLeafCacheController",
+            ]);
 
             this.__getLeafFromNodeFrameCacheInstalled = false;
-            this.__getLeafFromNodeFrameCacheOriginal = null;
-            this.__getLeafFromNodeFrameCache = null;
-            this.__getLeafFromNodeFrameCacheStats = null;
+            clearBridgeSlots(this, [
+                "__getLeafFromNodeFrameCacheOriginal",
+                "__getLeafFromNodeFrameCache",
+                "__getLeafFromNodeFrameCacheStats",
+            ]);
 
             this.__branchCacheInstalled = false;
-            this.__branchCacheOriginals = null;
-            this.__branchCache = null;
-            this.__branchCacheStats = null;
             this.__branchCacheClearScheduled = false;
+            clearBridgeSlots(this, [
+                "__branchCacheOriginals",
+                "__branchCache",
+                "__branchCacheStats",
+            ]);
 
             this.__resolvedNodeFrameCacheInstalled = false;
-            this.__resolvedNodeFrameCache = null;
-            this.__resolvedNodeFrameCacheStats = null;
             this.__resolvedNodeFrameCacheClearScheduled = false;
-            this.__resolveNodeFast = null;
+            clearBridgeSlots(this, [
+                "__resolvedNodeFrameCache",
+                "__resolvedNodeFrameCacheStats",
+                "__resolveNodeFast",
+            ]);
 
             this.__getDisplayTurnsCacheInstalled = false;
-            this.__getDisplayTurnsCache = null;
-            this.__getDisplayTurnsCacheStats = null;
-            this.__getDisplayTurnsCacheOriginal = null;
+            clearBridgeSlots(this, [
+                "__getDisplayTurnsCache",
+                "__getDisplayTurnsCacheStats",
+                "__getDisplayTurnsCacheOriginal",
+            ]);
 
             this.__indexRefreshHooksInstalled = false;
-            this.__indexRefreshHookOriginals = null;
+            clearBridgeSlots(this, [
+                "__indexRefreshHookOriginals",
+            ]);
 
-            this.__nodeIdDirectIndex = null;
-            this.__nodeIdDirectIndexSource = null;
-            this.__confirmedExistingNodeIds = null;
+            clearBridgeSlots(this, [
+                "__nodeIdDirectIndex",
+                "__nodeIdDirectIndexSource",
+                "__confirmedExistingNodeIds",
+            ]);
 
-            this.__liveNodeCacheId = null;
-            this.__liveNodeCacheValue = null;
             this.__liveNodeCacheDirty = true;
+            clearBridgeSlots(this, [
+                "__liveNodeCacheId",
+                "__liveNodeCacheValue",
+            ]);
 
             this.__lastLiveFindFrame = -1;
-            this.__lastLiveFindLeafId = null;
-            this.__lastLiveFindPredicateSource = null;
-            this.__lastLiveFindValue = null;
+            clearBridgeSlots(this, [
+                "__lastLiveFindLeafId",
+                "__lastLiveFindPredicateSource",
+                "__lastLiveFindValue",
+            ]);
         },
 
         registerStore(store, meta = null) {
@@ -1280,8 +1337,8 @@
 
                 const discoveryRun = this.__discoveryRuns;
                 const limits = {
-                    maxFibers: MAX_FIBERS,
-                    maxObjects: MAX_OBJECTS,
+                    maxFibers: CONFIG.discovery.maxFibers,
+                    maxObjects: CONFIG.discovery.maxObjects,
                     maxRoots: 200,
                 };
 
@@ -1371,11 +1428,11 @@
                 const now = Date.now();
 
                 // Give ChatGPT time to hydrate the real conversation store before rescanning.
-                if (performance.now() - this.__initTiming.installedAt < PROMOTION_INITIAL_DELAY_MS) {
+                if (performance.now() - this.__initTiming.installedAt < CONFIG.promotion.initialDelayMs) {
                     return false;
                 }
 
-                if (now - this.__lastPromotionAttemptAt < PROMOTION_INTERVAL_MS) return false;
+                if (now - this.__lastPromotionAttemptAt < CONFIG.promotion.intervalMs) return false;
 
                 this.__lastPromotionAttemptAt = now;
                 this.promoteStoreDiscovery();
@@ -1423,15 +1480,14 @@
                     if (!this.__promotionTimer) {
                         this.__promotionTimer = window.setInterval(() => {
                             this.maybePromoteStore("startup-promotion");
-                        }, PROMOTION_INTERVAL_MS);
+                        }, CONFIG.promotion.intervalMs);
                     }
 
                     return;
                 }
 
-                if (attempts >= MAX_DISCOVERY_RUNS) return;
-
-                window.setTimeout(tick, DISCOVERY_RETRY_MS);
+                if (attempts >= CONFIG.discovery.maxRuns) return;
+                window.setTimeout(tick, CONFIG.discovery.retryMs);
             };
 
             tick();
@@ -2144,7 +2200,7 @@
         },
 
         installExistingNodeFrameCache({
-            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             if (!this.__store) return { ok: false, reason: "store not registered" };
@@ -2270,11 +2326,12 @@
         },
 
         getExistingNodeFrameCacheStats() {
-            return {
-                installed: Boolean(this.__existingNodeFrameCacheInstalled),
-                size: this.__existingNodeFrameCache?.size ?? 0,
-                stats: this.__existingNodeFrameCacheStats ?? null,
-            };
+            return getCacheSnapshot(
+                this,
+                "__existingNodeFrameCacheInstalled",
+                "__existingNodeFrameCache",
+                "__existingNodeFrameCacheStats"
+            );
         },
 
         installFindNodeFromLeafFrameCache({
@@ -2707,15 +2764,16 @@
         },
 
         getFindNodeFromLeafFrameCacheStats() {
-            return {
-                installed: Boolean(this.__findNodeFromLeafFrameCacheInstalled),
-                size: this.__findNodeFromLeafFrameCache?.size ?? 0,
-                stats: this.__findNodeFromLeafFrameCacheStats ?? null,
-            };
+            return getCacheSnapshot(
+                this,
+                "__findNodeFromLeafFrameCacheInstalled",
+                "__findNodeFromLeafFrameCache",
+                "__findNodeFromLeafFrameCacheStats"
+            );
         },
 
         installGetLeafFromNodeFrameCache({
-            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             if (!this.__store) {
@@ -2808,11 +2866,12 @@
         },
 
         getGetLeafFromNodeFrameCacheStats() {
-            return {
-                installed: Boolean(this.__getLeafFromNodeFrameCacheInstalled),
-                size: this.__getLeafFromNodeFrameCache?.size ?? 0,
-                stats: this.__getLeafFromNodeFrameCacheStats ?? null,
-            };
+            return getCacheSnapshot(
+                this,
+                "__getLeafFromNodeFrameCacheInstalled",
+                "__getLeafFromNodeFrameCache",
+                "__getLeafFromNodeFrameCacheStats"
+            );
         },
 
         recordBranchCallSite(methodName, args) {
@@ -2925,7 +2984,7 @@
         },
 
         installBranchCache({
-            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             if (!this.__store) {
@@ -3204,7 +3263,7 @@
         },
 
         installResolvedNodeFrameCache({
-            maxSize = DEFAULT_CACHE_MAX_SIZE,
+            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             if (!this.__store) {
@@ -3391,11 +3450,12 @@
         },
 
         getResolvedNodeFrameCacheStats() {
-            return {
-                installed: Boolean(this.__resolvedNodeFrameCacheInstalled),
-                size: this.__resolvedNodeFrameCache?.size ?? 0,
-                stats: this.__resolvedNodeFrameCacheStats ?? null,
-            };
+            return getCacheSnapshot(
+                this,
+                "__resolvedNodeFrameCacheInstalled",
+                "__resolvedNodeFrameCache",
+                "__resolvedNodeFrameCacheStats"
+            );
         },
 
         installGetDisplayTurnsCache({
