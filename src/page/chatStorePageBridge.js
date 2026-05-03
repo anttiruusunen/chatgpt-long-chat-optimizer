@@ -3526,6 +3526,10 @@
                     tailPatchHits: 0,
                     tailPatchMisses: 0,
                     tailPatchRejected: 0,
+
+                    rafStarts: 0,
+                    rafStops: 0,
+                    rafTicks: 0,
                 }
                 : null;
 
@@ -3542,14 +3546,120 @@
             let liveValue = undefined;
 
             bridgeRef.__displayTurnsRafFrame = 0;
+            bridgeRef.__displayTurnsRafRunning = false;
+            bridgeRef.__displayTurnsRafId = null;
+            bridgeRef.__displayTurnsRafIdleTimer = null;
+            bridgeRef.__displayTurnsRafLastActivityAt = 0;
 
-            function bumpDisplayTurnsRafFrame() {
+            function bumpDisplayTurnsRafFrameProduction() {
+                if (!bridgeRef.__displayTurnsRafRunning) {
+                    bridgeRef.__displayTurnsRafId = null;
+                    return;
+                }
+
                 bridgeRef.__displayTurnsRafFrame =
                     (bridgeRef.__displayTurnsRafFrame + 1) | 0;
-                requestAnimationFrame(bumpDisplayTurnsRafFrame);
+
+                bridgeRef.__displayTurnsRafId =
+                    requestAnimationFrame(bumpDisplayTurnsRafFrameProduction);
             }
 
-            requestAnimationFrame(bumpDisplayTurnsRafFrame);
+            function bumpDisplayTurnsRafFrameProfiled() {
+                if (!bridgeRef.__displayTurnsRafRunning) {
+                    bridgeRef.__displayTurnsRafId = null;
+                    return;
+                }
+
+                bridgeRef.__displayTurnsRafFrame =
+                    (bridgeRef.__displayTurnsRafFrame + 1) | 0;
+
+                stats.rafTicks = (stats.rafTicks + 1) | 0;
+
+                bridgeRef.__displayTurnsRafId =
+                    requestAnimationFrame(bumpDisplayTurnsRafFrameProfiled);
+            }
+
+            const bumpDisplayTurnsRafFrame = profiled
+                ? bumpDisplayTurnsRafFrameProfiled
+                : bumpDisplayTurnsRafFrameProduction;
+
+            function startDisplayTurnsRafFrameClockProduction() {
+                if (bridgeRef.__displayTurnsRafRunning) return;
+
+                bridgeRef.__displayTurnsRafRunning = true;
+                bridgeRef.__displayTurnsRafId =
+                    requestAnimationFrame(bumpDisplayTurnsRafFrame);
+            }
+
+            function startDisplayTurnsRafFrameClockProfiled() {
+                if (bridgeRef.__displayTurnsRafRunning) return;
+
+                bridgeRef.__displayTurnsRafRunning = true;
+                stats.rafStarts += 1;
+
+                bridgeRef.__displayTurnsRafId =
+                    requestAnimationFrame(bumpDisplayTurnsRafFrame);
+            }
+
+            function stopDisplayTurnsRafFrameClockProduction() {
+                if (!bridgeRef.__displayTurnsRafRunning) return;
+
+                bridgeRef.__displayTurnsRafRunning = false;
+
+                const rafId = bridgeRef.__displayTurnsRafId;
+                if (rafId != null) {
+                    cancelAnimationFrame(rafId);
+                    bridgeRef.__displayTurnsRafId = null;
+                }
+            }
+
+            function stopDisplayTurnsRafFrameClockProfiled() {
+                if (!bridgeRef.__displayTurnsRafRunning) return;
+
+                bridgeRef.__displayTurnsRafRunning = false;
+                stats.rafStops += 1;
+
+                const rafId = bridgeRef.__displayTurnsRafId;
+                if (rafId != null) {
+                    cancelAnimationFrame(rafId);
+                    bridgeRef.__displayTurnsRafId = null;
+                }
+            }
+
+            const startDisplayTurnsRafFrameClock = profiled
+                ? startDisplayTurnsRafFrameClockProfiled
+                : startDisplayTurnsRafFrameClockProduction;
+
+            const stopDisplayTurnsRafFrameClock = profiled
+                ? stopDisplayTurnsRafFrameClockProfiled
+                : stopDisplayTurnsRafFrameClockProduction;
+
+            function keepDisplayTurnsRafAlive() {
+                startDisplayTurnsRafFrameClock();
+
+                const now = performance.now();
+                bridgeRef.__displayTurnsRafLastActivityAt = now;
+
+                if (bridgeRef.__displayTurnsRafIdleTimer != null) {
+                    return;
+                }
+
+                bridgeRef.__displayTurnsRafIdleTimer = window.setTimeout(function checkDisplayTurnsRafIdle() {
+                    const elapsed =
+                        performance.now() - (bridgeRef.__displayTurnsRafLastActivityAt || 0);
+
+                    if (elapsed < 250) {
+                        bridgeRef.__displayTurnsRafIdleTimer =
+                            window.setTimeout(checkDisplayTurnsRafIdle, 250);
+                        return;
+                    }
+
+                    bridgeRef.__displayTurnsRafIdleTimer = null;
+                    stopDisplayTurnsRafFrameClock();
+                }, 250);
+            }
+
+            bridgeRef.__stopDisplayTurnsRafFrameClock = stopDisplayTurnsRafFrameClock;
 
             function patchLastTurnWithMessage(templateTurn, freshMessage, leafId) {
                 if (!templateTurn || !freshMessage) return null;
@@ -3608,6 +3718,8 @@
                 const isCurrentLeaf = leafId === currentLeafId;
 
                 if (isCurrentLeaf) {
+                    keepDisplayTurnsRafAlive();
+
                     const frame = bridgeRef.__displayTurnsRafFrame || 0;
 
                     if (
@@ -3723,10 +3835,21 @@
                 tailPatchMisses: stats?.tailPatchMisses ?? 0,
                 tailPatchRejected: stats?.tailPatchRejected ?? 0,
                 lastClearReason: stats?.lastClearReason ?? null,
+                rafStarts: stats?.rafStarts ?? 0,
+                rafStops: stats?.rafStops ?? 0,
+                rafTicks: stats?.rafTicks ?? 0,
+                rafRunning: Boolean(this.__displayTurnsRafRunning),
             };
         },
 
         uninstallGetDisplayTurnsCache() {
+            this.__stopDisplayTurnsRafFrameClock?.();
+
+            if (this.__displayTurnsRafIdleTimer != null) {
+                clearTimeout(this.__displayTurnsRafIdleTimer);
+                this.__displayTurnsRafIdleTimer = null;
+            }
+
             return uninstallMethodFrameCache({
                 bridge: this,
                 originalSlot: "__getDisplayTurnsCacheOriginal",
