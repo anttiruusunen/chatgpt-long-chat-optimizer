@@ -441,4 +441,56 @@ describe("prune bookkeeping", () => {
             pruneOldSections(2, { showPlaceholder: true }, makeDeps())
         ).not.toThrow();
     });
+
+    it("preserves a latest user-only pending turn during initial/reload pruning", async () => {
+        vi.useFakeTimers();
+
+        try {
+            window.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+
+            state.featureFlags.pruning = true;
+            state.settings.autoPrune = true;
+            state.settings.historyKeptExchanges = 1;
+            state.didInitialPrune = false;
+
+            const { conversation } = buildConversation(6);
+
+            const pendingUser = makeSection({
+                turn: "user",
+                testId: "conversation-turn-pending-user",
+                text: "latest user message without assistant yet",
+            });
+
+            conversation.appendChild(pendingUser);
+            resetConversationDomCacheForTests();
+
+            const deps = {
+                ensureObserverAttached: vi.fn(),
+                withDomMutationGuard: (fn) => fn(),
+                refreshObservedSections: vi.fn(),
+            };
+
+            runInitialPrune(
+                conversation,
+                {
+                    pruneOldSections: (historyKeptExchanges, options) =>
+                        pruneOldSections(historyKeptExchanges, options, deps),
+                    refreshObservedSections: deps.refreshObservedSections,
+                    installStartupPruneMask: vi.fn(),
+                    removeStartupPruneMask: vi.fn(),
+                },
+                { useStartupMask: false }
+            );
+
+            await Promise.resolve();
+            vi.advanceTimersByTime(0);
+            await Promise.resolve();
+
+            expect(state.didInitialPrune).toBe(true);
+            expect(pendingUser.isConnected).toBe(true);
+            expect(getConversationSections()).toContain(pendingUser);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

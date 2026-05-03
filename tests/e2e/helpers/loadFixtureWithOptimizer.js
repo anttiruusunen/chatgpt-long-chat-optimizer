@@ -26,7 +26,13 @@ function findBuiltContentScript() {
     );
 }
 
-export async function loadFixtureWithOptimizer(page, { settings = {} } = {}) {
+export async function loadFixtureWithOptimizer(
+    page,
+    {
+        settings = {},
+        beforeOptimizerLoad = null,
+    } = {}
+) {
     await page.goto(fixtureUrl);
 
     await page.addInitScript((injectedSettings) => {
@@ -58,6 +64,10 @@ export async function loadFixtureWithOptimizer(page, { settings = {} } = {}) {
     }, settings);
 
     await page.reload();
+
+    if (typeof beforeOptimizerLoad === "function") {
+        await beforeOptimizerLoad(page);
+    }
 
     const contentScriptPath = findBuiltContentScript();
     const contentScript = fs.readFileSync(contentScriptPath, "utf8");

@@ -52,3 +52,25 @@ test("streaming reload keeps latest assistant visible when it contains a code bl
 
     await expect(fixture.codePlaceholder()).toHaveCount(1);
 });
+
+test("startup prune preserves latest user-only pending turn", async ({ page }) => {
+    const fixture = await loadOptimizerFixture(page, {
+        beforeOptimizerLoad: async (page) => {
+            await page.evaluate(() => {
+                const conversation = document.getElementById("conversation");
+
+                const pendingUser = document.createElement("section");
+                pendingUser.setAttribute("data-turn", "user");
+                pendingUser.setAttribute("data-testid", "conversation-turn-pending-user");
+                pendingUser.textContent = "latest user message without assistant yet";
+
+                conversation.appendChild(pendingUser);
+            });
+        },
+    });
+
+    await expect(fixture.turns()).toHaveCount(2);
+    await expect(
+        page.locator('[data-testid="conversation-turn-pending-user"]')
+    ).toBeVisible();
+});
