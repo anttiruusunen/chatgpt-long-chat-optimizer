@@ -13,7 +13,7 @@
     "build:safari": "node scripts/build.cjs --target=safari",
     "build:safari:debug": "node scripts/build.cjs --target=safari --no-minify",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build:chrome:debug && playwright test",
     "test:watch": "vitest",
     "verify": "npm test && npm run build",
     "verify:debug": "npm test && npm run build:debug",
