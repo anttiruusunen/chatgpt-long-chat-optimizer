@@ -2255,9 +2255,6 @@
                 };
             }
 
-            const original = getStoreMethod(store, "getNodeIfExists");
-            if (!original) return unavailable("getNodeIfExists unavailable");
-
             const stats = profiled
                 ? {
                     hits: 0,
@@ -2295,63 +2292,67 @@
             this.__existingNodeFrameCacheApi = frameCache;
             this.__existingNodeFrameCache = frameCache.cache;
             this.__existingNodeFrameCacheStats = stats;
-            this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
 
-            const directIndex = this.__nodeIdDirectIndex;
-            const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
-
-            if (profiled) {
-                store.getNodeIfExists = function cachedGetNodeIfExistsProfiled(id) {
-                    const cached = frameCache.get(id);
-                    if (cached !== undefined) return cached;
-
-                    const hinted =
-                        directIndex instanceof Map
-                            ? directIndex.get(id)
-                            : undefined;
-
-                    if (
-                        hinted !== undefined &&
-                        confirmedExistingNodeIds.has(id)
-                    ) {
-                        stats.confirmedFastHits += 1;
-                        frameCache.set(id, hinted);
-                        return hinted;
+            const result = installStoreMethodWrapper({
+                bridge: this,
+                methodName: "getNodeIfExists",
+                originalSlot: "__existingNodeFrameCacheOriginal",
+                installedFlag: "__existingNodeFrameCacheInstalled",
+                createWrapper: ({ store, original }) => {
+                    if (!profiled) {
+                        this.prewarmExistingNodeFrameCache?.(frameCache);
+                        this.installLiveGetNodeIfExistsWrapper(original, frameCache);
+                        return store.getNodeIfExists;
                     }
 
-                    const result = original.call(store, id);
+                    const directIndex = this.__nodeIdDirectIndex;
+                    const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
 
-                    if (hinted !== undefined) {
-                        stats.hintHits += 1;
+                    return function cachedGetNodeIfExistsProfiled(id) {
+                        const cached = frameCache.get(id);
+                        if (cached !== undefined) return cached;
 
-                        if (result === hinted) {
-                            stats.hintConfirmed += 1;
-                            confirmedExistingNodeIds.add(id);
+                        const hinted =
+                            directIndex instanceof Map
+                                ? directIndex.get(id)
+                                : undefined;
+
+                        if (
+                            hinted !== undefined &&
+                            confirmedExistingNodeIds.has(id)
+                        ) {
+                            stats.confirmedFastHits += 1;
+                            frameCache.set(id, hinted);
+                            return hinted;
                         }
-                    }
 
-                    if (result != null) {
-                        stats.fallbackHits += 1;
-                        frameCache.set(id, result);
+                        const result = original.call(store, id);
 
-                        if (result.id && directIndex instanceof Map) {
-                            directIndex.set(result.id, result);
+                        if (hinted !== undefined) {
+                            stats.hintHits += 1;
+
+                            if (result === hinted) {
+                                stats.hintConfirmed += 1;
+                                confirmedExistingNodeIds.add(id);
+                            }
                         }
-                    }
 
-                    return result ?? null;
-                };
-            } else {
-                this.prewarmExistingNodeFrameCache?.(frameCache);
-                this.installLiveGetNodeIfExistsWrapper(original, frameCache);
-            }
+                        if (result != null) {
+                            stats.fallbackHits += 1;
+                            frameCache.set(id, result);
 
-            this.__existingNodeFrameCacheInstalled = true;
+                            if (result.id && directIndex instanceof Map) {
+                                directIndex.set(result.id, result);
+                            }
+                        }
+
+                        return result ?? null;
+                    };
+                },
+            });
 
             return {
-                ok: true,
-                installed: true,
-                methods: ["getNodeIfExists"],
+                ...result,
                 profiled,
             };
         },
