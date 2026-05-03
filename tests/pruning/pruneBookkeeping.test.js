@@ -427,4 +427,18 @@ describe("prune bookkeeping", () => {
         expect(olderIncomplete.isConnected).toBe(false);
         expect(getConversationSections()).not.toContain(olderIncomplete);
     });
+
+    it("does not crash when no sections exist", () => {
+        document.body.innerHTML = "";
+
+        expect(() =>
+            pruneOldSections(2, { showPlaceholder: true }, makeDeps())
+        ).not.toThrow();
+    });
+
+    it("handles null or undefined sections safely", () => {
+        expect(() =>
+            pruneOldSections(2, { showPlaceholder: true }, makeDeps())
+        ).not.toThrow();
+    });
 });
