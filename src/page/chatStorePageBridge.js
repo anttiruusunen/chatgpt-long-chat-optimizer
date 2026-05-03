@@ -4239,6 +4239,12 @@
     function enableLivePolicyOnUserIntent() {
         bumpLiveNodeReadFrame();
 
+        bridge.__displayTurnsRafFrame = (bridge.__displayTurnsRafFrame + 1) | 0;
+
+        bridge.__liveFindCache = null;
+        bridge.__liveFindFrame = -1;
+        bridge.__liveFindLeafId = null;
+
         bridge.__getDisplayTurnsActivePrefixCache?.clear?.();
 
         bridge.__getDisplayTurnsCache?.clear?.();
