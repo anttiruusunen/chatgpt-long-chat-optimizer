@@ -18,7 +18,9 @@ function detachTurnRoot(turnRoot) {
 }
 
 function getRestoreBeforeRoot(beforeNode) {
-    return beforeNode ? getConversationTurnRoot(beforeNode) ?? beforeNode : null;
+    return beforeNode
+        ? getConversationTurnRoot(beforeNode) ?? beforeNode
+        : null;
 }
 
 function insertTurnRoot(container, turnRoot, beforeRoot = null) {
@@ -26,10 +28,7 @@ function insertTurnRoot(container, turnRoot, beforeRoot = null) {
         return;
     }
 
-    if (
-        beforeRoot instanceof Node &&
-        beforeRoot.parentElement === container
-    ) {
+    if (beforeRoot instanceof Node && beforeRoot.parentElement === container) {
         container.insertBefore(turnRoot, beforeRoot);
         return;
     }
@@ -56,6 +55,12 @@ function getSoftPrunePlan(section) {
     };
 }
 
+/**
+ * Soft-prune removes a turn from the DOM but keeps the section object alive.
+ *
+ * This lets restore-one / restore-all reinsert recoverable history without
+ * rebuilding ChatGPT's DOM from scratch.
+ */
 function applySoftPrunePlan(plan) {
     if (!plan) {
         return false;
@@ -83,6 +88,10 @@ function getHardEvictPlan(section) {
     };
 }
 
+/**
+ * Hard eviction permanently discards old sections beyond the recoverable
+ * soft-prune buffer.
+ */
 function applyHardEvictPlan(plan) {
     if (!plan) {
         return false;
@@ -96,6 +105,10 @@ function applyHardEvictPlan(plan) {
     return true;
 }
 
+/**
+ * Clears references, observers, optimizer attributes, and child DOM so an
+ * evicted section can be garbage-collected.
+ */
 export function destroySectionForGc(section, { codeBlocks = null } = {}) {
     try {
         state.intersectionObserver?.unobserve(section);
@@ -121,6 +134,7 @@ export function destroySectionForGc(section, { codeBlocks = null } = {}) {
         pre.style.contentVisibility = "";
         pre.style.containIntrinsicSize = "";
         pre.removeAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR);
+
         delete pre.dataset.threadOptimizerCodeHeight;
         delete pre.dataset.threadOptimizerLargeCode;
     }
@@ -130,6 +144,7 @@ export function destroySectionForGc(section, { codeBlocks = null } = {}) {
     section.removeAttribute(OFFSCREEN_OPT_ATTR);
     section.removeAttribute(PRUNED_ATTR);
     section.removeAttribute(UNPRUNEABLE_ATTR);
+
     delete section.dataset.threadOptimizerHeight;
 
     section.replaceChildren();
@@ -144,6 +159,7 @@ export function softPruneSections(sections) {
 
     for (let i = 0; i < sections.length; i += 1) {
         const plan = getSoftPrunePlan(sections[i]);
+
         if (plan) {
             plans.push(plan);
         }
@@ -168,6 +184,12 @@ export function restoreSoftPrunedSection(section, container, beforeNode = null) 
     insertTurnRoot(container, turnRoot, beforeRoot);
 }
 
+/**
+ * Restores multiple soft-pruned sections in one fragment insertion.
+ *
+ * This avoids repeated layout work and preserves the original order of the
+ * restored exchange.
+ */
 export function restoreSoftPrunedSections(
     sections,
     container,
@@ -180,11 +202,15 @@ export function restoreSoftPrunedSections(
 
     const beforeRoot = getRestoreBeforeRoot(beforeNode);
     const fragment = document.createDocumentFragment();
+
     let restoredCount = 0;
 
     for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i];
-        if (!(section instanceof HTMLElement)) continue;
+
+        if (!(section instanceof HTMLElement)) {
+            continue;
+        }
 
         const turnRoot = getTurnRoot(section);
 
@@ -199,10 +225,7 @@ export function restoreSoftPrunedSections(
         return 0;
     }
 
-    if (
-        beforeRoot instanceof Node &&
-        beforeRoot.parentElement === container
-    ) {
+    if (beforeRoot instanceof Node && beforeRoot.parentElement === container) {
         container.insertBefore(fragment, beforeRoot);
     } else {
         container.appendChild(fragment);
@@ -220,6 +243,7 @@ export function hardEvictSections(sections) {
 
     for (let i = 0; i < sections.length; i += 1) {
         const plan = getHardEvictPlan(sections[i]);
+
         if (plan) {
             plans.push(plan);
         }

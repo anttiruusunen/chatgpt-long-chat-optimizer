@@ -21,6 +21,13 @@ function adjustScrollToPreserveAnchor({
     return true;
 }
 
+/**
+ * Re-applies scroll correction for a few frames.
+ *
+ * Restoring/re-pruning sections can cause layout shifts after the immediate DOM
+ * write, especially when code blocks/images settle. A short RAF loop keeps the
+ * same anchor section visually stable.
+ */
 function preserveScrollAcrossFrames({
     anchorSection,
     anchorTopBefore,

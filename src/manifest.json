@@ -2,28 +2,45 @@
   "manifest_version": 3,
   "name": "ChatGPT Thread Optimizer",
   "version": "1.0.0",
-  "description": "Prunes older ChatGPT messages to keep long threads responsive.",
-  "permissions": ["tabs", "storage"],
-  "host_permissions": ["https://chatgpt.com/*"],
+  "description": "Keeps long ChatGPT threads responsive by pruning older messages and optimizing heavy code blocks.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*"
+  ],
   "action": {
     "default_popup": "popup/popup.html"
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["bridgeBootstrap.js"],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "bridgeBootstrap.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["page/chatStorePageBridge.js"],
-      "matches": ["https://chatgpt.com/*"]
+      "resources": [
+        "page/chatStorePageBridge.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*"
+      ]
     }
   ],
   "browser_specific_settings": {

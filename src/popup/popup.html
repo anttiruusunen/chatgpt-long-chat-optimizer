@@ -5,9 +5,9 @@
     <style>
         body {
             width: 320px;
-            font-family: sans-serif;
-            padding: 12px;
             margin: 0;
+            padding: 12px;
+            font-family: sans-serif;
         }
 
         h3 {
@@ -16,10 +16,10 @@
         }
 
         .summary {
+            margin-bottom: 14px;
+            padding: 10px 12px;
             border: 1px solid rgba(0, 0, 0, 0.08);
             border-radius: 10px;
-            padding: 10px 12px;
-            margin-bottom: 14px;
             background: rgba(0, 0, 0, 0.02);
         }
 
@@ -27,8 +27,8 @@
             display: flex;
             justify-content: space-between;
             gap: 10px;
-            font-size: 13px;
             margin-bottom: 6px;
+            font-size: 13px;
         }
 
         .summaryRow:last-child {
@@ -61,23 +61,23 @@
         }
 
         input[type="number"] {
+            box-sizing: border-box;
             width: 90px;
             padding: 6px 8px;
             font-size: 13px;
-            box-sizing: border-box;
         }
 
         .clearButton {
-            border: 1px solid #d33;
-            background: #fff;
-            color: #d33;
-            border-radius: 6px;
             width: 28px;
             height: 28px;
+            padding: 0;
+            border: 1px solid #d33;
+            border-radius: 6px;
+            background: #fff;
+            color: #d33;
             font-size: 16px;
             line-height: 1;
             cursor: pointer;
-            padding: 0;
         }
 
         .clearButton:hover {
@@ -87,22 +87,22 @@
         .hint {
             margin-top: 6px;
             font-size: 12px;
-            opacity: 0.75;
             line-height: 1.35;
+            opacity: 0.75;
         }
 
         .flags,
         .debug {
-            border-top: 1px solid rgba(0, 0, 0, 0.08);
-            padding-top: 12px;
             margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(0, 0, 0, 0.08);
         }
 
         .flagRow {
             display: flex;
             align-items: flex-start;
-            margin-bottom: 8px;
             gap: 8px;
+            margin-bottom: 8px;
             font-size: 13px;
         }
 
@@ -119,23 +119,8 @@
 
         .flagLabel span {
             font-size: 12px;
-            opacity: 0.75;
             line-height: 1.3;
-        }
-
-        .subSetting {
-            margin: 6px 0 12px 24px;
-        }
-
-        .subSettingRow {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 4px;
-        }
-
-        .subSetting input[type="number"] {
-            width: 110px;
+            opacity: 0.75;
         }
 
         .debug[hidden] {
@@ -149,10 +134,10 @@
         }
 
         .debugButton {
-            border: 1px solid rgba(0, 0, 0, 0.16);
-            background: #fff;
-            border-radius: 6px;
             padding: 6px 10px;
+            border: 1px solid rgba(0, 0, 0, 0.16);
+            border-radius: 6px;
+            background: #fff;
             font-size: 12px;
             cursor: pointer;
         }
@@ -162,121 +147,122 @@
         }
 
         .status {
+            min-height: 16px;
             margin-top: 10px;
             font-size: 12px;
             opacity: 0.8;
-            min-height: 16px;
         }
     </style>
 </head>
 <body>
-<h3>Thread Optimizer</h3>
+    <h3>Thread Optimizer</h3>
 
-<div class="summary">
-    <div class="summaryRow">
-        <span class="summaryLabel">Hidden messages</span>
-        <span id="hiddenMessagesValue" class="summaryValue">—</span>
-    </div>
-    <div class="summaryRow">
-        <span class="summaryLabel">Latest reply time</span>
-        <span id="lastReplyTimeValue" class="summaryValue">—</span>
-    </div>
-</div>
-
-<div class="setting">
-    <label class="label" for="historyKeptExchanges">Chat history kept</label>
-    <div class="controlRow">
-        <input id="historyKeptExchanges" type="number" min="1" step="1" />
-        <button
-            id="clearHistoryKeptExchanges"
-            class="clearButton"
-            title="Disable auto-pruning"
-            aria-label="Disable auto-pruning"
-        >×</button>
-    </div>
-    <div class="hint">
-        How many recent exchanges stay recoverable. The newest exchange remains visible,
-        older recoverable exchanges stay in memory, and anything beyond this limit is removed permanently.
-        Clear to disable auto-pruning.
-    </div>
-</div>
-
-<div class="flags">
-    <div class="flagRow">
-        <input id="enablePruning" type="checkbox" />
-        <label class="flagLabel" for="enablePruning">
-            <strong>Enable pruning</strong>
-        </label>
+    <div class="summary">
+        <div class="summaryRow">
+            <span class="summaryLabel">Hidden messages</span>
+            <span id="hiddenMessagesValue" class="summaryValue">—</span>
+        </div>
+        <div class="summaryRow">
+            <span class="summaryLabel">Latest reply time</span>
+            <span id="lastReplyTimeValue" class="summaryValue">—</span>
+        </div>
     </div>
 
-    <div class="flagRow">
-        <input id="enableCodeBlockCollapse" type="checkbox" />
-        <label class="flagLabel" for="enableCodeBlockCollapse">
-            <strong>Hide large code blocks</strong>
-            <span>Replace large code blocks with a click-to-show placeholder.</span>
-        </label>
+    <div class="setting">
+        <label class="label" for="historyKeptExchanges">Chat history kept</label>
+        <div class="controlRow">
+            <input id="historyKeptExchanges" type="number" min="1" step="1" />
+            <button
+                id="clearHistoryKeptExchanges"
+                class="clearButton"
+                type="button"
+                title="Disable auto-pruning"
+                aria-label="Disable auto-pruning"
+            >×</button>
+        </div>
+        <div class="hint">
+            How many recent exchanges stay recoverable. The newest exchange remains visible,
+            older recoverable exchanges stay in memory, and anything beyond this limit is removed permanently.
+            Clear to disable auto-pruning.
+        </div>
     </div>
 
-    <div class="flagRow">
-        <input id="enableUserMessageClamp" type="checkbox" />
-        <label class="flagLabel" for="enableUserMessageClamp">
-            <strong>Clamp long user messages</strong>
-            <span>Make very long prompts scrollable instead of taking over the page.</span>
-        </label>
+    <div class="flags">
+        <div class="flagRow">
+            <input id="enablePruning" type="checkbox" />
+            <label class="flagLabel" for="enablePruning">
+                <strong>Enable pruning</strong>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableCodeBlockCollapse" type="checkbox" />
+            <label class="flagLabel" for="enableCodeBlockCollapse">
+                <strong>Hide large code blocks</strong>
+                <span>Replace large code blocks with a click-to-show placeholder.</span>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableUserMessageClamp" type="checkbox" />
+            <label class="flagLabel" for="enableUserMessageClamp">
+                <strong>Clamp long user messages</strong>
+                <span>Make very long prompts scrollable instead of taking over the page.</span>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableCodeBlockScrollbars" type="checkbox" />
+            <label class="flagLabel" for="enableCodeBlockScrollbars">
+                <strong>Code block scrollbars</strong>
+                <span>Clamp tall code blocks and make them scrollable.</span>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableDebugLogging" type="checkbox" />
+            <label class="flagLabel" for="enableDebugLogging">
+                <strong>Advanced / debug mode</strong>
+            </label>
+        </div>
     </div>
 
-    <div class="flagRow">
-        <input id="enableCodeBlockScrollbars" type="checkbox" />
-        <label class="flagLabel" for="enableCodeBlockScrollbars">
-            <strong>Code block scrollbars</strong>
-            <span>Clamp tall code blocks and make them scrollable.</span>
-        </label>
+    <div id="debugSection" class="debug" hidden>
+        <div class="label">Advanced / Debug</div>
+
+        <div class="flagRow">
+            <input id="enableOffscreenOptimization" type="checkbox" />
+            <label class="flagLabel" for="enableOffscreenOptimization">
+                <strong>Enable offscreen optimization</strong>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableLargeCodeBlockOptimization" type="checkbox" />
+            <label class="flagLabel" for="enableLargeCodeBlockOptimization">
+                <strong>Optimize large code blocks</strong>
+                <span>Reduce rendering work for large code blocks during long conversations.</span>
+            </label>
+        </div>
+
+        <div class="flagRow">
+            <input id="enableStoreReadOptimization" type="checkbox" />
+            <label class="flagLabel" for="enableStoreReadOptimization">
+                <strong>Optimize ChatGPT store reads</strong>
+                <span>Experimental cache for repeated internal node lookups during long conversations.</span>
+            </label>
+        </div>
+
+        <div class="debugButtons">
+            <button id="logDebugState" class="debugButton" type="button">Log state</button>
+            <button id="logDebugBuckets" class="debugButton" type="button">Log buckets</button>
+            <button id="logDebugLogical" class="debugButton" type="button">Log logical</button>
+            <button id="logDebugStorePerformance" class="debugButton" type="button">Log store cache</button>
+        </div>
     </div>
 
-    <div class="flagRow">
-        <input id="enableDebugLogging" type="checkbox" />
-        <label class="flagLabel" for="enableDebugLogging">
-            <strong>Advanced / debug mode</strong>
-        </label>
-    </div>
-</div>
+    <div id="status" class="status"></div>
 
-<div id="debugSection" class="debug" hidden>
-    <div class="label">Advanced / Debug</div>
-
-    <div class="flagRow">
-        <input id="enableOffscreenOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableOffscreenOptimization">
-            <strong>Enable offscreen optimization</strong>
-        </label>
-    </div>
-
-    <div class="flagRow">
-        <input id="enableLargeCodeBlockOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableLargeCodeBlockOptimization">
-            <strong>Optimize large code blocks</strong>
-            <span>Reduce rendering work for large code blocks during long conversations.</span>
-        </label>
-    </div>
-
-    <div class="flagRow">
-        <input id="enableStoreReadOptimization" type="checkbox" />
-        <label class="flagLabel" for="enableStoreReadOptimization">
-            <strong>Optimize ChatGPT store reads</strong>
-            <span>Experimental cache for repeated internal node lookups during long conversations.</span>
-        </label>
-    </div>
-
-    <div class="debugButtons">
-        <button id="logDebugState" class="debugButton" type="button">Log state</button>
-        <button id="logDebugBuckets" class="debugButton" type="button">Log buckets</button>
-        <button id="logDebugLogical" class="debugButton" type="button">Log logical</button>
-        <button id="logDebugStorePerformance" class="debugButton" type="button">Log store cache</button>
-    </div>
-</div>
-
-<div id="status" class="status"></div>
-
-<script type="module" src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
 </body>
 </html>

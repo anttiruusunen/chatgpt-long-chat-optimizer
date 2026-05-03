@@ -15,6 +15,7 @@ import {
 
 let latestTopRestoreArgs = null;
 let latestBottomPruneArgs = null;
+
 let topRestoreIntentListenerInstalled = false;
 let bottomPruneIntentListenerInstalled = false;
 
@@ -44,19 +45,44 @@ function disconnectBottomPruneObserver() {
     clearBottomObservedSentinel();
 }
 
+function canScheduleTopRestore() {
+    return (
+        !shouldSuspendSentinelAutomation() &&
+        state.isTopRestoreSentinelVisible &&
+        state.softPrunedSections.length > 0 &&
+        state.isTopRestoreArmed &&
+        !state.isTopRestoreScheduled &&
+        !state.isBottomPruneScheduled &&
+        !state.isApplyingDomChanges &&
+        consumeTopRestoreIntent()
+    );
+}
+
+function canScheduleBottomPrune() {
+    return (
+        !shouldSuspendSentinelAutomation() &&
+        state.isBottomPruneSentinelVisible &&
+        hasProtectedVisibleSections() &&
+        state.isBottomPruneArmed &&
+        !state.isBottomPruneScheduled &&
+        !state.isTopRestoreScheduled &&
+        !state.isApplyingDomChanges &&
+        consumeBottomPruneIntent()
+    );
+}
+
+/**
+ * Restores one soft-pruned exchange when both conditions are true:
+ * the top sentinel is visible and the user intentionally pushed past the top.
+ */
 function tryScheduleTopRestore({
     ensureObserverAttached,
     withDomMutationGuard,
     refreshObservedSections,
 }) {
-    if (shouldSuspendSentinelAutomation()) return;
-    if (!state.isTopRestoreSentinelVisible) return;
-    if (!state.softPrunedSections.length) return;
-    if (!state.isTopRestoreArmed) return;
-    if (state.isTopRestoreScheduled) return;
-    if (state.isBottomPruneScheduled) return;
-    if (state.isApplyingDomChanges) return;
-    if (!consumeTopRestoreIntent()) return;
+    if (!canScheduleTopRestore()) {
+        return;
+    }
 
     state.isTopRestoreScheduled = true;
     state.isTopRestoreArmed = false;
@@ -74,28 +100,25 @@ function tryScheduleTopRestore({
                 refreshObservedSections,
             });
 
-            debugLog(
-                "Sentinels: restored one exchange from top edge intent"
-            );
+            debugLog("Sentinels: restored one exchange from top edge intent");
         } finally {
             state.isTopRestoreScheduled = false;
         }
     }, 0);
 }
 
+/**
+ * Re-prunes one restored/protected exchange when the user intentionally pushes
+ * past the bottom of the visible restored area.
+ */
 function tryScheduleBottomPrune({
     ensureObserverAttached,
     withDomMutationGuard,
     refreshObservedSections,
 }) {
-    if (shouldSuspendSentinelAutomation()) return;
-    if (!state.isBottomPruneSentinelVisible) return;
-    if (!hasProtectedVisibleSections()) return;
-    if (!state.isBottomPruneArmed) return;
-    if (state.isBottomPruneScheduled) return;
-    if (state.isTopRestoreScheduled) return;
-    if (state.isApplyingDomChanges) return;
-    if (!consumeBottomPruneIntent()) return;
+    if (!canScheduleBottomPrune()) {
+        return;
+    }
 
     state.isBottomPruneScheduled = true;
     state.isBottomPruneArmed = false;
@@ -113,9 +136,7 @@ function tryScheduleBottomPrune({
                 refreshObservedSections,
             });
 
-            debugLog(
-                "Sentinels: repruned one exchange from bottom edge intent"
-            );
+            debugLog("Sentinels: repruned one exchange from bottom edge intent");
         } finally {
             state.isBottomPruneScheduled = false;
         }
@@ -177,6 +198,12 @@ export function invalidateSentinelObserversForRootChange() {
     }
 }
 
+/**
+ * Observes the top restore sentinel.
+ *
+ * Intersection alone is not enough to restore history; scrollIntent.js must
+ * also report that the user pushed past the top edge.
+ */
 export function refreshTopRestoreSentinelObservation(args) {
     ensureScrollIntentListener();
 
@@ -234,6 +261,12 @@ export function refreshTopRestoreSentinelObservation(args) {
     state.topRestoreObservedSentinel = sentinel;
 }
 
+/**
+ * Observes the bottom prune sentinel for restored/protected exchanges.
+ *
+ * The bottom sentinel only matters after the user has restored older messages;
+ * scrolling back down re-prunes them into the soft-pruned buffer.
+ */
 export function refreshBottomPruneSentinelObservation(args) {
     ensureScrollIntentListener();
 

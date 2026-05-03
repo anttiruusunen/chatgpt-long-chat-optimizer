@@ -1,8 +1,9 @@
 {
-  "name": "ai_prompt_speed_optimizer",
+  "name": "chatgpt-thread-optimizer",
   "version": "1.0.0",
-  "main": "build.js",
+  "description": "Browser extension that optimizes ChatGPT performance by pruning old messages and collapsing large code blocks.",
   "type": "module",
+  "private": true,
   "scripts": {
     "build": "node scripts/build.cjs",
     "build:debug": "node scripts/build.cjs --no-minify",
@@ -13,10 +14,12 @@
     "build:safari": "node scripts/build.cjs --target=safari",
     "build:safari:debug": "node scripts/build.cjs --target=safari --no-minify",
     "test": "vitest run",
-    "test:e2e": "npm run build:chrome:debug && playwright test",
     "test:watch": "vitest",
+    "test:e2e": "npm run build:chrome:debug && playwright test",
     "verify": "npm test && npm run build",
     "verify:debug": "npm test && npm run build:debug",
+    "verify:full": "npm test && npm run test:e2e && npm run build",
+    "verify:full:debug": "npm test && npm run test:e2e && npm run build:debug",
     "export": "node scripts/export-context.cjs",
     "export:src": "node scripts/export-context.cjs src",
     "export:tests": "node scripts/export-context.cjs tests --output testing_context.txt",
@@ -31,8 +34,19 @@
     "jsdom": "^25.0.0",
     "vitest": "^2.1.8"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  "keywords": [
+    "chatgpt",
+    "browser-extension",
+    "performance",
+    "productivity"
+  ],
+  "author": {
+    "name": "Antti Ruusunen",
+    "url": "https://github.com/anttiruusunen"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anttiruusunen/chatgpt-thread-optimizer"
+  },
+  "license": "MIT"
 }

@@ -19,6 +19,7 @@ export function getExtensionApiName() {
 
 export function getExtensionApi() {
     const apiName = getExtensionApiName();
+
     return apiName ? globalThis[apiName] : null;
 }
 
@@ -34,9 +35,11 @@ export const ext = getExtensionApi();
 
 function ensureExtensionApi() {
     const api = getExtensionApi();
+
     if (!api) {
         throw new Error("WebExtension API is unavailable in this environment");
     }
+
     return api;
 }
 
@@ -44,6 +47,7 @@ function promisifyChromeCall(registerCallback) {
     return new Promise((resolve, reject) => {
         registerCallback((result) => {
             const error = globalThis.chrome?.runtime?.lastError;
+
             if (error) {
                 reject(new Error(error.message || String(error)));
                 return;
@@ -54,6 +58,12 @@ function promisifyChromeCall(registerCallback) {
     });
 }
 
+/**
+ * Normalizes browser.* promise APIs and chrome.* callback APIs.
+ *
+ * This keeps the rest of the extension code async/await-friendly across
+ * Firefox, Chrome, and Safari-style WebExtension runtimes.
+ */
 function callWebExtensionMethod({
     promiseCall,
     chromeCall,

@@ -1,4 +1,9 @@
-import { queryTabs, sendMessageToTab, storageSyncGet, storageSyncSet } from "../shared/ext.js";
+import {
+    queryTabs,
+    sendMessageToTab,
+    storageSyncGet,
+    storageSyncSet,
+} from "../shared/ext.js";
 
 const DEFAULT_SETTINGS = {
     historyKeptExchanges: 10,
@@ -12,62 +17,47 @@ const DEFAULT_SETTINGS = {
     enableUserMessageClamp: true,
 };
 
-const historyKeptExchangesInput = document.getElementById("historyKeptExchanges");
-const clearHistoryKeptExchangesButton = document.getElementById("clearHistoryKeptExchanges");
-const enablePruningInput = document.getElementById("enablePruning");
-const enableOffscreenOptimizationInput = document.getElementById("enableOffscreenOptimization");
-const enableLargeCodeBlockOptimizationInput = document.getElementById("enableLargeCodeBlockOptimization");
-const enableCodeBlockScrollbarsInput = document.getElementById("enableCodeBlockScrollbars");
-const enableDebugLoggingInput = document.getElementById("enableDebugLogging");
-const hiddenMessagesValueEl = document.getElementById("hiddenMessagesValue");
-const lastReplyTimeValueEl = document.getElementById("lastReplyTimeValue");
-const debugSectionEl = document.getElementById("debugSection");
-const logDebugStateButton = document.getElementById("logDebugState");
-const logDebugBucketsButton = document.getElementById("logDebugBuckets");
-const logDebugLogicalButton = document.getElementById("logDebugLogical");
-const statusEl = document.getElementById("status");
-const enableStoreReadOptimizationInput = document.getElementById("enableStoreReadOptimization");
-const logDebugStorePerformanceButton = document.getElementById("logDebugStorePerformance");
-const enableCodeBlockCollapseInput = document.getElementById("enableCodeBlockCollapse");
-const enableUserMessageClampInput = document.getElementById("enableUserMessageClamp");
+const POLL_INTERVAL_MS = 500;
+const STATUS_TIMEOUT_MS = 2000;
 
-const REQUIRED_ELEMENTS = {
-    historyKeptExchangesInput,
-    clearHistoryKeptExchangesButton,
-    enablePruningInput,
-    enableOffscreenOptimizationInput,
-    enableLargeCodeBlockOptimizationInput,
-    enableCodeBlockScrollbarsInput,
-    enableDebugLoggingInput,
-    hiddenMessagesValueEl,
-    lastReplyTimeValueEl,
-    debugSectionEl,
-    statusEl,
-    enableStoreReadOptimizationInput,
-    enableCodeBlockCollapseInput,
-    enableUserMessageClampInput,
+const elements = {
+    historyKeptExchanges: document.getElementById("historyKeptExchanges"),
+    clearHistoryKeptExchanges: document.getElementById("clearHistoryKeptExchanges"),
+    enablePruning: document.getElementById("enablePruning"),
+    enableOffscreenOptimization: document.getElementById("enableOffscreenOptimization"),
+    enableLargeCodeBlockOptimization: document.getElementById("enableLargeCodeBlockOptimization"),
+    enableCodeBlockScrollbars: document.getElementById("enableCodeBlockScrollbars"),
+    enableDebugLogging: document.getElementById("enableDebugLogging"),
+    enableStoreReadOptimization: document.getElementById("enableStoreReadOptimization"),
+    enableCodeBlockCollapse: document.getElementById("enableCodeBlockCollapse"),
+    enableUserMessageClamp: document.getElementById("enableUserMessageClamp"),
+    hiddenMessagesValue: document.getElementById("hiddenMessagesValue"),
+    lastReplyTimeValue: document.getElementById("lastReplyTimeValue"),
+    debugSection: document.getElementById("debugSection"),
+    logDebugState: document.getElementById("logDebugState"),
+    logDebugBuckets: document.getElementById("logDebugBuckets"),
+    logDebugLogical: document.getElementById("logDebugLogical"),
+    logDebugStorePerformance: document.getElementById("logDebugStorePerformance"),
+    status: document.getElementById("status"),
 };
 
 let popupStatePollTimer = null;
 let statusTimer = null;
 
 function assertRequiredElements() {
-    const missing = Object.entries(REQUIRED_ELEMENTS)
+    const missing = Object.entries(elements)
         .filter(([, element]) => !element)
         .map(([name]) => name);
 
     if (missing.length > 0) {
-        throw new Error(`Popup HTML is missing required elements: ${missing.join(", ")}`);
+        throw new Error(
+            `Popup HTML is missing required elements: ${missing.join(", ")}`
+        );
     }
 }
 
-function setStatus(message, { timeoutMs = 2000 } = {}) {
-    if (!statusEl) {
-        console.warn("[Thread Optimizer popup]", message);
-        return;
-    }
-
-    statusEl.textContent = message || "";
+function setStatus(message, { timeoutMs = STATUS_TIMEOUT_MS } = {}) {
+    elements.status.textContent = message || "";
 
     if (statusTimer) {
         clearTimeout(statusTimer);
@@ -76,7 +66,7 @@ function setStatus(message, { timeoutMs = 2000 } = {}) {
 
     if (message && timeoutMs > 0) {
         statusTimer = setTimeout(() => {
-            statusEl.textContent = "";
+            elements.status.textContent = "";
             statusTimer = null;
         }, timeoutMs);
     }
@@ -93,54 +83,71 @@ function handlePopupError(error, fallbackMessage = "Action failed") {
 
 function normalizePositiveInt(value) {
     const num = Number(value);
-    if (!Number.isFinite(num)) return null;
+
+    if (!Number.isFinite(num)) {
+        return null;
+    }
+
     const rounded = Math.floor(num);
+
     return rounded >= 1 ? rounded : null;
 }
 
 function formatDuration(ms) {
-    if (!ms || ms <= 0) return "Not yet";
+    if (!ms || ms <= 0) {
+        return "Not yet";
+    }
 
     const totalSeconds = ms / 1000;
+
     if (totalSeconds < 10) return `${totalSeconds.toFixed(2)}s`;
     if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
 
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = Math.round(totalSeconds % 60);
+
     return `${minutes}m ${seconds}s`;
 }
 
 function updateFieldStates() {
-    const historyDisabled = historyKeptExchangesInput.value === "";
+    const historyDisabled = elements.historyKeptExchanges.value === "";
 
-    historyKeptExchangesInput.placeholder = String(DEFAULT_SETTINGS.historyKeptExchanges);
+    elements.historyKeptExchanges.placeholder = String(
+        DEFAULT_SETTINGS.historyKeptExchanges
+    );
 
-    clearHistoryKeptExchangesButton.title = historyDisabled
+    elements.clearHistoryKeptExchanges.title = historyDisabled
         ? "Auto-pruning is disabled"
         : "Disable auto-pruning";
 }
 
 function updateDebugVisibility() {
-    debugSectionEl.hidden = !enableDebugLoggingInput.checked;
+    elements.debugSection.hidden = !elements.enableDebugLogging.checked;
 }
 
 function updatePopupStateView(popupState) {
     if (!popupState) {
-        hiddenMessagesValueEl.textContent = "—";
-        lastReplyTimeValueEl.textContent = "—";
+        elements.hiddenMessagesValue.textContent = "—";
+        elements.lastReplyTimeValue.textContent = "—";
         return;
     }
 
-    hiddenMessagesValueEl.textContent =
-        popupState.hiddenSections != null ? String(popupState.hiddenSections) : "0";
+    elements.hiddenMessagesValue.textContent =
+        popupState.hiddenSections != null
+            ? String(popupState.hiddenSections)
+            : "0";
 
-    lastReplyTimeValueEl.textContent = popupState.replyPending
+    elements.lastReplyTimeValue.textContent = popupState.replyPending
         ? "Running…"
         : formatDuration(popupState.lastReplyDurationMs || 0);
 }
 
 async function getActiveTabId() {
-    const tabs = await queryTabs({ active: true, currentWindow: true });
+    const tabs = await queryTabs({
+        active: true,
+        currentWindow: true,
+    });
+
     return tabs?.[0]?.id ?? null;
 }
 
@@ -153,7 +160,11 @@ async function sendToActiveTab(message) {
 
     try {
         const response = await sendMessageToTab(tabId, message);
-        return response ?? { ok: false, error: "No response from content script" };
+
+        return response ?? {
+            ok: false,
+            error: "No response from content script",
+        };
     } catch (error) {
         return {
             ok: false,
@@ -179,106 +190,134 @@ async function refreshPopupState({ silent = false } = {}) {
 }
 
 function startPopupStatePolling() {
-    if (popupStatePollTimer) return;
+    if (popupStatePollTimer) {
+        return;
+    }
 
     popupStatePollTimer = setInterval(() => {
         refreshPopupState({ silent: true }).catch((error) => {
             console.debug("[Thread Optimizer popup] polling failed", error);
         });
-    }, 500);
+    }, POLL_INTERVAL_MS);
 }
 
 function stopPopupStatePolling() {
-    if (!popupStatePollTimer) return;
+    if (!popupStatePollTimer) {
+        return;
+    }
 
     clearInterval(popupStatePollTimer);
     popupStatePollTimer = null;
 }
 
 async function loadSettings() {
-    const stored = await storageSyncGet({
-        historyKeptExchanges: DEFAULT_SETTINGS.historyKeptExchanges,
-        enablePruning: DEFAULT_SETTINGS.enablePruning,
-        enableOffscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
-        enableLargeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
-        enableDebugLogging: DEFAULT_SETTINGS.enableDebugLogging,
-        enableStoreReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
-        enableCodeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
-        enableCodeBlockCollapse: DEFAULT_SETTINGS.enableCodeBlockCollapse,
-        enableUserMessageClamp: DEFAULT_SETTINGS.enableUserMessageClamp,
-    });
+    const stored = await storageSyncGet(DEFAULT_SETTINGS);
 
-    historyKeptExchangesInput.value =
-        stored.historyKeptExchanges == null ? "" : String(stored.historyKeptExchanges);
+    elements.historyKeptExchanges.value =
+        stored.historyKeptExchanges == null
+            ? ""
+            : String(stored.historyKeptExchanges);
 
-    enablePruningInput.checked = Boolean(stored.enablePruning);
-    enableOffscreenOptimizationInput.checked = Boolean(stored.enableOffscreenOptimization);
-    enableLargeCodeBlockOptimizationInput.checked = Boolean(stored.enableLargeCodeBlockOptimization);
-    enableDebugLoggingInput.checked = Boolean(stored.enableDebugLogging);
-    enableStoreReadOptimizationInput.checked = Boolean(stored.enableStoreReadOptimization);
-    enableCodeBlockScrollbarsInput.checked = Boolean(stored.enableCodeBlockScrollbars);
-    enableCodeBlockCollapseInput.checked = Boolean(stored.enableCodeBlockCollapse);
-    enableUserMessageClampInput.checked = Boolean(stored.enableUserMessageClamp);
+    elements.enablePruning.checked = Boolean(stored.enablePruning);
+    elements.enableOffscreenOptimization.checked = Boolean(
+        stored.enableOffscreenOptimization
+    );
+    elements.enableLargeCodeBlockOptimization.checked = Boolean(
+        stored.enableLargeCodeBlockOptimization
+    );
+    elements.enableDebugLogging.checked = Boolean(stored.enableDebugLogging);
+    elements.enableStoreReadOptimization.checked = Boolean(
+        stored.enableStoreReadOptimization
+    );
+    elements.enableCodeBlockScrollbars.checked = Boolean(
+        stored.enableCodeBlockScrollbars
+    );
+    elements.enableCodeBlockCollapse.checked = Boolean(
+        stored.enableCodeBlockCollapse
+    );
+    elements.enableUserMessageClamp.checked = Boolean(
+        stored.enableUserMessageClamp
+    );
 
     updateFieldStates();
     updateDebugVisibility();
 }
 
-async function saveSettings() {
-    const historyKeptExchanges = historyKeptExchangesInput.value === ""
-        ? null
-        : normalizePositiveInt(historyKeptExchangesInput.value);
+function collectSettingsFromForm() {
+    const historyValue = elements.historyKeptExchanges.value;
+    const historyKeptExchanges =
+        historyValue === "" ? null : normalizePositiveInt(historyValue);
 
-    if (historyKeptExchangesInput.value !== "" && historyKeptExchanges == null) {
-        setStatus("Chat history kept must be 1 or more");
-        historyKeptExchangesInput.focus();
+    if (historyValue !== "" && historyKeptExchanges == null) {
+        return {
+            ok: false,
+            error: "Chat history kept must be 1 or more",
+        };
+    }
+
+    return {
+        ok: true,
+        settings: {
+            historyKeptExchanges,
+            autoPrune: historyKeptExchanges != null,
+            enablePruning: elements.enablePruning.checked,
+            enableOffscreenOptimization: elements.enableOffscreenOptimization.checked,
+            enableLargeCodeBlockOptimization:
+                elements.enableLargeCodeBlockOptimization.checked,
+            enableDebugLogging: elements.enableDebugLogging.checked,
+            enableStoreReadOptimization:
+                elements.enableStoreReadOptimization.checked,
+            enableCodeBlockScrollbars: elements.enableCodeBlockScrollbars.checked,
+            enableCodeBlockCollapse: elements.enableCodeBlockCollapse.checked,
+            enableUserMessageClamp: elements.enableUserMessageClamp.checked,
+        },
+    };
+}
+
+/**
+ * Saves settings to extension storage, then best-effort notifies the current tab.
+ *
+ * Storage remains the source of truth; the runtime message makes the active page
+ * react immediately without requiring a reload.
+ */
+async function saveSettings() {
+    const formState = collectSettingsFromForm();
+
+    if (!formState.ok) {
+        setStatus(formState.error);
+        elements.historyKeptExchanges.focus();
         return;
     }
 
-    const settingsToStore = {
-        historyKeptExchanges,
-        autoPrune: historyKeptExchanges != null,
-        enablePruning: enablePruningInput.checked,
-        enableOffscreenOptimization: enableOffscreenOptimizationInput.checked,
-        enableLargeCodeBlockOptimization: enableLargeCodeBlockOptimizationInput.checked,
-        enableDebugLogging: enableDebugLoggingInput.checked,
-        enableStoreReadOptimization: enableStoreReadOptimizationInput.checked,
-        enableCodeBlockScrollbars: enableCodeBlockScrollbarsInput.checked,
-        enableCodeBlockCollapse: enableCodeBlockCollapseInput.checked,
-        enableUserMessageClamp: enableUserMessageClampInput.checked,
-    };
-
-    await storageSyncSet(settingsToStore);
+    await storageSyncSet(formState.settings);
 
     const response = await sendToActiveTab({
         action: "settings-updated",
-        ...settingsToStore,
+        ...formState.settings,
     });
 
     if (!response?.ok) {
-        console.debug("[Thread Optimizer popup] settings saved, page update skipped", response);
+        console.debug(
+            "[Thread Optimizer popup] settings saved, page update skipped",
+            response
+        );
     }
 
     updateFieldStates();
     updateDebugVisibility();
+
     await refreshPopupState({ silent: true });
+
     setStatus("Saved");
 }
 
 async function sendDebugAction(action, successMessage) {
     const response = await sendToActiveTab({ action });
 
-    if (response?.ok) {
-        setStatus(successMessage);
-        return;
-    }
-
-    setStatus(response?.error || "Debug action failed");
+    setStatus(response?.ok ? successMessage : response?.error || "Debug action failed");
 }
 
 function bindEvent(element, eventName, handler) {
-    if (!element) return;
-
     element.addEventListener(eventName, (event) => {
         Promise.resolve(handler(event)).catch((error) => {
             handlePopupError(error);
@@ -287,55 +326,52 @@ function bindEvent(element, eventName, handler) {
 }
 
 function bindEvents() {
-    bindEvent(historyKeptExchangesInput, "input", updateFieldStates);
+    bindEvent(elements.historyKeptExchanges, "input", updateFieldStates);
 
-    bindEvent(historyKeptExchangesInput, "change", async () => {
-        const normalized = normalizePositiveInt(historyKeptExchangesInput.value);
+    bindEvent(elements.historyKeptExchanges, "change", async () => {
+        const normalized = normalizePositiveInt(
+            elements.historyKeptExchanges.value
+        );
 
-        if (historyKeptExchangesInput.value !== "" && normalized != null) {
-            historyKeptExchangesInput.value = String(normalized);
+        if (elements.historyKeptExchanges.value !== "" && normalized != null) {
+            elements.historyKeptExchanges.value = String(normalized);
         }
 
         await saveSettings();
     });
 
-    bindEvent(enablePruningInput, "change", saveSettings);
-    bindEvent(enableOffscreenOptimizationInput, "change", saveSettings);
-
-    bindEvent(enableLargeCodeBlockOptimizationInput, "change", async () => {
+    bindEvent(elements.clearHistoryKeptExchanges, "click", async () => {
+        elements.historyKeptExchanges.value = "";
         updateFieldStates();
         await saveSettings();
     });
 
-    bindEvent(enableDebugLoggingInput, "change", async () => {
+    bindEvent(elements.enablePruning, "change", saveSettings);
+    bindEvent(elements.enableOffscreenOptimization, "change", saveSettings);
+    bindEvent(elements.enableLargeCodeBlockOptimization, "change", saveSettings);
+    bindEvent(elements.enableStoreReadOptimization, "change", saveSettings);
+    bindEvent(elements.enableCodeBlockScrollbars, "change", saveSettings);
+    bindEvent(elements.enableCodeBlockCollapse, "change", saveSettings);
+    bindEvent(elements.enableUserMessageClamp, "change", saveSettings);
+
+    bindEvent(elements.enableDebugLogging, "change", async () => {
         updateDebugVisibility();
         await saveSettings();
     });
 
-    bindEvent(enableStoreReadOptimizationInput, "change", saveSettings);
-    bindEvent(enableCodeBlockScrollbarsInput, "change", saveSettings);
-    bindEvent(enableCodeBlockCollapseInput, "change", saveSettings);
-    bindEvent(enableUserMessageClampInput, "change", saveSettings);
-
-    bindEvent(clearHistoryKeptExchangesButton, "click", async () => {
-        historyKeptExchangesInput.value = "";
-        updateFieldStates();
-        await saveSettings();
-    });
-
-    bindEvent(logDebugStateButton, "click", () =>
+    bindEvent(elements.logDebugState, "click", () =>
         sendDebugAction("debug-log-state", "Logged debug state")
     );
 
-    bindEvent(logDebugBucketsButton, "click", () =>
+    bindEvent(elements.logDebugBuckets, "click", () =>
         sendDebugAction("debug-log-buckets", "Logged debug buckets")
     );
 
-    bindEvent(logDebugLogicalButton, "click", () =>
+    bindEvent(elements.logDebugLogical, "click", () =>
         sendDebugAction("debug-log-logical", "Logged debug logical state")
     );
 
-    bindEvent(logDebugStorePerformanceButton, "click", () =>
+    bindEvent(elements.logDebugStorePerformance, "click", () =>
         sendDebugAction("log-debug-store-performance", "Logged store cache")
     );
 
@@ -357,6 +393,7 @@ async function init() {
 
     await loadSettings();
     await refreshPopupState({ silent: true });
+
     startPopupStatePolling();
 }
 
@@ -367,6 +404,6 @@ init().catch((error) => {
         updatePopupStateView(null);
         setPersistentError(error?.message || "Failed to initialize popup");
     } catch {
-        // Last-resort guard: avoid throwing from the crash handler itself.
+        // Avoid throwing from the crash handler itself.
     }
 });

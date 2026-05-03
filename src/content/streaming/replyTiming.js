@@ -8,12 +8,17 @@ import {
     getClosestComposerSubmitButton,
 } from "./assistantSignals.js";
 
+const REPLY_COMPLETION_POLL_MS = 200;
+
 let onReplyStartedCallback = null;
 let onReplySettledCallback = null;
 
 function latestAssistantHasSettledSignal() {
     const latestAssistant = getLatestAssistantSection();
-    if (!latestAssistant) return false;
+
+    if (!latestAssistant) {
+        return false;
+    }
 
     return (
         hasResponseActions(latestAssistant) ||
@@ -33,7 +38,9 @@ function stopReplyCompletionPoll() {
 }
 
 function startReplyTimer(trigger) {
-    if (isReplyStreaming()) return;
+    if (isReplyStreaming()) {
+        return;
+    }
 
     state.replyTiming.pending = true;
     state.replyTiming.startedAt = performance.now();
@@ -48,7 +55,9 @@ function startReplyTimer(trigger) {
 }
 
 function finishReplyTimerIfPending(source) {
-    if (!isReplyStreaming() || !state.replyTiming.startedAt) return;
+    if (!isReplyStreaming() || !state.replyTiming.startedAt) {
+        return;
+    }
 
     state.replyTiming.completedAt = performance.now();
     state.replyTiming.lastDurationMs =
@@ -65,8 +74,16 @@ function finishReplyTimerIfPending(source) {
     onReplySettledCallback?.();
 }
 
+/**
+ * Polls for ChatGPT's settled assistant UI after a send action.
+ *
+ * We wait for the response action row or an error state, then defer completion
+ * by two animation frames so React has time to finish DOM reconciliation.
+ */
 export function ensureReplyCompletionPoll() {
-    if (state.replyTimingCompletePollTimer) return;
+    if (state.replyTimingCompletePollTimer) {
+        return;
+    }
 
     state.replyTimingCompletePollTimer = setInterval(() => {
         if (!isReplyStreaming()) {
@@ -84,11 +101,12 @@ export function ensureReplyCompletionPoll() {
                 stopReplyCompletionPoll();
             });
         });
-    }, 200);
+    }, REPLY_COMPLETION_POLL_MS);
 }
 
 function handleComposerKeydown(event) {
     const target = event.target;
+
     if (!(target instanceof HTMLElement)) return;
     if (!isLikelyComposerInput(target)) return;
     if (event.key !== "Enter") return;
@@ -100,10 +118,15 @@ function handleComposerKeydown(event) {
 
 function handleComposerClick(event) {
     const target = event.target;
-    if (!(target instanceof Element)) return;
+
+    if (!(target instanceof Element)) {
+        return;
+    }
 
     const button = getClosestComposerSubmitButton(target);
-    if (!button) return;
+    if (!button) {
+        return;
+    }
 
     startReplyTimer("submit-button");
 }
@@ -117,9 +140,12 @@ export function installReplyTimingListeners({
     onReplySettledCallback =
         typeof onReplySettled === "function" ? onReplySettled : null;
 
-    if (state.replyTimingListenersInstalled) return;
+    if (state.replyTimingListenersInstalled) {
+        return;
+    }
 
     document.addEventListener("keydown", handleComposerKeydown, true);
     document.addEventListener("click", handleComposerClick, true);
+
     state.replyTimingListenersInstalled = true;
 }

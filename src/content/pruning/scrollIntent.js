@@ -6,26 +6,24 @@ const EDGE_EPSILON = 2;
 const WHEEL_TRIGGER_DISTANCE = 140;
 const KEY_TRIGGER_STEPS = 2;
 
-function getScrollEventTarget(container) {
-    if (
+function isPageScrollContainer(container) {
+    return (
         container === document.scrollingElement ||
         container === document.documentElement ||
         container === document.body
-    ) {
-        return window;
-    }
+    );
+}
 
-    return container;
+function getScrollEventTarget(container) {
+    return isPageScrollContainer(container) ? window : container;
 }
 
 function getScrollTopForContainer(container) {
-    if (!container) return 0;
+    if (!container) {
+        return 0;
+    }
 
-    if (
-        container === document.scrollingElement ||
-        container === document.documentElement ||
-        container === document.body
-    ) {
+    if (isPageScrollContainer(container)) {
         return (
             window.scrollY ||
             document.scrollingElement?.scrollTop ||
@@ -42,11 +40,7 @@ function getScrollMetrics(container) {
         return { top: 0, clientHeight: 0, scrollHeight: 0 };
     }
 
-    if (
-        container === document.scrollingElement ||
-        container === document.documentElement ||
-        container === document.body
-    ) {
+    if (isPageScrollContainer(container)) {
         const root =
             document.scrollingElement ||
             document.documentElement ||
@@ -67,12 +61,12 @@ function getScrollMetrics(container) {
 }
 
 function isAtTopEdge(container) {
-    const { top } = getScrollMetrics(container);
-    return top <= EDGE_EPSILON;
+    return getScrollMetrics(container).top <= EDGE_EPSILON;
 }
 
 function isAtBottomEdge(container) {
     const { top, clientHeight, scrollHeight } = getScrollMetrics(container);
+
     return top + clientHeight >= scrollHeight - EDGE_EPSILON;
 }
 
@@ -114,37 +108,56 @@ function resetBottomEdgeAccum() {
 
 function clearScrollIntent() {
     ensureIntentState();
+
     state.topRestoreUserArmed = false;
     state.bottomPruneUserArmed = false;
+
     resetTopEdgeAccum();
     resetBottomEdgeAccum();
 }
 
 export function consumeTopRestoreIntent() {
     ensureIntentState();
-    if (!state.topRestoreUserArmed) return false;
+
+    if (!state.topRestoreUserArmed) {
+        return false;
+    }
 
     state.topRestoreUserArmed = false;
     state.bottomPruneUserArmed = false;
+
     resetTopEdgeAccum();
     resetBottomEdgeAccum();
+
     return true;
 }
 
 export function consumeBottomPruneIntent() {
     ensureIntentState();
-    if (!state.bottomPruneUserArmed) return false;
+
+    if (!state.bottomPruneUserArmed) {
+        return false;
+    }
 
     state.bottomPruneUserArmed = false;
     state.topRestoreUserArmed = false;
+
     resetTopEdgeAccum();
     resetBottomEdgeAccum();
+
     return true;
 }
 
+/**
+ * Scroll intent is deliberately separate from sentinel visibility.
+ *
+ * A sentinel entering the viewport only performs work after the user has also
+ * expressed edge intent by pushing past the top/bottom with wheel or keyboard.
+ */
 function armTopRestoreIntent(reason) {
     state.topRestoreUserArmed = true;
     state.bottomPruneUserArmed = false;
+
     resetBottomEdgeAccum();
 
     debugLog("Scroll intent: armed top restore", {
@@ -153,14 +166,13 @@ function armTopRestoreIntent(reason) {
         keyAccum: state.topEdgeKeyAccum,
     });
 
-    window.dispatchEvent(
-        new CustomEvent("thread-optimizer-top-edge-intent")
-    );
+    window.dispatchEvent(new CustomEvent("thread-optimizer-top-edge-intent"));
 }
 
 function armBottomPruneIntent(reason) {
     state.bottomPruneUserArmed = true;
     state.topRestoreUserArmed = false;
+
     resetTopEdgeAccum();
 
     debugLog("Scroll intent: armed bottom reprune", {
@@ -169,17 +181,18 @@ function armBottomPruneIntent(reason) {
         keyAccum: state.bottomEdgeKeyAccum,
     });
 
-    window.dispatchEvent(
-        new CustomEvent("thread-optimizer-bottom-edge-intent")
-    );
+    window.dispatchEvent(new CustomEvent("thread-optimizer-bottom-edge-intent"));
 }
 
 function handleScroll() {
     const container = state.scrollIntentContainer;
-    if (!container) return;
-    if (state.isApplyingDomChanges) return;
+
+    if (!container || state.isApplyingDomChanges) {
+        return;
+    }
 
     ensureIntentState();
+
     state.scrollIntentLastTop = getScrollTopForContainer(container);
 
     if (!isAtTopEdge(container)) {
@@ -193,8 +206,10 @@ function handleScroll() {
 
 function handleWheel(event) {
     const container = state.scrollIntentContainer;
-    if (!container) return;
-    if (state.isApplyingDomChanges) return;
+
+    if (!container || state.isApplyingDomChanges) {
+        return;
+    }
 
     ensureIntentState();
 
@@ -242,14 +257,14 @@ function isBottomIntentKey(key) {
 
 function handleKeyDown(event) {
     const container = state.scrollIntentContainer;
-    if (!container) return;
-    if (state.isApplyingDomChanges) return;
+
+    if (!container || state.isApplyingDomChanges) {
+        return;
+    }
 
     ensureIntentState();
 
-    const key = event.key;
-
-    if (isTopIntentKey(key)) {
+    if (isTopIntentKey(event.key)) {
         if (!isAtTopEdge(container)) {
             resetTopEdgeAccum();
             return;
@@ -258,13 +273,13 @@ function handleKeyDown(event) {
         state.topEdgeKeyAccum += 1;
 
         if (state.topEdgeKeyAccum >= KEY_TRIGGER_STEPS) {
-            armTopRestoreIntent(`key-${key}-at-top-edge-threshold`);
+            armTopRestoreIntent(`key-${event.key}-at-top-edge-threshold`);
         }
 
         return;
     }
 
-    if (isBottomIntentKey(key)) {
+    if (isBottomIntentKey(event.key)) {
         if (!isAtBottomEdge(container)) {
             resetBottomEdgeAccum();
             return;
@@ -273,14 +288,31 @@ function handleKeyDown(event) {
         state.bottomEdgeKeyAccum += 1;
 
         if (state.bottomEdgeKeyAccum >= KEY_TRIGGER_STEPS) {
-            armBottomPruneIntent(`key-${key}-at-bottom-edge-threshold`);
+            armBottomPruneIntent(`key-${event.key}-at-bottom-edge-threshold`);
         }
     }
 }
 
+function removeExistingListeners() {
+    if (state.scrollIntentEventTarget) {
+        state.scrollIntentEventTarget.removeEventListener("scroll", handleScroll);
+        state.scrollIntentEventTarget.removeEventListener("wheel", handleWheel);
+    }
+
+    window.removeEventListener("keydown", handleKeyDown);
+}
+
+/**
+ * Attaches scroll intent listeners to the active conversation scroll root.
+ *
+ * Re-attaches automatically when ChatGPT swaps scroll containers during
+ * navigation.
+ */
 export function ensureScrollIntentListener() {
     const container = getConversationScrollContainer();
-    if (!container) return false;
+    if (!container) {
+        return false;
+    }
 
     ensureIntentState();
 
@@ -293,12 +325,7 @@ export function ensureScrollIntentListener() {
         return true;
     }
 
-    if (state.scrollIntentEventTarget) {
-        state.scrollIntentEventTarget.removeEventListener("scroll", handleScroll);
-        state.scrollIntentEventTarget.removeEventListener("wheel", handleWheel);
-    }
-
-    window.removeEventListener("keydown", handleKeyDown);
+    removeExistingListeners();
 
     state.scrollIntentContainer = container;
     state.scrollIntentEventTarget = nextEventTarget;

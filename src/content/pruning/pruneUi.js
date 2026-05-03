@@ -10,11 +10,13 @@ const PLACEHOLDER_HIDDEN_ATTR = "data-thread-optimizer-placeholder-hidden";
 
 export function getHiddenLabel(hiddenCount) {
     const messages = Math.max(0, Number(hiddenCount) || 0);
+
     return `${messages} older message${messages === 1 ? "" : "s"} hidden`;
 }
 
 function createSimpleBanner(attrName, text) {
     const section = document.createElement("section");
+
     section.setAttribute(attrName, "true");
     section.style.padding = "12px 16px";
     section.style.margin = "8px 0";
@@ -25,6 +27,7 @@ function createSimpleBanner(attrName, text) {
 
     const label = document.createElement("div");
     label.textContent = text;
+
     section.appendChild(label);
 
     return { root: section, label };
@@ -35,6 +38,7 @@ function createPlaceholder() {
         PLACEHOLDER_ATTR,
         getHiddenLabel(state.hiddenCount)
     );
+
     return root;
 }
 
@@ -74,22 +78,19 @@ function setPlaceholderVisible(placeholder, visible) {
     return true;
 }
 
-function isPlaceholderInCorrectPosition(placeholder, container, beforeNode) {
-    return Boolean(
-        placeholder &&
-            placeholder.isConnected &&
-            placeholder.parentElement === container &&
-            placeholder.nextSibling === beforeNode
-    );
-}
-
 function safelyPlacePlaceholder(placeholder, container, beforeNode) {
-    if (!(placeholder instanceof HTMLElement) || !(container instanceof HTMLElement)) {
+    if (
+        !(placeholder instanceof HTMLElement) ||
+        !(container instanceof HTMLElement)
+    ) {
         return false;
     }
 
     if (beforeNode instanceof Node && beforeNode.parentNode === container) {
-        if (placeholder.parentNode === container && placeholder.nextSibling === beforeNode) {
+        if (
+            placeholder.parentNode === container &&
+            placeholder.nextSibling === beforeNode
+        ) {
             return false;
         }
 
@@ -101,7 +102,10 @@ function safelyPlacePlaceholder(placeholder, container, beforeNode) {
         }
     }
 
-    if (placeholder.parentNode === container && container.firstChild === placeholder) {
+    if (
+        placeholder.parentNode === container &&
+        container.firstChild === placeholder
+    ) {
         return false;
     }
 
@@ -134,6 +138,7 @@ function applyRemovePlaceholderPlan(plan) {
         if (placeholder.isConnected) {
             placeholder.remove();
         }
+
         state.placeholder = null;
         return hadVisiblePlaceholder;
     }
@@ -146,10 +151,17 @@ function applyRemovePlaceholderPlan(plan) {
 }
 
 export function removePlaceholder({ destroy = false } = {}) {
-    const plan = collectRemovePlaceholderPlan({ destroy });
-    return applyRemovePlaceholderPlan(plan);
+    return applyRemovePlaceholderPlan(
+        collectRemovePlaceholderPlan({ destroy })
+    );
 }
 
+/**
+ * Builds the placeholder reconciliation plan.
+ *
+ * The placeholder is placed immediately before the first visible conversation
+ * turn, using the turn mount node when ChatGPT wraps sections in layout nodes.
+ */
 function collectPlaceholderStatePlan(firstVisibleSection) {
     const container = getConversationContainer();
     const shouldRemove =
@@ -170,7 +182,8 @@ function collectPlaceholderStatePlan(firstVisibleSection) {
     }
 
     const beforeNode =
-        getConversationSectionMountNode(firstVisibleSection) || firstVisibleSection;
+        getConversationSectionMountNode(firstVisibleSection) ||
+        firstVisibleSection;
 
     return {
         type: "ensure",
@@ -202,6 +215,7 @@ function applyPlaceholderStatePlan(plan) {
     let changed = false;
 
     const labelNode = getPlaceholderLabelNode(placeholder);
+
     if (labelNode && labelNode.textContent !== expectedLabel) {
         labelNode.textContent = expectedLabel;
         changed = true;
@@ -219,8 +233,9 @@ function applyPlaceholderStatePlan(plan) {
 }
 
 export function ensurePlaceholderState(firstVisibleSection) {
-    const plan = collectPlaceholderStatePlan(firstVisibleSection);
-    return applyPlaceholderStatePlan(plan);
+    return applyPlaceholderStatePlan(
+        collectPlaceholderStatePlan(firstVisibleSection)
+    );
 }
 
 export function revealContainer(container) {
@@ -235,17 +250,19 @@ function getStartupMaskStyleElement() {
     return document.getElementById(STARTUP_MASK_STYLE_ID);
 }
 
+/**
+ * Creates a temporary CSS mask used during startup pruning.
+ *
+ * This hides old turns before JS physically prunes them, preventing a visible
+ * flash of the full conversation on page load.
+ */
 function collectStartupPruneMaskPlan(container, visibleSectionsLimit) {
     if (!(container instanceof HTMLElement)) {
-        return {
-            shouldApply: false,
-        };
+        return { shouldApply: false };
     }
 
     if (!Number.isFinite(visibleSectionsLimit) || visibleSectionsLimit < 1) {
-        return {
-            shouldApply: false,
-        };
+        return { shouldApply: false };
     }
 
     const safeVisibleSectionsLimit = Math.floor(visibleSectionsLimit);
@@ -287,6 +304,7 @@ function applyStartupPruneMaskPlan(plan) {
     applyRemoveStartupPruneMaskPlan(collectRemoveStartupPruneMaskPlan());
 
     const styleEl = document.createElement("style");
+
     styleEl.id = STARTUP_MASK_STYLE_ID;
     styleEl.textContent = plan.styleText;
 
@@ -295,11 +313,11 @@ function applyStartupPruneMaskPlan(plan) {
 }
 
 export function installStartupPruneMask(container, visibleSectionsLimit) {
-    const plan = collectStartupPruneMaskPlan(container, visibleSectionsLimit);
-    applyStartupPruneMaskPlan(plan);
+    applyStartupPruneMaskPlan(
+        collectStartupPruneMaskPlan(container, visibleSectionsLimit)
+    );
 }
 
 export function removeStartupPruneMask() {
-    const plan = collectRemoveStartupPruneMaskPlan();
-    applyRemoveStartupPruneMaskPlan(plan);
+    applyRemoveStartupPruneMaskPlan(collectRemoveStartupPruneMaskPlan());
 }

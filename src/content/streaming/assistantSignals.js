@@ -1,5 +1,7 @@
 export function hasResponseActions(section) {
-    if (!(section instanceof Element)) return false;
+    if (!(section instanceof Element)) {
+        return false;
+    }
 
     if (
         section.querySelector('[aria-label="Response actions"]') ||
@@ -16,22 +18,16 @@ export function hasResponseActions(section) {
     ]);
 
     const actionButtons = Array.from(section.querySelectorAll("button"));
-    const matchedButtons = actionButtons.filter((button) =>
+
+    return actionButtons.some((button) =>
         actionLabels.has(button.getAttribute("aria-label") || "")
     );
-
-    return matchedButtons.length > 0;
-}
-
-export function isIncompleteAssistantSection(section) {
-    if (!(section instanceof HTMLElement)) return false;
-    if (section.getAttribute("data-turn") !== "assistant") return false;
-
-    return !hasResponseActions(section) && !hasAssistantErrorState(section);
 }
 
 export function hasAssistantErrorState(section) {
-    if (!(section instanceof HTMLElement)) return false;
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
 
     const text = section.textContent || "";
 
@@ -43,8 +39,28 @@ export function hasAssistantErrorState(section) {
     );
 }
 
+/**
+ * A latest assistant section without response actions is treated as incomplete.
+ *
+ * This protects actively streaming / rehydrating replies from startup pruning,
+ * including reloads where ChatGPT has not yet restored the final action row.
+ */
+export function isIncompleteAssistantSection(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (section.getAttribute("data-turn") !== "assistant") {
+        return false;
+    }
+
+    return !hasResponseActions(section) && !hasAssistantErrorState(section);
+}
+
 export function isLikelyComposerInput(target) {
-    if (!(target instanceof HTMLElement)) return false;
+    if (!(target instanceof HTMLElement)) {
+        return false;
+    }
 
     if (target.id === "prompt-textarea") return true;
     if (target.matches("textarea")) return true;
@@ -59,7 +75,9 @@ export function isLikelyComposerInput(target) {
 }
 
 export function getClosestComposerSubmitButton(target) {
-    if (!(target instanceof Element)) return null;
+    if (!(target instanceof Element)) {
+        return null;
+    }
 
     return (
         target.closest("#composer-submit-button") ||
