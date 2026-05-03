@@ -4046,42 +4046,31 @@
             clearCaches = true,
             rebuildIndex = true,
         } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
+            const result = installStoreMethodWrapper({
+                bridge: this,
+                methodName,
+                originalSlot: "__indexRefreshHookOriginals",
+                installedFlag: "__indexRefreshHooksInstalled",
+                unavailableReason: `${methodName} unavailable`,
+                createWrapper: ({ store, original, bridge }) => function indexedMutationWrapper(...args) {
+                    const res = original.apply(store, args);
 
-            const original = getStoreMethod(store, methodName);
-            if (!original) return unavailable(`${methodName} unavailable`);
+                    if (clearCaches) {
+                        bridge.clearStoreReadCache?.("store-mutation");
+                    }
 
-            this.__indexRefreshHookOriginals ??= {};
+                    if (rebuildIndex) {
+                        queueMicrotask(() => {
+                            bridge.maybeRebuildMessageIdIndex?.({ minIntervalMs: 250 });
+                        });
+                    }
 
-            if (this.__indexRefreshHookOriginals[methodName]) {
-                return alreadyInstalled();
-            }
-            this.__indexRefreshHookOriginals[methodName] = original;
-
-            const bridgeRef = this;
-
-            store[methodName] = function indexedMutationWrapper(...args) {
-                const result = original.apply(store, args);
-
-                if (clearCaches) {
-                    bridgeRef.clearStoreReadCache?.("store-mutation");
-                }
-
-                if (rebuildIndex) {
-                    queueMicrotask(() => {
-                        bridgeRef.maybeRebuildMessageIdIndex?.({ minIntervalMs: 250 });
-                    });
-                }
-
-                return result;
-            };
-
-            this.__indexRefreshHooksInstalled = true;
+                    return res;
+                },
+            });
 
             return {
-                ok: true,
-                installed: true,
+                ...result,
                 method: methodName,
                 clearCaches,
                 rebuildIndex,
