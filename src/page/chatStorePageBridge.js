@@ -2172,7 +2172,6 @@
             this.__existingNodeFrameCacheStats = stats;
             this.__existingNodeFrameCacheOriginal = { getNodeIfExists: original };
 
-            const bridgeRef = this;
             const store = this.__store;
             const directIndex = this.__nodeIdDirectIndex;
             const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
@@ -3196,26 +3195,25 @@
                     lastClearReason: null,
                     liveHits: 0,
                     liveMisses: 0,
+                    prefixHits: 0,
+                    prefixMisses: 0,
                 }
                 : null;
 
             const cacheApi = createPersistentCache({ maxSize, stats, profiled });
             const store = this.__store;
             const bridgeRef = this;
-            const prunedSet = this.__prunedLeafIdSet;
             const get = cacheApi.get;
             const set = cacheApi.set;
 
-            const seenCounts = new Map();
-            const promoteAfterCalls = 2;
+            const activePrefixCache = new Map();
+            bridgeRef.__getDisplayTurnsActivePrefixCache = activePrefixCache;
 
-            // rAF-based single-use cache for current leaf
             let liveFrame = -1;
             let liveLeafId = null;
             let liveValue = undefined;
             let liveUsesLeft = 0;
 
-            // rAF frame counter
             bridgeRef.__displayTurnsRafFrame = 0;
             function bumpDisplayTurnsRafFrame() {
                 bridgeRef.__displayTurnsRafFrame =
@@ -3236,7 +3234,6 @@
 
                 const isCurrentLeaf = leafId === currentLeafId;
 
-                // Current/active leaf: rAF-throttled single-use cache
                 if (isCurrentLeaf) {
                     const frame = bridgeRef.__displayTurnsRafFrame || 0;
 
@@ -3251,14 +3248,49 @@
                         return liveValue;
                     }
 
+                    const prefixEntry = activePrefixCache.get(leafId);
+
+                    // Same-frame prefix fast path.
+                    // Only reuse if we already have a live value from this frame,
+                    // so the final turn is known-good/fresh for this render cycle.
+                    if (
+                        prefixEntry?.prefix &&
+                        Array.isArray(prefixEntry.prefix) &&
+                        liveFrame === frame &&
+                        liveLeafId === leafId &&
+                        Array.isArray(liveValue) &&
+                        liveValue.length > prefixEntry.prefix.length
+                    ) {
+                        const freshLastTurn = liveValue[liveValue.length - 1];
+                        const patched = prefixEntry.prefix.concat(freshLastTurn);
+
+                        liveValue = patched;
+                        liveUsesLeft = 4;
+
+                        if (stats) {
+                            stats.prefixHits = (stats.prefixHits || 0) + 1;
+                            stats.liveHits = (stats.liveHits || 0) + 1;
+                        }
+
+                        return patched;
+                    }
+
                     if (stats) stats.liveMisses = (stats.liveMisses || 0) + 1;
 
                     const result = original.call(store, leafId, ...rest) ?? null;
 
+                    if (Array.isArray(result) && result.length > 1) {
+                        activePrefixCache.set(leafId, {
+                            prefix: result.slice(0, -1),
+                        });
+
+                        if (stats) stats.prefixMisses = (stats.prefixMisses || 0) + 1;
+                    }
+
                     liveFrame = frame;
                     liveLeafId = leafId;
                     liveValue = result;
-                    liveUsesLeft = 2;
+                    liveUsesLeft = 4;
 
                     return result;
                 }
@@ -3267,18 +3299,7 @@
                 if (cached !== undefined) return cached;
 
                 const result = original.call(store, leafId, ...rest);
-
-                const nextCount = (seenCounts.get(leafId) || 0) + 1;
-                seenCounts.set(leafId, nextCount);
-
-                const isPrunedLeaf = prunedSet?.has(leafId);
-
-                if (isPrunedLeaf || nextCount >= promoteAfterCalls) {
-                    set(leafId, result ?? null);
-                } else if (stats) {
-                    stats.bypassed = (stats.bypassed || 0) + 1;
-                }
-
+                set(leafId, result ?? null);
                 return result ?? null;
             };
 
@@ -3306,6 +3327,8 @@
                 maxSize: stats?.maxSize ?? null,
                 liveHits: stats?.liveHits ?? 0,
                 liveMisses: stats?.liveMisses ?? 0,
+                prefixHits: stats?.prefixHits ?? 0,
+                prefixMisses: stats?.prefixMisses ?? 0,
                 lastClearReason: stats?.lastClearReason ?? null,
             };
         },
@@ -3913,6 +3936,15 @@
 
     function enableLivePolicyOnUserIntent() {
         bumpLiveNodeReadFrame();
+
+        bridge.__getDisplayTurnsActivePrefixCache?.clear?.();
+
+        bridge.__getDisplayTurnsCache?.clear?.();
+        if (bridge.__getDisplayTurnsCacheStats) {
+            bridge.__getDisplayTurnsCacheStats.cached = 0;
+            bridge.__getDisplayTurnsCacheStats.lastClearReason = "user-intent";
+        }
+
         bridge.enableLiveNodeCachePolicy?.();
     }
 
