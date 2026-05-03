@@ -6,9 +6,12 @@ export const fixtureUrl = `file://${fixturePath}`;
 
 function findBuiltContentScript() {
     const candidates = [
+        "dist/chrome/content/index.js",
         "dist/chrome/content.js",
         "dist/firefox/content.js",
         "dist/safari/content.js",
+        "build/chrome/content/index.js",
+        "dist/content/index.js",
     ];
 
     for (const candidate of candidates) {
@@ -23,20 +26,28 @@ function findBuiltContentScript() {
     );
 }
 
-export async function loadFixtureWithOptimizer(page) {
+export async function loadFixtureWithOptimizer(page, { settings = {} } = {}) {
     await page.goto(fixtureUrl);
 
-    await page.addInitScript(() => {
+    await page.addInitScript((injectedSettings) => {
+        const listeners = [];
+
         globalThis.chrome = {
             runtime: {
                 getURL: (path) => path,
                 onMessage: {
-                    addListener: () => {},
+                    __listeners: listeners,
+                    addListener: (listener) => {
+                        listeners.push(listener);
+                    },
                 },
             },
             storage: {
                 sync: {
-                    get: (defaults, callback) => callback(defaults),
+                    get: (defaults, callback) => callback({
+                        ...defaults,
+                        ...injectedSettings,
+                    }),
                     set: (_values, callback) => callback?.(),
                 },
                 onChanged: {
@@ -44,7 +55,7 @@ export async function loadFixtureWithOptimizer(page) {
                 },
             },
         };
-    });
+    }, settings);
 
     await page.reload();
 
