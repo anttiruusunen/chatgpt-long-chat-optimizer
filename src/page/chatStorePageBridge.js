@@ -267,6 +267,48 @@
         stats.lastClearReason = null;
     }
 
+    function smokeTestStoreWrappers(store) {
+        try {
+            const leafId =
+                typeof store.currentLeafId === "function"
+                    ? store.currentLeafId()
+                    : store.currentLeafId;
+
+            if (!leafId) return true;
+
+            // Critical paths that needs to be tested if they crash
+            store.getNodeIfExists?.call(store, leafId);
+            store.getNodeByIdOrMessageId?.call(store, leafId);
+            store.getBranch?.call(store);
+
+            return true;
+        } catch (error) {
+            console.warn(
+                "[thread-optimizer bridge] store wrapper smoke test failed",
+                error
+            );
+            return false;
+        }
+    }
+
+    function validateStoreMethodBinding(store, methodName, original) {
+        if (!store || typeof original !== "function") return false;
+
+        try {
+            if (methodName === "getNodeIfExists") {
+                return typeof store.messageIdToExistingNodeId === "function";
+            }
+
+            if (methodName === "getNodeByIdOrMessageId") {
+                return typeof store.getNodeIfExists === "function";
+            }
+
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     function installStoreMethodWrapper({
         bridge,
         methodName,
@@ -284,6 +326,10 @@
 
         const original = getStoreMethod(store, methodName);
         if (!original) return unavailable(unavailableReason);
+
+        if (!validateStoreMethodBinding(store, methodName, original)) {
+            return unavailable(`${methodName} failed install-time validation`);
+        }
 
         bridge[originalSlot] = {
             ...(bridge[originalSlot] || {}),
@@ -3961,6 +4007,18 @@
                 },
                 statusAfter: result.statusAfter,
             });
+
+            const store = this.__store;
+
+            if (!smokeTestStoreWrappers(store)) {
+                this.disableStoreReadOptimization?.({ debug: false });
+
+                return {
+                    ok: false,
+                    reason: "store wrapper smoke test failed; optimization disabled",
+                    statusAfter: this.status?.(),
+                };
+            }
 
             return result;
         },
