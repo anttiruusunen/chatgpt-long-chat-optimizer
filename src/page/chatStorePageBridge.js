@@ -384,7 +384,7 @@
 
             if (!leafId) return true;
 
-            // Critical paths that needs to be tested if they crash
+            // Critical paths that need to be tested for crashes
             store.getNodeIfExists?.call(store, leafId);
             store.getNodeByIdOrMessageId?.call(store, leafId);
             store.getBranch?.call(store);
@@ -1936,67 +1936,8 @@
             };
         },
 
-        buildMessageIdIndex() {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            const index = new Map();
-            const nodesValue = store.nodes;
-
-            const addNode = (node) => {
-                if (!node || typeof node !== "object") return;
-
-                const nodeId = node.id;
-                if (!nodeId) return;
-
-                index.set(nodeId, nodeId);
-
-                const messageId =
-                    node.message?.id ||
-                    node.message?.message_id ||
-                    node.message?.metadata?.message_id ||
-                    null;
-
-                if (messageId) {
-                    index.set(messageId, nodeId);
-                }
-            };
-
-            if (nodesValue instanceof Map) {
-                for (const node of nodesValue.values()) addNode(node);
-            } else if (Array.isArray(nodesValue)) {
-                for (const node of nodesValue) addNode(node);
-            } else if (nodesValue && typeof nodesValue === "object") {
-                for (const node of Object.values(nodesValue)) addNode(node);
-            }
-
-            this.__messageIdIndex = index;
-
-            if (!this.__messageIdIndexStats) {
-                this.__messageIdIndexStats = {
-                    hits: 0,
-                    misses: 0,
-                    fallbackHits: 0,
-                    rebuilds: 0,
-                    lastRebuiltAt: null,
-                    missSinceRebuild: 0,
-                    rebuildSkips: 0,
-                };
-            }
-
-            this.__messageIdIndexStats.rebuilds += 1;
-            this.__messageIdIndexStats.lastRebuiltAt = Date.now();
-
-            return {
-                ok: true,
-                size: index.size,
-                rebuilds: this.__messageIdIndexStats.rebuilds,
-            };
-        },
-
         installMessageIdIndex({
             profiled = ENABLE_CACHE_PROFILING,
-            maxSize = CONFIG.cache.defaultMaxSize,
         } = {}) {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
@@ -2016,18 +1957,12 @@
                 activeHits: 0,
                 activeMisses: 0,
                 cached: 0,
-                evictions: 0,
-                rebuilds: 0,
-                rebuildSkips: 0,
-                missSinceRebuild: 0,
-                lastRebuiltAt: null,
                 mode: profiled
-                    ? "profiled:lazy-stale-plus-active-raf"
-                    : "production:lazy-stale-plus-active-raf",
+                    ? "profiled:lazy-unbounded-stale-plus-active-raf"
+                    : "production:lazy-unbounded-stale-plus-active-raf",
             };
 
             const index = new Map();
-            const insertionOrder = [];
 
             this.__messageIdIndex = index;
             this.__messageIdIndexStats = stats;
@@ -2047,24 +1982,10 @@
                     function remember(key, value) {
                         if (!key || !value) return;
 
-                        if (!index.has(key)) {
-                            insertionOrder.push(key);
-                        }
-
                         index.set(key, value);
 
                         if (value !== key) {
-                            if (!index.has(value)) {
-                                insertionOrder.push(value);
-                            }
-
                             index.set(value, value);
-                        }
-
-                        while (insertionOrder.length > maxSize) {
-                            const oldest = insertionOrder.shift();
-                            index.delete(oldest);
-                            if (profiled) stats.evictions += 1;
                         }
 
                         if (profiled) stats.cached = index.size;
@@ -4151,7 +4072,6 @@
                     this.wrapMutationForIndexRefresh("prependOptismisticNode"),
                     this.wrapMutationForIndexRefresh("processUpdate", {
                         clearCaches: false,
-                        rebuildIndex: false,
                     }),
                 ],
                 nodeFrameCache: this.installExistingNodeFrameCache({
@@ -4205,8 +4125,6 @@
                 statusAfter: result.statusAfter,
             });
 
-            const store = this.__store;
-
             if (!smokeTestStoreWrappers(this.__store)) {
                 this.disableStoreReadOptimization?.({ debug: false });
                 this.resetInstalledStoreEnhancements();
@@ -4253,8 +4171,9 @@
                 this.__messageIdIndexStats.hits = 0;
                 this.__messageIdIndexStats.misses = 0;
                 this.__messageIdIndexStats.fallbackHits = 0;
-                this.__messageIdIndexStats.missSinceRebuild = 0;
-                this.__messageIdIndexStats.rebuildSkips = 0;
+                this.__messageIdIndexStats.activeHits = 0;
+                this.__messageIdIndexStats.activeMisses = 0;
+                this.__messageIdIndexStats.cached = this.__messageIdIndex?.size ?? 0;
             }
 
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
@@ -4424,24 +4343,8 @@
             };
         },
 
-        maybeRebuildMessageIdIndex({ minIntervalMs = 1000 } = {}) {
-            if (!this.__messageIdIndexInstalled) {
-                return { ok: false, reason: "index not installed" };
-            }
-
-            const now = Date.now();
-            const last = this.__messageIdIndexStats?.lastRebuiltAt ?? 0;
-
-            if (now - last < minIntervalMs) {
-                return { ok: true, skipped: true, reason: "too soon" };
-            }
-
-            return this.buildMessageIdIndex();
-        },
-
         wrapMutationForIndexRefresh(methodName, {
             clearCaches = true,
-            rebuildIndex = true,
         } = {}) {
             const result = installStoreMethodWrapper({
                 bridge: this,
@@ -4456,12 +4359,6 @@
                         bridge.clearStoreReadCache?.("store-mutation");
                     }
 
-                    if (rebuildIndex) {
-                        queueMicrotask(() => {
-                            bridge.maybeRebuildMessageIdIndex?.({ minIntervalMs: 250 });
-                        });
-                    }
-
                     return res;
                 },
             });
@@ -4470,7 +4367,6 @@
                 ...result,
                 method: methodName,
                 clearCaches,
-                rebuildIndex,
             };
         },
 
@@ -4664,7 +4560,6 @@
 
     function resetToStartupCachePolicy(reason = "conversation-change") {
         bridge.clearStoreReadCache?.(reason);
-        bridge.maybeRebuildMessageIdIndex?.({ minIntervalMs: 0 });
 
         const original = bridge.__existingNodeFrameCacheOriginal?.getNodeIfExists;
         const cacheApi = bridge.__existingNodeFrameCacheApi;
