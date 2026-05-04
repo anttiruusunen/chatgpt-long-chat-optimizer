@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { flushAsyncWork } from "../utils/async.js";
 
 const mockRefs = vi.hoisted(() => ({
     registeredHandlers: null,
@@ -157,18 +158,6 @@ function buildConversation() {
     return { container, sections: [s1, s2, s3, s4, s5, s6] };
 }
 
-async function flush() {
-    for (let i = 0; i < 10; i += 1) {
-        await Promise.resolve();
-
-        if (vi.getTimerCount() > 0) {
-            vi.runOnlyPendingTimers();
-        }
-
-        await Promise.resolve();
-    }
-}
-
 describe("cssVisibilityWindow integration", () => {
     let originalRAF;
     let originalCAF;
@@ -217,7 +206,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
@@ -234,7 +223,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
         state.didInitialPrune = true;
@@ -248,7 +237,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(cssHidden).toEqual(sections.slice(0, 4));
 
         vi.advanceTimersByTime(300);
-        await flush();
+        await flushAsyncWork();
 
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(1);
     });
@@ -258,7 +247,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
@@ -272,7 +261,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         for (const section of sections) {
             expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -284,7 +273,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
@@ -296,7 +285,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         mockRefs.storageListener(
             {
@@ -306,7 +295,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
         expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
@@ -321,7 +310,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
         state.didInitialPrune = true;
@@ -345,7 +334,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
         state.didInitialPrune = true;
@@ -368,7 +357,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(state.isAutoPruneScheduled).toBe(true);
 
         vi.advanceTimersByTime(300);
-        await flush();
+        await flushAsyncWork();
 
         expect(mockRefs.pruneOldSectionsBase.mock.calls.length).toBeLessThanOrEqual(1);
     });
@@ -378,7 +367,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR, UNPRUNEABLE_ATTR } = stateModule;
 
@@ -387,7 +376,7 @@ describe("cssVisibilityWindow integration", () => {
         sections[5].setAttribute(OUT_OF_WINDOW_ATTR, "true");
 
         mockRefs.registeredHandlers.restoreAllSections();
-        await flush();
+        await flushAsyncWork();
 
         expect(mockRefs.restoreAllSectionsBase).toHaveBeenCalledTimes(1);
         expect(sections[1].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -403,13 +392,13 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
         const sendResponse = vi.fn();
         mockRefs.registeredHandlers.pruneOldSections(10, { showPlaceholder: true });
-        await flush();
+        await flushAsyncWork();
 
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalled();
         expect(typeof mockRefs.registeredHandlers.pruneOldSections).toBe("function");
@@ -426,7 +415,7 @@ describe("cssVisibilityWindow integration", () => {
         const stateModule = await import("../../src/content/core/state.js");
         const messagesModule = await import("../../src/content/core/messages.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
 
@@ -446,7 +435,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         for (const section of sections) {
             expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -460,7 +449,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
         expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
@@ -471,7 +460,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
         state.didInitialPrune = true;
@@ -482,7 +471,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(sections[3].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
 
         vi.advanceTimersByTime(300);
-        await flush();
+        await flushAsyncWork();
 
         expect(sections[4].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
         expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -493,13 +482,13 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
         mockRefs.isReplyStreamingValue = true;
         mockRefs.replySettledListener?.();
-        await flush();
+        await flushAsyncWork();
 
         expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
     });
@@ -509,7 +498,7 @@ describe("cssVisibilityWindow integration", () => {
 
         const stateModule = await import("../../src/content/core/state.js");
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
 
@@ -535,7 +524,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
-        await flush();
+        await flushAsyncWork();
 
         for (const section of sections) {
             expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -543,7 +532,7 @@ describe("cssVisibilityWindow integration", () => {
 
         mockRefs.isReplyStreamingValue = false;
         mockRefs.replySettledListener();
-        await flush();
+        await flushAsyncWork();
 
         expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
         expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
