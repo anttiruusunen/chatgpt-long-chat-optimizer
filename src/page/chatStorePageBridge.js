@@ -217,6 +217,114 @@
         return nodeCount >= minimum;
     }
 
+    function getNewestVisibleMessageIdFromDom() {
+        const selectors = [
+            "[data-message-id]",
+            "[data-message-author-role][data-message-id]",
+            'article[data-testid^="conversation-turn-"] [data-message-id]',
+            'section[data-testid^="conversation-turn-"] [data-message-id]',
+        ];
+
+        for (const selector of selectors) {
+            const nodes = document.querySelectorAll(selector);
+
+            for (let i = nodes.length - 1; i >= 0; i -= 1) {
+                const value = nodes[i]?.getAttribute?.("data-message-id");
+
+                if (typeof value === "string" && value.trim()) {
+                    return value.trim();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function getStoreCurrentLeafId(store) {
+        try {
+            return typeof store?.currentLeafId === "function"
+                ? store.currentLeafId()
+                : store?.currentLeafId ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    function candidateStoreCanResolveVisibleNewestNode(store) {
+        const newestMessageId = getNewestVisibleMessageIdFromDom();
+
+        if (!newestMessageId) {
+            return {
+                ok: false,
+                reason: "no visible message id found",
+                newestMessageId: null,
+                nodeId: null,
+            };
+        }
+
+        try {
+            const nodeId = store.messageIdToExistingNodeId?.call(store, newestMessageId);
+
+            if (!nodeId) {
+                return {
+                    ok: false,
+                    reason: "message id did not resolve",
+                    newestMessageId,
+                    nodeId: null,
+                };
+            }
+
+            const node = getNodeDirect(store, nodeId);
+
+            if (!node) {
+                return {
+                    ok: false,
+                    reason: "resolved node id not found in store",
+                    newestMessageId,
+                    nodeId,
+                };
+            }
+
+            return {
+                ok: true,
+                newestMessageId,
+                nodeId,
+                node,
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                reason: String(error?.message || error),
+                newestMessageId,
+                nodeId: null,
+            };
+        }
+    }
+
+    function scoreStoreCandidate(store) {
+        const nodeCount = getStoreNodeCount(store);
+        const currentLeafId = getStoreCurrentLeafId(store);
+        const hasCurrentLeafNode = Boolean(
+            currentLeafId && getNodeDirect(store, currentLeafId)
+        );
+
+        const visibleNewest = candidateStoreCanResolveVisibleNewestNode(store);
+
+        let score = 0;
+
+        if (visibleNewest.ok) score += 1000000;
+        if (hasCurrentLeafNode) score += 100000;
+        score += Math.min(nodeCount, 50000);
+
+        return {
+            score,
+            nodeCount,
+            currentLeafId,
+            hasCurrentLeafNode,
+            visibleNewest,
+        };
+    }
+
     function requireStore(bridge) {
         return bridge.__store || null;
     }
@@ -719,11 +827,11 @@
                 const validation = validateStoreCandidate(current);
 
                 if (validation.ok) {
-                    const nodeCount = validation.nodeCount ?? getStoreNodeCount(current);
+                    const scored = scoreStoreCandidate(current);
 
-                    if (nodeCount > bestNodeCount) {
+                    if (scored.score > bestNodeCount) {
                         bestStore = current;
-                        bestNodeCount = nodeCount;
+                        bestNodeCount = scored.score;
                     }
 
                     continue;
@@ -838,17 +946,15 @@
                     const validation = validateStoreCandidate(candidate);
 
                     if (validation.ok) {
-                        const nodeCount = validation.nodeCount ?? getStoreNodeCount(candidate);
+                        const scored = scoreStoreCandidate(candidate);
 
-                        if (nodeCount > bestNodeCount) {
+                        if (scored.score > bestNodeCount) {
                             bestStore = candidate;
-                            bestNodeCount = nodeCount;
+                            bestNodeCount = scored.score;
                         }
 
                         continue;
                     }
-
-                    rejectStore(candidate, validation.reason);
                 }
 
                 const shouldDeepScan =
@@ -864,11 +970,11 @@
                     visitedObjects += scanned.visitedObjects;
 
                     if (scanned.store) {
-                        const nodeCount = getStoreNodeCount(scanned.store);
+                        const scored = scoreStoreCandidate(scanned.store);
 
-                        if (nodeCount > bestNodeCount) {
+                        if (scored.score > bestNodeCount) {
                             bestStore = scanned.store;
-                            bestNodeCount = nodeCount;
+                            bestNodeCount = scored.score;
                         }
                     }
 
@@ -1225,10 +1331,16 @@
                 return false;
             }
 
-            const currentNodeCount = getStoreNodeCount(this.__store);
+            const currentStore = this.__store;
+            const currentNodeCount = getStoreNodeCount(currentStore);
             const nextNodeCount = validation.nodeCount ?? getStoreNodeCount(store);
 
-            if (this.__store && nextNodeCount < currentNodeCount) {
+            if (currentStore === store) {
+                return true;
+            }
+
+            // Do not replace a hydrated/live store with a smaller bootstrap/root store.
+            if (currentStore && nextNodeCount < currentNodeCount) {
                 console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
                     currentNodeCount,
                     nextNodeCount,
@@ -1236,10 +1348,11 @@
                 return false;
             }
 
+            // Critical: fully unwrap the old store before touching the new one.
             this.disableStoreReadOptimization?.({ debug: false });
             this.resetInstalledStoreEnhancements();
-            this.__store = store;
 
+            this.__store = store;
             this.__registeredAt = Date.now();
             this.__lastError = null;
             this.__meta = {
@@ -1259,6 +1372,18 @@
                     debug: this.__storeReadOptimizationDebug,
                     clearStats: true,
                 });
+
+                if (!result?.ok) {
+                    console.warn("[thread-optimizer bridge] optimization failed after store registration", result);
+
+                    this.disableStoreReadOptimization?.({ debug: false });
+                    this.resetInstalledStoreEnhancements();
+
+                    this.__lastError = `optimization failed: ${result?.reason || "unknown"}`;
+                    this.__storeValidationFailed = true;
+
+                    return false;
+                }
 
                 if (this.__storeReadOptimizationDebug) {
                     console.log("[thread-optimizer bridge] re-applied store read optimization after store registration", result);
@@ -1871,6 +1996,7 @@
 
         installMessageIdIndex({
             profiled = ENABLE_CACHE_PROFILING,
+            maxSize = CONFIG.cache.defaultMaxSize,
         } = {}) {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
@@ -1883,10 +2009,28 @@
                 };
             }
 
-            const buildResult = this.buildMessageIdIndex();
-            if (!buildResult.ok) return buildResult;
+            const stats = {
+                hits: 0,
+                misses: 0,
+                fallbackHits: 0,
+                activeHits: 0,
+                activeMisses: 0,
+                cached: 0,
+                evictions: 0,
+                rebuilds: 0,
+                rebuildSkips: 0,
+                missSinceRebuild: 0,
+                lastRebuiltAt: null,
+                mode: profiled
+                    ? "profiled:lazy-stale-plus-active-raf"
+                    : "production:lazy-stale-plus-active-raf",
+            };
 
-            const bridgeRef = this;
+            const index = new Map();
+            const insertionOrder = [];
+
+            this.__messageIdIndex = index;
+            this.__messageIdIndexStats = stats;
 
             const result = installStoreMethodWrapper({
                 bridge: this,
@@ -1894,86 +2038,122 @@
                 originalSlot: "__messageIdIndexOriginal",
                 installedFlag: "__messageIdIndexInstalled",
                 createWrapper: ({ store, original, bridge }) => {
-                    if (profiled) {
-                        return function indexedMessageIdToExistingNodeIdProfiled(messageId) {
-                            const index = bridge.__messageIdIndex;
-                            const stats = bridge.__messageIdIndexStats;
+                    const getCurrentLeafId = createCurrentLeafIdReader(store);
 
-                            if (index) {
-                                const indexed = index.get(messageId);
+                    let activeFrame = -1;
+                    let activeKey = null;
+                    let activeValue = null;
 
-                                if (indexed !== undefined) {
-                                    stats.hits += 1;
-                                    return indexed;
-                                }
+                    function remember(key, value) {
+                        if (!key || !value) return;
+
+                        if (!index.has(key)) {
+                            insertionOrder.push(key);
+                        }
+
+                        index.set(key, value);
+
+                        if (value !== key) {
+                            if (!index.has(value)) {
+                                insertionOrder.push(value);
                             }
 
-                            stats.missSinceRebuild += 1;
+                            index.set(value, value);
+                        }
 
-                            if (stats.missSinceRebuild >= 150) {
-                                stats.missSinceRebuild = 0;
+                        while (insertionOrder.length > maxSize) {
+                            const oldest = insertionOrder.shift();
+                            index.delete(oldest);
+                            if (profiled) stats.evictions += 1;
+                        }
 
-                                bridge.maybeRebuildMessageIdIndex({
-                                    minIntervalMs: 1000,
-                                });
+                        if (profiled) stats.cached = index.size;
+                    }
 
-                                const rebuiltIndex = bridge.__messageIdIndex;
-                                const rebuilt = rebuiltIndex?.get(messageId);
+                    if (profiled) {
+                        return function lazyMessageIdToExistingNodeIdProfiled(messageId) {
+                            const cached = index.get(messageId);
 
-                                if (rebuilt !== undefined) {
-                                    stats.hits += 1;
-                                    return rebuilt;
+                            if (cached !== undefined) {
+                                stats.hits += 1;
+                                return cached;
+                            }
+
+                            const currentLeafId = getCurrentLeafId();
+
+                            if (messageId === currentLeafId) {
+                                const frame =
+                                    bridge.__displayTurnsRafFrame ||
+                                    bridge.__liveNodeReadFrame ||
+                                    0;
+
+                                if (
+                                    activeFrame === frame &&
+                                    activeKey === messageId
+                                ) {
+                                    stats.activeHits += 1;
+                                    return activeValue;
                                 }
-                            } else {
-                                stats.rebuildSkips += 1;
+
+                                stats.activeMisses += 1;
+
+                                const result = original.call(store, messageId) ?? null;
+
+                                activeFrame = frame;
+                                activeKey = messageId;
+                                activeValue = result;
+
+                                return result;
                             }
 
                             stats.misses += 1;
 
-                            const result = original.call(store, messageId);
+                            const result = original.call(store, messageId) ?? null;
 
                             if (result) {
                                 stats.fallbackHits += 1;
-                                bridge.__messageIdIndex?.set(messageId, result);
+                                remember(messageId, result);
                             }
 
-                            return result ?? null;
+                            return result;
                         };
                     }
 
-                    // production
-                    const getIndex = () => bridge.__messageIdIndex;
-                    const maybeRebuildMessageIdIndex = bridge.maybeRebuildMessageIdIndex;
-                    let missSinceRebuild = 0;
+                    return function lazyMessageIdToExistingNodeIdProduction(messageId) {
+                        const cached = index.get(messageId);
+                        if (cached !== undefined) return cached;
 
-                    return function indexedMessageIdToExistingNodeIdProduction(messageId) {
-                        const index = getIndex();
+                        const currentLeafId = getCurrentLeafId();
 
-                        if (index) {
-                            const indexed = index.get(messageId);
-                            if (indexed !== undefined) return indexed;
+                        if (messageId === currentLeafId) {
+                            const frame =
+                                bridge.__displayTurnsRafFrame ||
+                                bridge.__liveNodeReadFrame ||
+                                0;
+
+                            if (
+                                activeFrame === frame &&
+                                activeKey === messageId
+                            ) {
+                                return activeValue;
+                            }
+
+                            const result = original.call(store, messageId) ?? null;
+
+                            activeFrame = frame;
+                            activeKey = messageId;
+                            activeValue = result;
+
+                            return result;
                         }
 
-                        missSinceRebuild += 1;
-
-                        if (missSinceRebuild >= 150) {
-                            missSinceRebuild = 0;
-
-                            maybeRebuildMessageIdIndex.call(bridge, {
-                                minIntervalMs: 1000,
-                            });
-
-                            const rebuilt = getIndex()?.get(messageId);
-                            if (rebuilt !== undefined) return rebuilt;
-                        }
-
-                        const result = original.call(store, messageId);
+                        const result = original.call(store, messageId) ?? null;
 
                         if (result) {
-                            getIndex()?.set(messageId, result);
+                            remember(messageId, result);
                         }
 
-                        return result ?? null;
+                        return result;
                     };
                 },
             });
@@ -1993,12 +2173,19 @@
                 };
             }
 
-            if (this.__store && this.__messageIdIndexOriginal) {
-                this.__store.messageIdToExistingNodeId = this.__messageIdIndexOriginal;
+            const original =
+                typeof this.__messageIdIndexOriginal === "function"
+                    ? this.__messageIdIndexOriginal
+                    : this.__messageIdIndexOriginal?.messageIdToExistingNodeId;
+
+            if (this.__store && typeof original === "function") {
+                this.__store.messageIdToExistingNodeId = original;
             }
 
             this.__messageIdIndexInstalled = false;
             this.__messageIdIndexOriginal = null;
+            this.__messageIdIndex = null;
+            this.__messageIdIndexStats = null;
 
             return {
                 ok: true,
@@ -3940,6 +4127,16 @@
                 };
             }
 
+            if (!smokeTestStoreWrappers(this.__store)) {
+                this.__storeValidationFailed = true;
+
+                return {
+                    ok: false,
+                    reason: "store wrapper smoke test failed before optimization",
+                    status: this.status(),
+                };
+            }
+
             const result = {
                 ok: true,
                 discoveryResult,
@@ -4010,13 +4207,16 @@
 
             const store = this.__store;
 
-            if (!smokeTestStoreWrappers(store)) {
+            if (!smokeTestStoreWrappers(this.__store)) {
                 this.disableStoreReadOptimization?.({ debug: false });
+                this.resetInstalledStoreEnhancements();
+
+                this.__storeValidationFailed = true;
 
                 return {
                     ok: false,
-                    reason: "store wrapper smoke test failed; optimization disabled",
-                    statusAfter: this.status?.(),
+                    reason: "store wrapper smoke test failed after optimization",
+                    status: this.status(),
                 };
             }
 
