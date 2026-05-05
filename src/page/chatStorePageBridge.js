@@ -63,6 +63,7 @@
             storeProfiler: false,
             branchCallSites: false,
             nodeCallSites: false,
+            findNodeCallSites: false,
         },
     };
 
@@ -112,6 +113,7 @@
     const ENABLE_BRANCH_CALLSITE_STATS = CONFIG.flags.branchCallSites || ENABLE_DEBUG;
     const ENABLE_CACHE_PROFILING = CONFIG.flags.cacheProfiling || ENABLE_DEBUG;
     const ENABLE_NODE_CALLSITE_STATS = CONFIG.flags.nodeCallSites || ENABLE_DEBUG;
+    const ENABLE_FIND_NODE_CALLSITE_STATS = CONFIG.flags.findNodeCallSites || ENABLE_DEBUG;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -1194,6 +1196,15 @@
         __updateNodeMessageRafBatcherOriginal: null,
         __updateNodeMessageRafBatcherPending: null,
 
+        __findNodePredicateCacheInstalled: false,
+        __findNodePredicateCacheOriginal: null,
+        __findNodePredicateCache: null,
+        __findNodePredicateCacheStats: null,
+
+        __findNodeCallSiteProfilerInstalled: false,
+        __findNodeCallSiteProfilerOriginal: null,
+        __findNodeCallSiteProfilerStats: null,
+
         status() {
             return {
                 installed: true,
@@ -1280,6 +1291,7 @@
                 "__getLeafFromNodeFrameCache",
                 "__getLeafFromNodeFrameCacheStats",
                 "__leafDescendantCache",
+                "__leafDescendantMissCache",
             ]);
 
             this.__branchCacheInstalled = false;
@@ -1333,6 +1345,19 @@
             clearBridgeSlots(this, [
                 "__updateNodeMessageRafBatcherOriginal",
                 "__updateNodeMessageRafBatcherPending",
+            ]);
+
+            this.__findNodePredicateCacheInstalled = false;
+            clearBridgeSlots(this, [
+                "__findNodePredicateCacheOriginal",
+                "__findNodePredicateCache",
+                "__findNodePredicateCacheStats",
+            ]);
+
+            this.__findNodeCallSiteProfilerInstalled = false;
+            clearBridgeSlots(this, [
+                "__findNodeCallSiteProfilerOriginal",
+                "__findNodeCallSiteProfilerStats",
             ]);
         },
 
@@ -3237,6 +3262,8 @@ installFindNodeFromLeafFrameCache({
                     activeLeafRafMisses: 0,
                     descendantHits: 0,
                     descendantWrites: 0,
+                    descendantMissHits: 0,
+                    descendantMissWrites: 0,
                     directWalks: 0,
                     directWalkReturns: 0,
                     originalCalls: 0,
@@ -3263,6 +3290,8 @@ installFindNodeFromLeafFrameCache({
 
             const leafDescendantCache = new Map();
             this.__leafDescendantCache = leafDescendantCache;
+            const leafDescendantMissCache = new Set();
+            this.__leafDescendantMissCache = leafDescendantMissCache;
 
             const get = frameCache.get;
             const set = frameCache.set;
@@ -3375,6 +3404,24 @@ installFindNodeFromLeafFrameCache({
                                 return descendantCached;
                             }
 
+                            if (leafDescendantMissCache.has(key)) {
+                                stats.descendantMissHits += 1;
+                                stats.originalCalls += 1;
+
+                                const result = original.call(store, id) ?? null;
+                                set(key, result);
+
+                                const leafId = result?.id ?? null;
+                                if (leafId && leafId !== key) {
+                                    set(leafId, result);
+                                    leafDescendantCache.set(key, result);
+                                    leafDescendantMissCache.delete(key);
+                                    stats.descendantWrites += 1;
+                                }
+
+                                return result;
+                            }
+
                             stats.directWalks += 1;
 
                             const directLeaf = tryDirectLeafWalk(key);
@@ -3387,6 +3434,8 @@ installFindNodeFromLeafFrameCache({
                                 return rememberLeaf(key, directLeaf);
                             }
 
+                            leafDescendantMissCache.add(key);
+                            stats.descendantMissWrites += 1;
                             stats.originalCalls += 1;
 
                             const result = original.call(store, id) ?? null;
@@ -3397,6 +3446,7 @@ installFindNodeFromLeafFrameCache({
                             if (leafId && leafId !== key) {
                                 set(leafId, result);
                                 leafDescendantCache.set(key, result);
+                                leafDescendantMissCache.delete(key);
                                 stats.descendantWrites += 1;
                             }
 
@@ -3439,11 +3489,15 @@ installFindNodeFromLeafFrameCache({
                             return descendantCached;
                         }
 
-                        const directLeaf = tryDirectLeafWalk(key);
+                        if (!leafDescendantMissCache.has(key)) {
+                            const directLeaf = tryDirectLeafWalk(key);
 
-                        if (directLeaf) {
-                            leafDescendantCache.set(key, directLeaf);
-                            return rememberLeaf(key, directLeaf);
+                            if (directLeaf) {
+                                leafDescendantCache.set(key, directLeaf);
+                                return rememberLeaf(key, directLeaf);
+                            }
+
+                            leafDescendantMissCache.add(key);
                         }
 
                         const result = original.call(store, id) ?? null;
@@ -3454,6 +3508,7 @@ installFindNodeFromLeafFrameCache({
                         if (leafId && leafId !== key) {
                             set(leafId, result);
                             leafDescendantCache.set(key, result);
+                            leafDescendantMissCache.delete(key);
                         }
 
                         return result;
@@ -4061,6 +4116,606 @@ installFindNodeFromLeafFrameCache({
             );
         },
 
+installFindNodeCallSiteProfiler({
+    maxCallSites = 50,
+    sampleEvery = 100,
+    maxPredicateSourcesPerSite = 10,
+    predicateSourcePreviewLength = 500,
+} = {}) {
+    const store = requireStore(this);
+    if (!store) return unavailable("store not registered");
+
+    if (this.__findNodeCallSiteProfilerInstalled) {
+        return { ok: true, alreadyInstalled: true };
+    }
+
+    const original = getStoreMethod(store, "findNode");
+    if (!original) return unavailable("findNode unavailable");
+
+    const bridgeRef = this;
+
+    const stats = {
+        installedAt: Date.now(),
+        totalCalls: 0,
+        sampledCalls: 0,
+        maxCallSites,
+        sampleEvery,
+        maxPredicateSourcesPerSite,
+        predicateSourcePreviewLength,
+        callSites: {},
+    };
+
+    function normalizeFindNodeStack(stack) {
+        if (!stack || typeof stack !== "string") return "unknown";
+
+        return stack
+            .split("\n")
+            .slice(2, 10)
+            .map((line) =>
+                line
+                    .trim()
+                    .replace(window.location.origin, "")
+                    .replace(/:\d+:\d+/g, ":<line>:<col>")
+            )
+            .join("\n");
+    }
+
+    function getPredicateSourcePreview(value) {
+        if (typeof value !== "function") return null;
+
+        try {
+            return Function.prototype.toString
+                .call(value)
+                .slice(0, predicateSourcePreviewLength);
+        } catch (error) {
+            return `[[Function#toString failed: ${String(error?.message || error)}]]`;
+        }
+    }
+
+    function recordPredicateSource(entry, source, now, cacheEvent) {
+        if (!source) return;
+
+        const sources = entry.predicateSources ??= {};
+        let sourceEntry = sources[source];
+
+        if (sourceEntry) {
+            sourceEntry.calls += 1;
+            sourceEntry.lastSeenAt = now;
+        } else {
+            const keys = Object.keys(sources);
+
+            if (keys.length >= maxPredicateSourcesPerSite) {
+                const lowest = keys.reduce((a, b) =>
+                    sources[a].calls < sources[b].calls ? a : b
+                );
+
+                delete sources[lowest];
+            }
+
+            sourceEntry = sources[source] = {
+                calls: 1,
+                firstSeenAt: now,
+                lastSeenAt: now,
+                cacheHits: 0,
+                cacheMisses: 0,
+                cacheStaleHits: 0,
+                cacheWrites: 0,
+                cacheUnknown: 0,
+            };
+        }
+
+        if (cacheEvent?.type === "hit") sourceEntry.cacheHits += 1;
+        else if (cacheEvent?.type === "miss") sourceEntry.cacheMisses += 1;
+        else if (cacheEvent?.type === "stale-hit") sourceEntry.cacheStaleHits += 1;
+        else if (cacheEvent?.type === "write") sourceEntry.cacheWrites += 1;
+        else sourceEntry.cacheUnknown += 1;
+    }
+
+    store.findNode = function profiledFindNodeCallSite(...args) {
+        stats.totalCalls += 1;
+
+        const sampleThisCall = (stats.totalCalls % sampleEvery) === 0;
+        let beforeCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
+
+        const result = original.apply(store, args);
+
+        if (sampleThisCall) {
+            stats.sampledCalls += 1;
+
+            const now = Date.now();
+            const stack = normalizeFindNodeStack(new Error().stack);
+            const predicateSource = getPredicateSourcePreview(args[0]);
+
+            const afterCacheEvent = bridgeRef.__lastFindNodePredicateCacheEvent || null;
+            const afterCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
+            const cacheEvent =
+                afterCacheSeq !== beforeCacheSeq ? afterCacheEvent : null;
+
+            let entry = stats.callSites[stack];
+
+            if (entry) {
+                entry.calls += 1;
+                entry.lastArgType = typeof args[0];
+                entry.lastSeenAt = now;
+            } else {
+                const keys = Object.keys(stats.callSites);
+
+                if (keys.length >= maxCallSites) {
+                    const lowest = keys.reduce((a, b) =>
+                        stats.callSites[a].calls < stats.callSites[b].calls ? a : b
+                    );
+
+                    delete stats.callSites[lowest];
+                }
+
+                entry = stats.callSites[stack] = {
+                    calls: 1,
+                    firstArgType: typeof args[0],
+                    lastArgType: typeof args[0],
+                    firstSeenAt: now,
+                    lastSeenAt: now,
+                    cacheHits: 0,
+                    cacheMisses: 0,
+                    cacheStaleHits: 0,
+                    cacheWrites: 0,
+                    cacheUnknown: 0,
+                    predicateSources: {},
+                };
+            }
+
+            if (cacheEvent?.type === "hit") entry.cacheHits += 1;
+            else if (cacheEvent?.type === "miss") entry.cacheMisses += 1;
+            else if (cacheEvent?.type === "stale-hit") entry.cacheStaleHits += 1;
+            else if (cacheEvent?.type === "write") entry.cacheWrites += 1;
+            else entry.cacheUnknown += 1;
+
+            recordPredicateSource(entry, predicateSource, now, cacheEvent);
+        }
+
+        return result;
+    };
+
+    this.__findNodeCallSiteProfilerInstalled = true;
+    this.__findNodeCallSiteProfilerOriginal = original;
+    this.__findNodeCallSiteProfilerStats = stats;
+
+    return {
+        ok: true,
+        installed: true,
+        method: "findNode",
+        sampleEvery,
+        maxCallSites,
+        maxPredicateSourcesPerSite,
+    };
+},
+
+uninstallFindNodeCallSiteProfiler() {
+    if (!this.__findNodeCallSiteProfilerInstalled) {
+        return { ok: true, alreadyUninstalled: true };
+    }
+
+    if (
+        this.__store &&
+        typeof this.__findNodeCallSiteProfilerOriginal === "function"
+    ) {
+        this.__store.findNode = this.__findNodeCallSiteProfilerOriginal;
+    }
+
+    this.__findNodeCallSiteProfilerInstalled = false;
+    this.__findNodeCallSiteProfilerOriginal = null;
+
+    return { ok: true, uninstalled: true };
+},
+
+clearFindNodeCallSiteProfilerStats() {
+    const stats = this.__findNodeCallSiteProfilerStats;
+
+    if (!stats) {
+        return { ok: false, reason: "findNode call-site profiler not installed" };
+    }
+
+    stats.totalCalls = 0;
+    stats.sampledCalls = 0;
+    stats.callSites = {};
+    stats.installedAt = Date.now();
+
+    return { ok: true };
+},
+
+getFindNodeCallSiteProfilerStats() {
+    const stats = this.__findNodeCallSiteProfilerStats;
+
+    if (!stats) {
+        return {
+            installed: false,
+            totalCalls: 0,
+            sampledCalls: 0,
+            topCallSites: [],
+        };
+    }
+
+    return {
+        installed: this.__findNodeCallSiteProfilerInstalled,
+        installedAt: stats.installedAt,
+        totalCalls: stats.totalCalls,
+        sampledCalls: stats.sampledCalls,
+        sampleEvery: stats.sampleEvery,
+        maxCallSites: stats.maxCallSites,
+        maxPredicateSourcesPerSite: stats.maxPredicateSourcesPerSite,
+        topCallSites: Object.entries(stats.callSites)
+            .map(([stack, data]) => {
+                const cacheObserved =
+                    data.cacheHits +
+                    data.cacheMisses +
+                    data.cacheStaleHits +
+                    data.cacheWrites;
+
+                const topPredicateSources = Object.entries(data.predicateSources || {})
+                    .map(([source, sourceData]) => {
+                        const sourceObserved =
+                            sourceData.cacheHits +
+                            sourceData.cacheMisses +
+                            sourceData.cacheStaleHits +
+                            sourceData.cacheWrites;
+
+                        return {
+                            source,
+                            calls: sourceData.calls,
+                            firstSeenAt: sourceData.firstSeenAt,
+                            lastSeenAt: sourceData.lastSeenAt,
+                            cacheHits: sourceData.cacheHits,
+                            cacheMisses: sourceData.cacheMisses,
+                            cacheStaleHits: sourceData.cacheStaleHits,
+                            cacheWrites: sourceData.cacheWrites,
+                            cacheUnknown: sourceData.cacheUnknown,
+                            cacheHitRate:
+                                sourceObserved > 0
+                                    ? sourceData.cacheHits / sourceObserved
+                                    : 0,
+                        };
+                    })
+                    .sort((a, b) => b.calls - a.calls)
+                    .slice(0, stats.maxPredicateSourcesPerSite);
+
+                return {
+                    stack,
+                    calls: data.calls,
+                    firstArgType: data.firstArgType,
+                    lastArgType: data.lastArgType,
+                    firstSeenAt: data.firstSeenAt,
+                    lastSeenAt: data.lastSeenAt,
+                    cacheHits: data.cacheHits,
+                    cacheMisses: data.cacheMisses,
+                    cacheStaleHits: data.cacheStaleHits,
+                    cacheWrites: data.cacheWrites,
+                    cacheUnknown: data.cacheUnknown,
+                    cacheHitRate:
+                        cacheObserved > 0
+                            ? data.cacheHits / cacheObserved
+                            : 0,
+                    uniquePredicateSourceCount: Object.keys(data.predicateSources || {}).length,
+                    topPredicateSources,
+                };
+            })
+            .sort((a, b) => b.calls - a.calls)
+            .slice(0, 20),
+    };
+},
+
+        installFindNodePredicateCache({
+            maxSize = CONFIG.cache.defaultMaxSize,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
+
+            if (this.__findNodePredicateCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__findNodePredicateCacheStats,
+                };
+            }
+
+            const original = getStoreMethod(store, "findNode");
+            if (!original) return unavailable("findNode unavailable");
+
+            const cache = new Map();
+            const insertionOrder = [];
+
+            const fnToString = Function.prototype.toString;
+            const SOURCE_KEY_LEN = 160;
+
+            let lastPredicateFn = null;
+            let lastPredicateSourceKey = null;
+
+            let activeFrame = -1;
+            let activeKey = null;
+            let activeRestKey = "";
+            let activeValue = null;
+
+            const stats = profiled
+                ? {
+                    calls: 0,
+                    hits: 0,
+                    misses: 0,
+                    staleHits: 0,
+                    invalidPredicate: 0,
+                    writes: 0,
+                    activeRafHits: 0,
+                    activeRafMisses: 0,
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "profiled:findNode-predicate-positive-result-cache+raf-throttle",
+                    lastClearReason: null,
+                }
+                : {
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "production:findNode-predicate-positive-result-cache+raf-throttle",
+                    lastClearReason: null,
+                };
+
+            const bridgeRef = this;
+
+            function recordFindNodePredicateCacheEvent(type, key = null, nodeId = null) {
+                bridgeRef.__findNodePredicateCacheEventSeq =
+                    (bridgeRef.__findNodePredicateCacheEventSeq || 0) + 1;
+
+                bridgeRef.__lastFindNodePredicateCacheEvent = {
+                    type,
+                    key,
+                    nodeId,
+                    at: Date.now(),
+                };
+            }
+
+            function readCurrentLeafId() {
+                return typeof store.currentLeafId === "function"
+                    ? store.currentLeafId()
+                    : store.currentLeafId;
+            }
+
+            function getCurrentRafFrame() {
+                return (
+                    bridgeRef.__displayTurnsRafFrame ||
+                    bridgeRef.__liveNodeReadFrame ||
+                    0
+                );
+            }
+
+            function getPredicateSourceKey(predicateFn) {
+                if (predicateFn === lastPredicateFn) {
+                    return lastPredicateSourceKey;
+                }
+
+                const source = fnToString.call(predicateFn);
+                const key =
+                    source.length <= SOURCE_KEY_LEN
+                        ? source
+                        : (" " + source.slice(0, SOURCE_KEY_LEN)).slice(1);
+
+                lastPredicateFn = predicateFn;
+                lastPredicateSourceKey = key;
+
+                return key;
+            }
+
+            function makeKey(leafId, predicateSourceKey) {
+                return leafId + "::" + predicateSourceKey;
+            }
+
+            function makeRestKey(rest) {
+                if (!rest || rest.length === 0) return "";
+
+                return rest.map((value) => {
+                    if (
+                        typeof value === "string" ||
+                        typeof value === "number" ||
+                        typeof value === "boolean" ||
+                        value == null
+                    ) {
+                        return String(value);
+                    }
+
+                    return typeof value;
+                }).join("|");
+            }
+
+            function remember(key, node) {
+                if (!node?.id) return;
+
+                cache.set(key, node.id);
+                insertionOrder.push(key);
+
+                if (cache.size > maxSize) {
+                    const oldest = insertionOrder.shift();
+                    if (oldest !== undefined && cache.delete(oldest) && profiled) {
+                        stats.evictions += 1;
+                    }
+                }
+
+                if (profiled) {
+                    stats.writes += 1;
+                    stats.cached = cache.size;
+                }
+
+                recordFindNodePredicateCacheEvent("write", key, node.id);
+            }
+
+            function getCachedNode(key, predicateFn) {
+                const nodeId = cache.get(key);
+                if (nodeId === undefined) return undefined;
+
+                const node = getNodeDirect(store, nodeId);
+
+                if (node && predicateFn.call(store, node)) {
+                    if (profiled) stats.hits += 1;
+                    recordFindNodePredicateCacheEvent("hit", key, nodeId);
+                    return node;
+                }
+
+                cache.delete(key);
+
+                if (profiled) {
+                    stats.staleHits += 1;
+                    stats.cached = cache.size;
+                }
+
+                recordFindNodePredicateCacheEvent("stale-hit", key, nodeId);
+
+                return undefined;
+            }
+
+            function callOriginalWithRafThrottle(key, restKey, predicateFn, rest) {
+                const frame = getCurrentRafFrame();
+
+                if (
+                    activeFrame === frame &&
+                    activeKey === key &&
+                    activeRestKey === restKey
+                ) {
+                    if (profiled) stats.activeRafHits += 1;
+                    recordFindNodePredicateCacheEvent(
+                        "active-raf-hit",
+                        key,
+                        activeValue?.id ?? null
+                    );
+                    return activeValue;
+                }
+
+                if (profiled) stats.activeRafMisses += 1;
+
+                const result = original.call(store, predicateFn, ...rest) ?? null;
+
+                activeFrame = frame;
+                activeKey = key;
+                activeRestKey = restKey;
+                activeValue = result;
+
+                recordFindNodePredicateCacheEvent(
+                    "active-raf-miss",
+                    key,
+                    result?.id ?? null
+                );
+
+                return result;
+            }
+
+            this.__findNodePredicateCache = cache;
+            this.__findNodePredicateCacheStats = stats;
+            this.__findNodePredicateCacheOriginal = { findNode: original };
+
+            if (profiled) {
+                store.findNode = function cachedFindNodePredicateProfiled(predicateFn, ...rest) {
+                    stats.calls += 1;
+
+                    if (typeof predicateFn !== "function") {
+                        stats.invalidPredicate += 1;
+                        return original.call(store, predicateFn, ...rest) ?? null;
+                    }
+
+                    const leafId = readCurrentLeafId();
+                    if (!leafId) {
+                        stats.misses += 1;
+                        recordFindNodePredicateCacheEvent("miss", null, null);
+                        return original.call(store, predicateFn, ...rest) ?? null;
+                    }
+
+                    const sourceKey = getPredicateSourceKey(predicateFn);
+                    const key = makeKey(leafId, sourceKey);
+                    const restKey = makeRestKey(rest);
+
+                    const cached = getCachedNode(key, predicateFn);
+                    if (cached !== undefined) return cached;
+
+                    stats.misses += 1;
+
+                    const result = callOriginalWithRafThrottle(
+                        key,
+                        restKey,
+                        predicateFn,
+                        rest
+                    );
+
+                    if (result?.id) {
+                        remember(key, result);
+                    }
+
+                    return result;
+                };
+            } else {
+                store.findNode = function cachedFindNodePredicate(predicateFn, ...rest) {
+                    if (typeof predicateFn !== "function") {
+                        return original.call(store, predicateFn, ...rest) ?? null;
+                    }
+
+                    const leafId = readCurrentLeafId();
+                    if (!leafId) {
+                        return original.call(store, predicateFn, ...rest) ?? null;
+                    }
+
+                    const sourceKey = getPredicateSourceKey(predicateFn);
+                    const key = makeKey(leafId, sourceKey);
+                    const restKey = makeRestKey(rest);
+
+                    const cached = getCachedNode(key, predicateFn);
+                    if (cached !== undefined) return cached;
+
+                    const result = callOriginalWithRafThrottle(
+                        key,
+                        restKey,
+                        predicateFn,
+                        rest
+                    );
+
+                    if (result?.id) {
+                        remember(key, result);
+                    }
+
+                    return result;
+                };
+            }
+
+            this.__findNodePredicateCacheInstalled = true;
+
+            return {
+                ok: true,
+                installed: true,
+                methods: ["findNode"],
+                profiled,
+            };
+        },
+
+        uninstallFindNodePredicateCache() {
+            if (!this.__findNodePredicateCacheInstalled) {
+                return { ok: true, alreadyUninstalled: true };
+            }
+
+            const original = this.__findNodePredicateCacheOriginal?.findNode;
+
+            if (this.__store && typeof original === "function") {
+                this.__store.findNode = original;
+            }
+
+            this.__findNodePredicateCacheInstalled = false;
+            this.__findNodePredicateCacheOriginal = null;
+            this.__findNodePredicateCache = null;
+            this.__findNodePredicateCacheStats = null;
+
+            return { ok: true, uninstalled: true };
+        },
+
+        getFindNodePredicateCacheStats() {
+            return {
+                installed: Boolean(this.__findNodePredicateCacheInstalled),
+                size: this.__findNodePredicateCache?.size ?? 0,
+                stats: this.__findNodePredicateCacheStats,
+            };
+        },
+
         installGetDisplayTurnsCache({
             maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
@@ -4447,7 +5102,8 @@ installFindNodeFromLeafFrameCache({
 
                 pending.clear();
 
-                bridgeRef.clearStoreReadCache?.("raf-updateNodeMessage");
+                // Do not call clearStoreReadCache here.
+                // updateNodeMessage changes message payload/content, not node topology.
             }
 
             store.updateNodeMessage = function rafBatchedUpdateNodeMessage(nodeId, ...rest) {
@@ -4562,6 +5218,12 @@ installFindNodeFromLeafFrameCache({
                 findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache({
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
+                findNodePredicateCache: this.installFindNodePredicateCache({
+                    profiled: ENABLE_CACHE_PROFILING,
+                }),
+                findNodeCallSiteProfiler: ENABLE_FIND_NODE_CALLSITE_STATS
+                    ? this.installFindNodeCallSiteProfiler()
+                    : { ok: true, skipped: true, reason: "disabled by ENABLE_FIND_NODE_CALLSITE_STATS" },
                 getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache({
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
@@ -4599,6 +5261,8 @@ installFindNodeFromLeafFrameCache({
                     messageIdIndex: result.messageIdIndex?.ok,
                     nodeFrameCache: result.nodeFrameCache?.ok,
                     findNodeFromLeafFrameCache: result.findNodeFromLeafFrameCache?.ok,
+                    findNodePredicateCache: result.findNodePredicateCache?.ok,
+                    findNodeCallSiteProfiler: result.findNodeCallSiteProfiler?.ok,
                     getLeafFromNodeFrameCache: result.getLeafFromNodeFrameCache?.ok,
                     branchCache: result.branchCache?.ok,
                     resolvedNodeFrameCache: result.resolvedNodeFrameCache?.ok,
@@ -4630,6 +5294,8 @@ installFindNodeFromLeafFrameCache({
                 getDisplayTurnsCache: this.uninstallGetDisplayTurnsCache?.(),
                 resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
                 getLeafFromNodeFrameCache: this.uninstallGetLeafFromNodeFrameCache(),
+                findNodeCallSiteProfiler: this.uninstallFindNodeCallSiteProfiler?.(),
+                findNodePredicateCache: this.uninstallFindNodePredicateCache?.(),
                 findNodeFromLeafFrameCache: this.uninstallFindNodeFromLeafFrameCache(),
                 nodeFrameCache: this.uninstallExistingNodeFrameCache(),
                 branchCache: this.uninstallBranchCache(),
@@ -4677,8 +5343,29 @@ installFindNodeFromLeafFrameCache({
                 resetFrameCacheStats(this[statsSlot], this[cacheSlot]);
             }
 
+            if (this.__findNodePredicateCacheStats) {
+                const stats = this.__findNodePredicateCacheStats;
+
+                if ("calls" in stats) stats.calls = 0;
+                if ("hits" in stats) stats.hits = 0;
+                if ("misses" in stats) stats.misses = 0;
+                if ("staleHits" in stats) stats.staleHits = 0;
+                if ("invalidPredicate" in stats) stats.invalidPredicate = 0;
+                if ("writes" in stats) stats.writes = 0;
+                if ("activeRafHits" in stats) stats.activeRafHits = 0;
+                if ("activeRafMisses" in stats) stats.activeRafMisses = 0;
+                if ("evictions" in stats) stats.evictions = 0;
+
+                stats.cached = this.__findNodePredicateCache?.size ?? 0;
+                stats.lastClearReason = null;
+            }
+
             if (ENABLE_BRANCH_CALLSITE_STATS) {
                 this.clearBranchCallSiteStats?.();
+            }
+
+            if (ENABLE_FIND_NODE_CALLSITE_STATS) {
+                this.clearFindNodeCallSiteProfilerStats?.();
             }
 
             return { ok: true };
@@ -4707,6 +5394,8 @@ installFindNodeFromLeafFrameCache({
                 getNodeByIdOrMessageIdCallSites: this.getNodeByIdOrMessageIdCallSiteStats?.(),
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
+                findNodeCallSites: this.getFindNodeCallSiteProfilerStats?.(),
+                findNodePredicateCache: this.getFindNodePredicateCacheStats?.(),
             };
         },
 
@@ -4718,12 +5407,96 @@ installFindNodeFromLeafFrameCache({
         },
 
         clearStoreReadCache(reason = "manual") {
+            const invalidationStats = this.__cacheInvalidationStats ??= {
+                totalCalls: 0,
+                byReason: {},
+                byCache: {},
+                recent: [],
+                maxRecent: 50,
+            };
+
+            invalidationStats.totalCalls += 1;
+            invalidationStats.byReason[reason] = (invalidationStats.byReason[reason] || 0) + 1;
+
+            const recordInvalidation = (cacheName, action, sizeBefore = 0, extra = null) => {
+                const cacheStats = invalidationStats.byCache[cacheName] ??= {
+                    clears: 0,
+                    skipped: 0,
+                    sizeCleared: 0,
+                    byReason: {},
+                    byAction: {},
+                };
+
+                cacheStats.byReason[reason] = (cacheStats.byReason[reason] || 0) + 1;
+                cacheStats.byAction[action] = (cacheStats.byAction[action] || 0) + 1;
+
+                if (action === "cleared") {
+                    cacheStats.clears += 1;
+                    cacheStats.sizeCleared += sizeBefore || 0;
+                } else {
+                    cacheStats.skipped += 1;
+                }
+
+                invalidationStats.recent.push({
+                    at: Date.now(),
+                    reason,
+                    cacheName,
+                    action,
+                    sizeBefore,
+                    extra,
+                });
+
+                if (invalidationStats.recent.length > invalidationStats.maxRecent) {
+                    invalidationStats.recent.shift();
+                }
+            };
+
+            const isNonTopologyMutation =
+                reason === "store-mutation" ||
+                reason === "raf-updateNodeMessage";
+
+            const isFullClear =
+                reason === "manual" ||
+                reason === "conversation-change" ||
+                reason === "topology-mutation";
+
             for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
                 const cache = this[cacheSlot];
                 const stats = this[statsSlot];
 
                 if (cacheSlot === "__branchCache") {
+                    const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
+                    const getBranchFromLeafSize = this.__branchCache?.getBranchFromLeaf?.size ?? 0;
+
+                    if (isNonTopologyMutation) {
+                        recordInvalidation("__branchCache.getBranch", "skipped", getBranchSize, {
+                            why: "branch cache is safe across message-only mutation",
+                        });
+
+                        recordInvalidation("__branchCache.getBranchFromLeaf", "skipped", getBranchFromLeafSize, {
+                            why: "branch-from-leaf topology unchanged",
+                        });
+
+                        if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
+                            for (const branchStats of [
+                                this.__branchCacheStats.getBranch,
+                                this.__branchCacheStats.getBranchFromLeaf,
+                            ]) {
+                                if (branchStats) {
+                                    branchStats.skippedClears = (branchStats.skippedClears || 0) + 1;
+                                    branchStats.lastClearReason = "skipped-" + reason;
+                                }
+                            }
+                        }
+
+                        continue;
+                    }
+
                     this.__branchCache?.getBranch?.clear?.();
+                    this.__branchCache?.getBranchFromLeaf?.clear?.();
+
+                    recordInvalidation("__branchCache.getBranch", "cleared", getBranchSize);
+                    recordInvalidation("__branchCache.getBranchFromLeaf", "cleared", getBranchFromLeafSize);
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
                         if (this.__branchCacheStats.getBranch) {
@@ -4733,8 +5506,36 @@ installFindNodeFromLeafFrameCache({
                         }
 
                         if (this.__branchCacheStats.getBranchFromLeaf) {
+                            this.__branchCacheStats.getBranchFromLeaf.cached = 0;
+                            this.__branchCacheStats.getBranchFromLeaf.frameClears += 1;
                             this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
                         }
+                    }
+
+                    continue;
+                }
+
+                if (isNonTopologyMutation) {
+                    recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
+                        why: "message-only mutation does not change node topology",
+                    });
+
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-" + reason;
+                    }
+
+                    continue;
+                }
+
+                if (!isFullClear) {
+                    recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
+                        why: "unknown/non-structural reason defaults to preserving long-lived cache",
+                    });
+
+                    if (stats && ENABLE_CACHE_PROFILING) {
+                        stats.skippedClears = (stats.skippedClears || 0) + 1;
+                        stats.lastClearReason = "skipped-" + reason;
                     }
 
                     continue;
@@ -4743,45 +5544,19 @@ installFindNodeFromLeafFrameCache({
                 if (cacheSlot === "__findNodeFromLeafFrameCache") {
                     this.__findNodeFromLeafAncestorChainCache?.clear?.();
                     this.__findNodeFromLeafPredicateNodeResultCache?.clear?.();
+                    this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
                 }
 
-                if (
-                    cacheSlot === "__getLeafFromNodeFrameCache" &&
-                    reason !== "store-mutation"
-                ) {
+                if (cacheSlot === "__getLeafFromNodeFrameCache") {
                     this.__leafDescendantCache?.clear?.();
+                    this.__leafDescendantMissCache?.clear?.();
                 }
 
-                const keepAcrossStoreMutation =
-                    reason === "store-mutation" &&
-                    (
-                        cacheSlot === "__getDisplayTurnsCache" ||
-                        cacheSlot === "__getLeafFromNodeFrameCache" ||
-                        cacheSlot === "__findNodeFromLeafFrameCache"
-                    );
-
-                if (keepAcrossStoreMutation) {
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-store-mutation";
-                    }
-                    continue;
-                }
-
-                if (
-                    cacheSlot === "__existingNodeFrameCache" &&
-                    reason !== "store-mutation" &&
-                    reason !== "conversation-change" &&
-                    reason !== "manual"
-                ) {
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-" + reason;
-                    }
-                    continue;
-                }
+                const sizeBefore = cache?.size ?? 0;
 
                 cache?.clear?.();
+
+                recordInvalidation(cacheSlot, "cleared", sizeBefore);
 
                 if (stats && ENABLE_CACHE_PROFILING) {
                     stats.cached = 0;
@@ -4791,7 +5566,11 @@ installFindNodeFromLeafFrameCache({
                 }
             }
 
-            return { ok: true };
+            return {
+                ok: true,
+                reason,
+                stats: invalidationStats,
+            };
         },
 
         getStoreReadCacheStats() {
