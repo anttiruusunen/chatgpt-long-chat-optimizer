@@ -59,8 +59,8 @@
 
         flags: {
             debug: false,
-            cacheProfiling: false,
-            storeProfiler: false,
+            cacheProfiling: true,
+            storeProfiler: true,
             branchCallSites: false,
             nodeCallSites: false,
         },
@@ -3134,6 +3134,20 @@ installFindNodeFromLeafFrameCache({
         };
     }
 
+    const originalFindNode = getStoreMethod(store, "findNode");
+
+    if (originalFindNode && !this.__findNodeFromLeafFindNodeOriginal) {
+        this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
+
+        store.findNode = function cachedFindNode(predicateFn) {
+            const currentLeafId = currentLeafIdIsFn
+                ? currentLeafIdValue.call(store)
+                : currentLeafIdValue;
+
+            return store.findNodeFromLeaf(predicateFn, currentLeafId);
+        };
+    }
+
     this.__findNodeFromLeafFrameCacheInstalled = true;
 
     return {
@@ -3145,6 +3159,11 @@ installFindNodeFromLeafFrameCache({
 },
 
         uninstallFindNodeFromLeafFrameCache() {
+            if (this.__store && this.__findNodeFromLeafFindNodeOriginal?.findNode) {
+                this.__store.findNode = this.__findNodeFromLeafFindNodeOriginal.findNode;
+                this.__findNodeFromLeafFindNodeOriginal = null;
+            }
+
             return uninstallMethodFrameCache({
                 bridge: this,
                 originalSlot: "__findNodeFromLeafFrameCacheOriginal",
