@@ -4411,7 +4411,6 @@
 
             let activeFrame = -1;
             let activeKey = null;
-            let activeRestKey = "";
             let activeValue = null;
 
             const stats = profiled
@@ -4473,23 +4472,6 @@
 
             function makeKey(leafId, predicateSourceKey) {
                 return leafId + "::" + predicateSourceKey;
-            }
-
-            function makeRestKey(rest) {
-                if (!rest || rest.length === 0) return "";
-
-                return rest.map((value) => {
-                    if (
-                        typeof value === "string" ||
-                        typeof value === "number" ||
-                        typeof value === "boolean" ||
-                        value == null
-                    ) {
-                        return String(value);
-                    }
-
-                    return typeof value;
-                }).join("|");
             }
 
             function recordFindNodePredicateCacheEvent(type, key = null, nodeId = null) {
@@ -4573,34 +4555,31 @@
                 return undefined;
             }
 
-            function callOriginalWithRafThrottleProduction(key, restKey, predicateFn, rest) {
+            function callOriginalWithRafThrottleProduction(key, predicateFn) {
                 const frame = getCurrentRafFrame();
 
                 if (
                     activeFrame === frame &&
-                    activeKey === key &&
-                    activeRestKey === restKey
+                    activeKey === key
                 ) {
                     return activeValue;
                 }
 
-                const result = original.call(store, predicateFn, ...rest) ?? null;
+                const result = original.call(store, predicateFn) ?? null;
 
                 activeFrame = frame;
                 activeKey = key;
-                activeRestKey = restKey;
                 activeValue = result;
 
                 return result;
             }
 
-            function callOriginalWithRafThrottleProfiled(key, restKey, predicateFn, rest) {
+            function callOriginalWithRafThrottleProfiled(key, predicateFn) {
                 const frame = getCurrentRafFrame();
 
                 if (
                     activeFrame === frame &&
-                    activeKey === key &&
-                    activeRestKey === restKey
+                    activeKey === key
                 ) {
                     stats.activeRafHits += 1;
 
@@ -4615,11 +4594,10 @@
 
                 stats.activeRafMisses += 1;
 
-                const result = original.call(store, predicateFn, ...rest) ?? null;
+                const result = original.call(store, predicateFn) ?? null;
 
                 activeFrame = frame;
                 activeKey = key;
-                activeRestKey = restKey;
                 activeValue = result;
 
                 recordFindNodePredicateCacheEvent(
@@ -4636,12 +4614,12 @@
             this.__findNodePredicateCacheOriginal = { findNode: original };
 
             if (profiled) {
-                store.findNode = function cachedFindNodePredicateProfiled(predicateFn, ...rest) {
+                store.findNode = function cachedFindNodePredicateProfiled(predicateFn) {
                     stats.calls += 1;
 
                     if (typeof predicateFn !== "function") {
                         stats.invalidPredicate += 1;
-                        return original.call(store, predicateFn, ...rest) ?? null;
+                        return original.call(store, predicateFn) ?? null;
                     }
 
                     const leafId = readCurrentLeafId();
@@ -4649,24 +4627,20 @@
                     if (!leafId) {
                         stats.misses += 1;
                         recordFindNodePredicateCacheEvent("miss", null, null);
-                        return original.call(store, predicateFn, ...rest) ?? null;
+                        return original.call(store, predicateFn) ?? null;
                     }
 
                     const sourceKey = getPredicateSourceKey(predicateFn);
                     const key = makeKey(leafId, sourceKey);
 
                     const cached = getCachedNodeProfiled(key, predicateFn);
-                    if (cached !== undefined) return cached;
+                    if (cached !== undefined) {
+                        return cached;
+                    }
 
                     stats.misses += 1;
 
-                    const restKey = rest.length === 0 ? "" : makeRestKey(rest);
-                    const result = callOriginalWithRafThrottleProfiled(
-                        key,
-                        restKey,
-                        predicateFn,
-                        rest
-                    );
+                    const result = callOriginalWithRafThrottleProfiled(key, predicateFn);
 
                     if (result?.id) {
                         rememberProfiled(key, result);
@@ -4675,29 +4649,25 @@
                     return result;
                 };
             } else {
-                store.findNode = function cachedFindNodePredicateProduction(predicateFn, ...rest) {
+                store.findNode = function cachedFindNodePredicateProduction(predicateFn) {
                     if (typeof predicateFn !== "function") {
-                        return original.call(store, predicateFn, ...rest) ?? null;
+                        return original.call(store, predicateFn) ?? null;
                     }
 
                     const leafId = readCurrentLeafId();
                     if (!leafId) {
-                        return original.call(store, predicateFn, ...rest) ?? null;
+                        return original.call(store, predicateFn) ?? null;
                     }
 
                     const sourceKey = getPredicateSourceKey(predicateFn);
                     const key = makeKey(leafId, sourceKey);
 
                     const cached = getCachedNodeProduction(key, predicateFn);
-                    if (cached !== undefined) return cached;
+                    if (cached !== undefined) {
+                        return cached;
+                    }
 
-                    const restKey = rest.length === 0 ? "" : makeRestKey(rest);
-                    const result = callOriginalWithRafThrottleProduction(
-                        key,
-                        restKey,
-                        predicateFn,
-                        rest
-                    );
+                    const result = callOriginalWithRafThrottleProduction(key, predicateFn);
 
                     if (result?.id) {
                         rememberProduction(key, result);
