@@ -1190,6 +1190,10 @@
         __lastLiveFindPredicateSource: null,
         __lastLiveFindValue: null,
 
+        __updateNodeMessageRafBatcherInstalled: false,
+        __updateNodeMessageRafBatcherOriginal: null,
+        __updateNodeMessageRafBatcherPending: null,
+
         status() {
             return {
                 installed: true,
@@ -1323,6 +1327,12 @@
                 "__lastLiveFindLeafId",
                 "__lastLiveFindPredicateSource",
                 "__lastLiveFindValue",
+            ]);
+
+            this.__updateNodeMessageRafBatcherInstalled = false;
+            clearBridgeSlots(this, [
+                "__updateNodeMessageRafBatcherOriginal",
+                "__updateNodeMessageRafBatcherPending",
             ]);
         },
 
@@ -4412,6 +4422,76 @@ installFindNodeFromLeafFrameCache({
             });
         },
 
+        installUpdateNodeMessageRafBatcher() {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
+
+            if (this.__updateNodeMessageRafBatcherInstalled) {
+                return { ok: true, alreadyInstalled: true };
+            }
+
+            const original = getStoreMethod(store, "updateNodeMessage");
+            if (!original) return unavailable("updateNodeMessage unavailable");
+
+            const pending = new Map();
+            let rafId = 0;
+
+            const bridgeRef = this;
+
+            function flush() {
+                rafId = 0;
+
+                for (const [, args] of pending) {
+                    original.apply(store, args);
+                }
+
+                pending.clear();
+
+                bridgeRef.clearStoreReadCache?.("raf-updateNodeMessage");
+            }
+
+            store.updateNodeMessage = function rafBatchedUpdateNodeMessage(nodeId, ...rest) {
+                pending.set(nodeId, [nodeId, ...rest]);
+
+                if (!rafId) {
+                    rafId = requestAnimationFrame(flush);
+                }
+
+                return undefined;
+            };
+
+            this.__updateNodeMessageRafBatcherInstalled = true;
+            this.__updateNodeMessageRafBatcherOriginal = {
+                updateNodeMessage: original,
+            };
+            this.__updateNodeMessageRafBatcherPending = pending;
+
+            return {
+                ok: true,
+                installed: true,
+                methods: ["updateNodeMessage"],
+                mode: "raf-latest-per-node",
+            };
+        },
+
+        uninstallUpdateNodeMessageRafBatcher() {
+            if (!this.__updateNodeMessageRafBatcherInstalled) {
+                return { ok: true, alreadyUninstalled: true };
+            }
+
+            const original = this.__updateNodeMessageRafBatcherOriginal?.updateNodeMessage;
+
+            if (this.__store && typeof original === "function") {
+                this.__store.updateNodeMessage = original;
+            }
+
+            this.__updateNodeMessageRafBatcherInstalled = false;
+            this.__updateNodeMessageRafBatcherOriginal = null;
+            this.__updateNodeMessageRafBatcherPending = null;
+
+            return { ok: true, uninstalled: true };
+        },
+
         getNodeByIdOrMessageIdCallSiteStats() {
             const stats = this.__getNodeByIdOrMessageIdCallSites;
 
@@ -4466,6 +4546,7 @@ installFindNodeFromLeafFrameCache({
                 messageIdIndex: this.installMessageIdIndex({
                     profiled: ENABLE_CACHE_PROFILING,
                 }),
+                updateNodeMessageRafBatcher: this.installUpdateNodeMessageRafBatcher(),
                 indexRefreshHooks: [
                     this.wrapMutationForIndexRefresh("addMessageNode"),
                     this.wrapMutationForIndexRefresh("addOptimisticMessageNode"),
@@ -4544,6 +4625,7 @@ installFindNodeFromLeafFrameCache({
 
         disableStoreReadOptimization({ debug = false } = {}) {
             const result = {
+                updateNodeMessageRafBatcher: this.uninstallUpdateNodeMessageRafBatcher?.(),
                 profiler: this.uninstallStoreProfiler?.(),
                 getDisplayTurnsCache: this.uninstallGetDisplayTurnsCache?.(),
                 resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
