@@ -563,7 +563,7 @@
             ) {
                 return true;
             }
-        } catch {}
+        } catch { }
 
         const tag = objectToString.call(value);
 
@@ -616,11 +616,11 @@
 
         try {
             rootId = safeCall(store.rootId);
-        } catch {}
+        } catch { }
 
         try {
             currentLeafId = safeCall(store.currentLeafId);
-        } catch {}
+        } catch { }
 
         return {
             found: true,
@@ -691,7 +691,7 @@
             if (nodes instanceof Map) return nodes.size;
             if (Array.isArray(nodes)) return nodes.length;
             if (nodes && typeof nodes === "object") return Object.keys(nodes).length;
-        } catch {}
+        } catch { }
 
         return 0;
     }
@@ -1534,7 +1534,7 @@
                     if (leafId) {
                         this.__prunedLeafIdSet.add(leafId);
                     }
-                } catch {}
+                } catch { }
             }
 
             const inspection = this.inspectMessageById(normalizedMessageId);
@@ -2567,651 +2567,651 @@
             );
         },
 
-installFindNodeFromLeafFrameCache({
-    maxSize = CONFIG.cache.defaultMaxSize,
-    profiled = ENABLE_CACHE_PROFILING,
-} = {}) {
-    const store = requireStore(this);
-    if (!store) return unavailable("store not registered");
+        installFindNodeFromLeafFrameCache({
+            maxSize = CONFIG.cache.defaultMaxSize,
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
-    if (this.__findNodeFromLeafFrameCacheInstalled) {
-        return {
-            ok: true,
-            alreadyInstalled: true,
-            stats: this.__findNodeFromLeafFrameCacheStats,
-        };
-    }
+            if (this.__findNodeFromLeafFrameCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__findNodeFromLeafFrameCacheStats,
+                };
+            }
 
-    const original = getStoreMethod(store, "findNodeFromLeaf");
-    if (!original) return unavailable("findNodeFromLeaf unavailable");
+            const original = getStoreMethod(store, "findNodeFromLeaf");
+            if (!original) return unavailable("findNodeFromLeaf unavailable");
 
-    const originalFindNode = getStoreMethod(store, "findNode");
-    if (!originalFindNode) return unavailable("findNode unavailable");
+            const originalFindNode = getStoreMethod(store, "findNode");
+            if (!originalFindNode) return unavailable("findNode unavailable");
 
-    const stats = profiled
-        ? {
-            calls: 0,
-            misses: 0,
-            fallbackCalls: 0,
-            sourceKeyMisses: 0,
-            sourceKeyFastHits: 0,
-            liveHits: 0,
-            liveMisses: 0,
-            normalHits: 0,
-            normalMisses: 0,
+            const stats = profiled
+                ? {
+                    calls: 0,
+                    misses: 0,
+                    fallbackCalls: 0,
+                    sourceKeyMisses: 0,
+                    sourceKeyFastHits: 0,
+                    liveHits: 0,
+                    liveMisses: 0,
+                    normalHits: 0,
+                    normalMisses: 0,
 
-            activeLeafOriginalTests: 0,
-            ancestorNodeTests: 0,
-            ancestorChainHits: 0,
-            ancestorChainMisses: 0,
+                    activeLeafOriginalTests: 0,
+                    ancestorNodeTests: 0,
+                    ancestorChainHits: 0,
+                    ancestorChainMisses: 0,
 
-            dormantAncestorHits: 0,
-            dormantAncestorMisses: 0,
-            dormantAncestorWrites: 0,
-            dormantAncestorReturnsNode: 0,
-            dormantAncestorReturnsNull: 0,
+                    dormantAncestorHits: 0,
+                    dormantAncestorMisses: 0,
+                    dormantAncestorWrites: 0,
+                    dormantAncestorReturnsNode: 0,
+                    dormantAncestorReturnsNull: 0,
 
-            liveCacheCreates: 0,
-            liveCacheReturnsNode: 0,
-            liveCacheReturnsNull: 0,
-            normalCacheReturnsNode: 0,
-            normalCacheReturnsNull: 0,
-            normalOriginalReturnsNode: 0,
-            normalOriginalReturnsNull: 0,
+                    liveCacheCreates: 0,
+                    liveCacheReturnsNode: 0,
+                    liveCacheReturnsNull: 0,
+                    normalCacheReturnsNode: 0,
+                    normalCacheReturnsNull: 0,
+                    normalOriginalReturnsNode: 0,
+                    normalOriginalReturnsNull: 0,
 
-            predicateSameFunctionHits: 0,
-            predicateNewFunctionInstances: 0,
-            predicateSameSourceHits: 0,
-            predicateNewSource: 0,
+                    predicateSameFunctionHits: 0,
+                    predicateNewFunctionInstances: 0,
+                    predicateSameSourceHits: 0,
+                    predicateNewSource: 0,
 
-            lastResultHits: 0,
-            lastResultWrites: 0,
+                    lastResultHits: 0,
+                    lastResultWrites: 0,
 
-            hotSetSamples: 0,
-            hotSetSize: 0,
-            hotSetLocked: false,
-            hotSetKnownFunctionHits: 0,
-            hotSetKnownFunctionMisses: 0,
+                    hotSetSamples: 0,
+                    hotSetSize: 0,
+                    hotSetLocked: false,
+                    hotSetKnownFunctionHits: 0,
+                    hotSetKnownFunctionMisses: 0,
 
-            cached: 0,
-            evictions: 0,
-            maxSize,
-            mode: "profiled:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
-            lastClearReason: null,
-        }
-        : {
-            cached: 0,
-            evictions: 0,
-            maxSize,
-            mode: "production:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
-            lastClearReason: null,
-        };
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "profiled:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
+                    lastClearReason: null,
+                }
+                : {
+                    cached: 0,
+                    evictions: 0,
+                    maxSize,
+                    mode: "production:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
+                    lastClearReason: null,
+                };
 
-    const sourceCache = new Map();
-    const insertionOrder = [];
+            const sourceCache = new Map();
+            const insertionOrder = [];
 
-    const predicateSourceIdByFn = new WeakMap();
-    const predicateSourceIdBySource = new Map();
-    let nextPredicateSourceId = 1;
+            const predicateSourceIdByFn = new WeakMap();
+            const predicateSourceIdBySource = new Map();
+            let nextPredicateSourceId = 1;
 
-    let lastPredicateFn = null;
-    let lastPredicateId = 0;
+            let lastPredicateFn = null;
+            let lastPredicateId = 0;
 
-    let lastSourceText = null;
-    let lastSourceKey = null;
-    let lastSourceId = 0;
+            let lastSourceText = null;
+            let lastSourceKey = null;
+            let lastSourceId = 0;
 
-    let lastResultPredicateSourceId = 0;
-    let lastResultLeafId = null;
-    let lastResultValue = undefined;
+            let lastResultPredicateSourceId = 0;
+            let lastResultLeafId = null;
+            let lastResultValue = undefined;
 
-    const SOURCE_KEY_LEN = 128;
-    const fnToString = Function.prototype.toString;
+            const SOURCE_KEY_LEN = 128;
+            const fnToString = Function.prototype.toString;
 
-    const HOT_SET_LEARN_LIMIT = 96;
-    const HOT_SET_MAX = 12;
+            const HOT_SET_LEARN_LIMIT = 96;
+            const HOT_SET_MAX = 12;
 
-    const hotCounts = new Map();
-    const hotPredicateIds = new Set();
-    let hotSamples = 0;
-    let hotSetLocked = false;
+            const hotCounts = new Map();
+            const hotPredicateIds = new Set();
+            let hotSamples = 0;
+            let hotSetLocked = false;
 
-    const ancestorChainCache = new Map();
-    const dormantAncestorResultCache = new Map();
+            const ancestorChainCache = new Map();
+            const dormantAncestorResultCache = new Map();
 
-    const bridgeRef = this;
-    const currentLeafIdValue = store.currentLeafId;
-    const currentLeafIdIsFn = typeof currentLeafIdValue === "function";
-    const getNode = getNodeDirect;
+            const bridgeRef = this;
+            const currentLeafIdValue = store.currentLeafId;
+            const currentLeafIdIsFn = typeof currentLeafIdValue === "function";
+            const getNode = getNodeDirect;
 
-    const rootIdValue = store.rootId;
-    const rootIdIsFn = typeof rootIdValue === "function";
+            const rootIdValue = store.rootId;
+            const rootIdIsFn = typeof rootIdValue === "function";
 
-    bridgeRef.__findNodeFromLeafAncestorChainCache = ancestorChainCache;
-    bridgeRef.__findNodeFromLeafDormantAncestorResultCache = dormantAncestorResultCache;
-    bridgeRef.__findNodeFromLeafHotPredicateIds = hotPredicateIds;
+            bridgeRef.__findNodeFromLeafAncestorChainCache = ancestorChainCache;
+            bridgeRef.__findNodeFromLeafDormantAncestorResultCache = dormantAncestorResultCache;
+            bridgeRef.__findNodeFromLeafHotPredicateIds = hotPredicateIds;
 
-    function getRootId() {
-        return rootIdIsFn ? rootIdValue.call(store) : rootIdValue;
-    }
+            function getRootId() {
+                return rootIdIsFn ? rootIdValue.call(store) : rootIdValue;
+            }
 
-    function readCurrentLeafId() {
-        return currentLeafIdIsFn
-            ? currentLeafIdValue.call(store)
-            : currentLeafIdValue;
-    }
+            function readCurrentLeafId() {
+                return currentLeafIdIsFn
+                    ? currentLeafIdValue.call(store)
+                    : currentLeafIdValue;
+            }
 
-    function rememberLastResult(predicateSourceId, leafId, value) {
-        lastResultPredicateSourceId = predicateSourceId;
-        lastResultLeafId = leafId;
-        lastResultValue = value ?? CACHE_MISS;
-        return value ?? null;
-    }
+            function rememberLastResult(predicateSourceId, leafId, value) {
+                lastResultPredicateSourceId = predicateSourceId;
+                lastResultLeafId = leafId;
+                lastResultValue = value ?? CACHE_MISS;
+                return value ?? null;
+            }
 
-    function lockHotSetProduction() {
-        const sorted = Array.from(hotCounts.entries())
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, HOT_SET_MAX);
+            function lockHotSetProduction() {
+                const sorted = Array.from(hotCounts.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, HOT_SET_MAX);
 
-        for (let i = 0, len = sorted.length; i < len; i += 1) {
-            hotPredicateIds.add(sorted[i][0]);
-        }
+                for (let i = 0, len = sorted.length; i < len; i += 1) {
+                    hotPredicateIds.add(sorted[i][0]);
+                }
 
-        hotSetLocked = true;
-    }
+                hotSetLocked = true;
+            }
 
-    function lockHotSetProfiled() {
-        const sorted = Array.from(hotCounts.entries())
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, HOT_SET_MAX);
+            function lockHotSetProfiled() {
+                const sorted = Array.from(hotCounts.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, HOT_SET_MAX);
 
-        for (let i = 0, len = sorted.length; i < len; i += 1) {
-            hotPredicateIds.add(sorted[i][0]);
-        }
+                for (let i = 0, len = sorted.length; i < len; i += 1) {
+                    hotPredicateIds.add(sorted[i][0]);
+                }
 
-        hotSetLocked = true;
-        stats.hotSetLocked = true;
-        stats.hotSetSize = hotPredicateIds.size;
-    }
+                hotSetLocked = true;
+                stats.hotSetLocked = true;
+                stats.hotSetSize = hotPredicateIds.size;
+            }
 
-    function learnHotPredicateProduction(id) {
-        if (hotSetLocked) return;
+            function learnHotPredicateProduction(id) {
+                if (hotSetLocked) return;
 
-        hotSamples += 1;
-        hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
+                hotSamples += 1;
+                hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
 
-        if (hotSamples >= HOT_SET_LEARN_LIMIT) {
-            lockHotSetProduction();
-        }
-    }
-
-    function learnHotPredicateProfiled(id) {
-        if (hotSetLocked) return;
-
-        hotSamples += 1;
-        stats.hotSetSamples = hotSamples;
-
-        hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
-
-        if (hotSamples >= HOT_SET_LEARN_LIMIT) {
-            lockHotSetProfiled();
-        }
-    }
-
-    function getSourceKeyAndId(predicateFn) {
-        const source = fnToString.call(predicateFn);
-
-        let sourceKey;
-        let id;
-
-        if (source === lastSourceText) {
-            sourceKey = lastSourceKey;
-            id = lastSourceId;
-            if (id !== 0) return id;
-        } else {
-            sourceKey =
-                source.length <= SOURCE_KEY_LEN
-                    ? source
-                    : (" " + source.slice(0, SOURCE_KEY_LEN)).slice(1);
-
-            lastSourceText = source;
-            lastSourceKey = sourceKey;
-        }
-
-        id = predicateSourceIdBySource.get(sourceKey);
-
-        if (id === undefined) {
-            id = nextPredicateSourceId++;
-            predicateSourceIdBySource.set(sourceKey, id);
-        }
-
-        lastSourceId = id;
-        return id;
-    }
-
-    function getPredicateSourceIdProduction(predicateFn) {
-        if (predicateFn === lastPredicateFn) {
-            return lastPredicateId;
-        }
-
-        let id = predicateSourceIdByFn.get(predicateFn);
-
-        if (id !== undefined) {
-            lastPredicateFn = predicateFn;
-            lastPredicateId = id;
-            return id;
-        }
-
-        id = getSourceKeyAndId(predicateFn);
-
-        predicateSourceIdByFn.set(predicateFn, id);
-        lastPredicateFn = predicateFn;
-        lastPredicateId = id;
-
-        learnHotPredicateProduction(id);
-
-        return id;
-    }
-
-    function getPredicateSourceIdProfiled(predicateFn) {
-        if (predicateFn === lastPredicateFn) {
-            stats.predicateSameFunctionHits += 1;
-            return lastPredicateId;
-        }
-
-        let id = predicateSourceIdByFn.get(predicateFn);
-
-        if (id !== undefined) {
-            stats.predicateSameFunctionHits += 1;
-
-            if (hotSetLocked) {
-                if (hotPredicateIds.has(id)) {
-                    stats.hotSetKnownFunctionHits += 1;
-                } else {
-                    stats.hotSetKnownFunctionMisses += 1;
+                if (hotSamples >= HOT_SET_LEARN_LIMIT) {
+                    lockHotSetProduction();
                 }
             }
 
-            lastPredicateFn = predicateFn;
-            lastPredicateId = id;
-            return id;
-        }
+            function learnHotPredicateProfiled(id) {
+                if (hotSetLocked) return;
 
-        stats.predicateNewFunctionInstances += 1;
+                hotSamples += 1;
+                stats.hotSetSamples = hotSamples;
 
-        const beforeSourceCount = predicateSourceIdBySource.size;
+                hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
 
-        id = getSourceKeyAndId(predicateFn);
-
-        if (predicateSourceIdBySource.size === beforeSourceCount) {
-            stats.predicateSameSourceHits += 1;
-        } else {
-            stats.predicateNewSource += 1;
-        }
-
-        predicateSourceIdByFn.set(predicateFn, id);
-        lastPredicateFn = predicateFn;
-        lastPredicateId = id;
-
-        learnHotPredicateProfiled(id);
-
-        return id;
-    }
-
-    function getAncestorChainWithoutLeafProduction(leafId, rootId) {
-        const cached = ancestorChainCache.get(leafId);
-        if (cached !== undefined) return cached;
-
-        const chain = [];
-        let node = getNode(store, leafId);
-        let guard = 0;
-
-        while (node && node.parentId && node.id !== rootId && guard < 2000) {
-            node = getNode(store, node.parentId);
-            if (!node || node.id === leafId) break;
-
-            chain.push(node);
-            if (node.id === rootId) break;
-
-            guard += 1;
-        }
-
-        ancestorChainCache.set(leafId, chain);
-        return chain;
-    }
-
-    function getAncestorChainWithoutLeafProfiled(leafId, rootId) {
-        const cached = ancestorChainCache.get(leafId);
-
-        if (cached !== undefined) {
-            stats.ancestorChainHits += 1;
-            return cached;
-        }
-
-        stats.ancestorChainMisses += 1;
-
-        const chain = [];
-        let node = getNode(store, leafId);
-        let guard = 0;
-
-        while (node && node.parentId && node.id !== rootId && guard < 2000) {
-            node = getNode(store, node.parentId);
-            if (!node || node.id === leafId) break;
-
-            chain.push(node);
-            if (node.id === rootId) break;
-
-            guard += 1;
-        }
-
-        ancestorChainCache.set(leafId, chain);
-        return chain;
-    }
-
-    this.__findNodeFromLeafFrameCache = sourceCache;
-    this.__findNodeFromLeafFrameCacheStats = stats;
-    this.__findNodeFromLeafFrameCacheOriginal = {
-        findNodeFromLeaf: original,
-        findNode: originalFindNode,
-    };
-
-    if (profiled) {
-        store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(predicateFn, leafId, ...rest) {
-            stats.calls += 1;
-
-            if (typeof predicateFn !== "function" || !leafId) {
-                stats.fallbackCalls += 1;
-                return original.call(store, predicateFn, leafId, ...rest);
+                if (hotSamples >= HOT_SET_LEARN_LIMIT) {
+                    lockHotSetProfiled();
+                }
             }
 
-            const predicateSourceId = getPredicateSourceIdProfiled(predicateFn);
+            function getSourceKeyAndId(predicateFn) {
+                const source = fnToString.call(predicateFn);
 
-            if (
-                predicateSourceId === lastResultPredicateSourceId &&
-                leafId === lastResultLeafId
-            ) {
-                stats.lastResultHits += 1;
-                return lastResultValue === CACHE_MISS ? null : lastResultValue;
+                let sourceKey;
+                let id;
+
+                if (source === lastSourceText) {
+                    sourceKey = lastSourceKey;
+                    id = lastSourceId;
+                    if (id !== 0) return id;
+                } else {
+                    sourceKey =
+                        source.length <= SOURCE_KEY_LEN
+                            ? source
+                            : (" " + source.slice(0, SOURCE_KEY_LEN)).slice(1);
+
+                    lastSourceText = source;
+                    lastSourceKey = sourceKey;
+                }
+
+                id = predicateSourceIdBySource.get(sourceKey);
+
+                if (id === undefined) {
+                    id = nextPredicateSourceId++;
+                    predicateSourceIdBySource.set(sourceKey, id);
+                }
+
+                lastSourceId = id;
+                return id;
             }
 
-            let leafCache = sourceCache.get(leafId);
+            function getPredicateSourceIdProduction(predicateFn) {
+                if (predicateFn === lastPredicateFn) {
+                    return lastPredicateId;
+                }
 
-            if (leafCache !== undefined) {
-                const cached = leafCache.get(predicateSourceId);
+                let id = predicateSourceIdByFn.get(predicateFn);
+
+                if (id !== undefined) {
+                    lastPredicateFn = predicateFn;
+                    lastPredicateId = id;
+                    return id;
+                }
+
+                id = getSourceKeyAndId(predicateFn);
+
+                predicateSourceIdByFn.set(predicateFn, id);
+                lastPredicateFn = predicateFn;
+                lastPredicateId = id;
+
+                learnHotPredicateProduction(id);
+
+                return id;
+            }
+
+            function getPredicateSourceIdProfiled(predicateFn) {
+                if (predicateFn === lastPredicateFn) {
+                    stats.predicateSameFunctionHits += 1;
+                    return lastPredicateId;
+                }
+
+                let id = predicateSourceIdByFn.get(predicateFn);
+
+                if (id !== undefined) {
+                    stats.predicateSameFunctionHits += 1;
+
+                    if (hotSetLocked) {
+                        if (hotPredicateIds.has(id)) {
+                            stats.hotSetKnownFunctionHits += 1;
+                        } else {
+                            stats.hotSetKnownFunctionMisses += 1;
+                        }
+                    }
+
+                    lastPredicateFn = predicateFn;
+                    lastPredicateId = id;
+                    return id;
+                }
+
+                stats.predicateNewFunctionInstances += 1;
+
+                const beforeSourceCount = predicateSourceIdBySource.size;
+
+                id = getSourceKeyAndId(predicateFn);
+
+                if (predicateSourceIdBySource.size === beforeSourceCount) {
+                    stats.predicateSameSourceHits += 1;
+                } else {
+                    stats.predicateNewSource += 1;
+                }
+
+                predicateSourceIdByFn.set(predicateFn, id);
+                lastPredicateFn = predicateFn;
+                lastPredicateId = id;
+
+                learnHotPredicateProfiled(id);
+
+                return id;
+            }
+
+            function getAncestorChainWithoutLeafProduction(leafId, rootId) {
+                const cached = ancestorChainCache.get(leafId);
+                if (cached !== undefined) return cached;
+
+                const chain = [];
+                let node = getNode(store, leafId);
+                let guard = 0;
+
+                while (node && node.parentId && node.id !== rootId && guard < 2000) {
+                    node = getNode(store, node.parentId);
+                    if (!node || node.id === leafId) break;
+
+                    chain.push(node);
+                    if (node.id === rootId) break;
+
+                    guard += 1;
+                }
+
+                ancestorChainCache.set(leafId, chain);
+                return chain;
+            }
+
+            function getAncestorChainWithoutLeafProfiled(leafId, rootId) {
+                const cached = ancestorChainCache.get(leafId);
 
                 if (cached !== undefined) {
-                    stats.sourceKeyFastHits += 1;
-                    stats.normalHits += 1;
-
-                    if (cached === CACHE_MISS) {
-                        stats.normalCacheReturnsNull += 1;
-                        stats.lastResultWrites += 1;
-                        return rememberLastResult(predicateSourceId, leafId, null);
-                    }
-
-                    stats.normalCacheReturnsNode += 1;
-                    stats.lastResultWrites += 1;
-                    return rememberLastResult(predicateSourceId, leafId, cached);
+                    stats.ancestorChainHits += 1;
+                    return cached;
                 }
-            } else {
-                leafCache = new Map();
-                sourceCache.set(leafId, leafCache);
-                insertionOrder.push(leafId);
-                stats.cached += 1;
+
+                stats.ancestorChainMisses += 1;
+
+                const chain = [];
+                let node = getNode(store, leafId);
+                let guard = 0;
+
+                while (node && node.parentId && node.id !== rootId && guard < 2000) {
+                    node = getNode(store, node.parentId);
+                    if (!node || node.id === leafId) break;
+
+                    chain.push(node);
+                    if (node.id === rootId) break;
+
+                    guard += 1;
+                }
+
+                ancestorChainCache.set(leafId, chain);
+                return chain;
             }
 
-            if (leafId === readCurrentLeafId()) {
-                const frame = bridgeRef.__liveNodeReadFrame || 0;
+            this.__findNodeFromLeafFrameCache = sourceCache;
+            this.__findNodeFromLeafFrameCacheStats = stats;
+            this.__findNodeFromLeafFrameCacheOriginal = {
+                findNodeFromLeaf: original,
+                findNode: originalFindNode,
+            };
 
-                if (
-                    bridgeRef.__liveFindFrame !== frame ||
-                    bridgeRef.__liveFindLeafId !== leafId
-                ) {
-                    bridgeRef.__liveFindFrame = frame;
-                    bridgeRef.__liveFindLeafId = leafId;
-                    bridgeRef.__liveFindCache = new Map();
-                    stats.liveCacheCreates += 1;
-                }
+            if (profiled) {
+                store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(predicateFn, leafId, ...rest) {
+                    stats.calls += 1;
 
-                const liveCache = bridgeRef.__liveFindCache;
-                const liveCached = liveCache.get(predicateSourceId);
-
-                if (liveCached !== undefined) {
-                    stats.sourceKeyFastHits += 1;
-                    stats.liveHits += 1;
-
-                    if (liveCached === CACHE_MISS) {
-                        stats.liveCacheReturnsNull += 1;
-                        stats.lastResultWrites += 1;
-                        return rememberLastResult(predicateSourceId, leafId, null);
+                    if (typeof predicateFn !== "function" || !leafId) {
+                        stats.fallbackCalls += 1;
+                        return original.call(store, predicateFn, leafId, ...rest);
                     }
 
-                    stats.liveCacheReturnsNode += 1;
-                    stats.lastResultWrites += 1;
-                    return rememberLastResult(predicateSourceId, leafId, liveCached);
-                }
+                    const predicateSourceId = getPredicateSourceIdProfiled(predicateFn);
 
-                stats.sourceKeyMisses += 1;
-                stats.misses += 1;
-                stats.liveMisses += 1;
+                    if (
+                        predicateSourceId === lastResultPredicateSourceId &&
+                        leafId === lastResultLeafId
+                    ) {
+                        stats.lastResultHits += 1;
+                        return lastResultValue === CACHE_MISS ? null : lastResultValue;
+                    }
 
-                const activeNode = getNode(store, leafId);
+                    let leafCache = sourceCache.get(leafId);
 
-                stats.activeLeafOriginalTests += 1;
+                    if (leafCache !== undefined) {
+                        const cached = leafCache.get(predicateSourceId);
 
-                if (activeNode && predicateFn.call(store, activeNode)) {
-                    liveCache.set(predicateSourceId, activeNode);
-                    stats.lastResultWrites += 1;
-                    return rememberLastResult(predicateSourceId, leafId, activeNode);
-                }
+                        if (cached !== undefined) {
+                            stats.sourceKeyFastHits += 1;
+                            stats.normalHits += 1;
 
-                let dormantLeafCache = dormantAncestorResultCache.get(leafId);
+                            if (cached === CACHE_MISS) {
+                                stats.normalCacheReturnsNull += 1;
+                                stats.lastResultWrites += 1;
+                                return rememberLastResult(predicateSourceId, leafId, null);
+                            }
 
-                if (dormantLeafCache !== undefined) {
-                    const dormantCached = dormantLeafCache.get(predicateSourceId);
-
-                    if (dormantCached !== undefined) {
-                        stats.dormantAncestorHits += 1;
-                        stats.sourceKeyFastHits += 1;
-
-                        liveCache.set(predicateSourceId, dormantCached);
-
-                        if (dormantCached === CACHE_MISS) {
-                            stats.dormantAncestorReturnsNull += 1;
+                            stats.normalCacheReturnsNode += 1;
                             stats.lastResultWrites += 1;
-                            return rememberLastResult(predicateSourceId, leafId, null);
+                            return rememberLastResult(predicateSourceId, leafId, cached);
+                        }
+                    } else {
+                        leafCache = new Map();
+                        sourceCache.set(leafId, leafCache);
+                        insertionOrder.push(leafId);
+                        stats.cached += 1;
+                    }
+
+                    if (leafId === readCurrentLeafId()) {
+                        const frame = bridgeRef.__liveNodeReadFrame || 0;
+
+                        if (
+                            bridgeRef.__liveFindFrame !== frame ||
+                            bridgeRef.__liveFindLeafId !== leafId
+                        ) {
+                            bridgeRef.__liveFindFrame = frame;
+                            bridgeRef.__liveFindLeafId = leafId;
+                            bridgeRef.__liveFindCache = new Map();
+                            stats.liveCacheCreates += 1;
                         }
 
-                        stats.dormantAncestorReturnsNode += 1;
-                        stats.lastResultWrites += 1;
-                        return rememberLastResult(predicateSourceId, leafId, dormantCached);
-                    }
-                } else {
-                    dormantLeafCache = new Map();
-                    dormantAncestorResultCache.set(leafId, dormantLeafCache);
-                }
+                        const liveCache = bridgeRef.__liveFindCache;
+                        const liveCached = liveCache.get(predicateSourceId);
 
-                stats.dormantAncestorMisses += 1;
+                        if (liveCached !== undefined) {
+                            stats.sourceKeyFastHits += 1;
+                            stats.liveHits += 1;
 
-                const chain = getAncestorChainWithoutLeafProfiled(leafId, getRootId());
+                            if (liveCached === CACHE_MISS) {
+                                stats.liveCacheReturnsNull += 1;
+                                stats.lastResultWrites += 1;
+                                return rememberLastResult(predicateSourceId, leafId, null);
+                            }
 
-                for (let i = 0, len = chain.length; i < len; i += 1) {
-                    const node = chain[i];
+                            stats.liveCacheReturnsNode += 1;
+                            stats.lastResultWrites += 1;
+                            return rememberLastResult(predicateSourceId, leafId, liveCached);
+                        }
 
-                    stats.ancestorNodeTests += 1;
+                        stats.sourceKeyMisses += 1;
+                        stats.misses += 1;
+                        stats.liveMisses += 1;
 
-                    if (node && predicateFn.call(store, node)) {
-                        dormantLeafCache.set(predicateSourceId, node);
+                        const activeNode = getNode(store, leafId);
+
+                        stats.activeLeafOriginalTests += 1;
+
+                        if (activeNode && predicateFn.call(store, activeNode)) {
+                            liveCache.set(predicateSourceId, activeNode);
+                            stats.lastResultWrites += 1;
+                            return rememberLastResult(predicateSourceId, leafId, activeNode);
+                        }
+
+                        let dormantLeafCache = dormantAncestorResultCache.get(leafId);
+
+                        if (dormantLeafCache !== undefined) {
+                            const dormantCached = dormantLeafCache.get(predicateSourceId);
+
+                            if (dormantCached !== undefined) {
+                                stats.dormantAncestorHits += 1;
+                                stats.sourceKeyFastHits += 1;
+
+                                liveCache.set(predicateSourceId, dormantCached);
+
+                                if (dormantCached === CACHE_MISS) {
+                                    stats.dormantAncestorReturnsNull += 1;
+                                    stats.lastResultWrites += 1;
+                                    return rememberLastResult(predicateSourceId, leafId, null);
+                                }
+
+                                stats.dormantAncestorReturnsNode += 1;
+                                stats.lastResultWrites += 1;
+                                return rememberLastResult(predicateSourceId, leafId, dormantCached);
+                            }
+                        } else {
+                            dormantLeafCache = new Map();
+                            dormantAncestorResultCache.set(leafId, dormantLeafCache);
+                        }
+
+                        stats.dormantAncestorMisses += 1;
+
+                        const chain = getAncestorChainWithoutLeafProfiled(leafId, getRootId());
+
+                        for (let i = 0, len = chain.length; i < len; i += 1) {
+                            const node = chain[i];
+
+                            stats.ancestorNodeTests += 1;
+
+                            if (node && predicateFn.call(store, node)) {
+                                dormantLeafCache.set(predicateSourceId, node);
+                                stats.dormantAncestorWrites += 1;
+                                liveCache.set(predicateSourceId, node);
+                                stats.lastResultWrites += 1;
+                                return rememberLastResult(predicateSourceId, leafId, node);
+                            }
+                        }
+
+                        dormantLeafCache.set(predicateSourceId, CACHE_MISS);
                         stats.dormantAncestorWrites += 1;
-                        liveCache.set(predicateSourceId, node);
+                        liveCache.set(predicateSourceId, CACHE_MISS);
                         stats.lastResultWrites += 1;
-                        return rememberLastResult(predicateSourceId, leafId, node);
+                        return rememberLastResult(predicateSourceId, leafId, null);
                     }
-                }
 
-                dormantLeafCache.set(predicateSourceId, CACHE_MISS);
-                stats.dormantAncestorWrites += 1;
-                liveCache.set(predicateSourceId, CACHE_MISS);
-                stats.lastResultWrites += 1;
-                return rememberLastResult(predicateSourceId, leafId, null);
-            }
+                    stats.sourceKeyMisses += 1;
+                    stats.misses += 1;
+                    stats.normalMisses += 1;
 
-            stats.sourceKeyMisses += 1;
-            stats.misses += 1;
-            stats.normalMisses += 1;
+                    const result = original.call(store, predicateFn, leafId, ...rest);
 
-            const result = original.call(store, predicateFn, leafId, ...rest);
+                    if (result == null) {
+                        stats.normalOriginalReturnsNull += 1;
+                    } else {
+                        stats.normalOriginalReturnsNode += 1;
+                    }
 
-            if (result == null) {
-                stats.normalOriginalReturnsNull += 1;
+                    leafCache.set(predicateSourceId, result ?? CACHE_MISS);
+
+                    if (insertionOrder.length > maxSize) {
+                        const oldestLeafId = insertionOrder.shift();
+
+                        if (oldestLeafId !== undefined && sourceCache.delete(oldestLeafId)) {
+                            stats.cached -= 1;
+                            stats.evictions += 1;
+                        }
+                    }
+
+                    stats.lastResultWrites += 1;
+                    return rememberLastResult(predicateSourceId, leafId, result);
+                };
             } else {
-                stats.normalOriginalReturnsNode += 1;
-            }
-
-            leafCache.set(predicateSourceId, result ?? CACHE_MISS);
-
-            if (insertionOrder.length > maxSize) {
-                const oldestLeafId = insertionOrder.shift();
-
-                if (oldestLeafId !== undefined && sourceCache.delete(oldestLeafId)) {
-                    stats.cached -= 1;
-                    stats.evictions += 1;
-                }
-            }
-
-            stats.lastResultWrites += 1;
-            return rememberLastResult(predicateSourceId, leafId, result);
-        };
-    } else {
-        store.findNodeFromLeaf = function cachedFindNodeFromLeaf(predicateFn, leafId, ...rest) {
-            if (typeof predicateFn !== "function" || !leafId) {
-                return original.call(store, predicateFn, leafId, ...rest) ?? null;
-            }
-
-            const predicateSourceId = getPredicateSourceIdProduction(predicateFn);
-
-            if (
-                predicateSourceId === lastResultPredicateSourceId &&
-                leafId === lastResultLeafId
-            ) {
-                return lastResultValue === CACHE_MISS ? null : lastResultValue;
-            }
-
-            let leafCache = sourceCache.get(leafId);
-
-            if (leafCache !== undefined) {
-                const cached = leafCache.get(predicateSourceId);
-
-                if (cached !== undefined) {
-                    return rememberLastResult(
-                        predicateSourceId,
-                        leafId,
-                        cached === CACHE_MISS ? null : cached
-                    );
-                }
-            } else {
-                leafCache = new Map();
-                sourceCache.set(leafId, leafCache);
-                insertionOrder.push(leafId);
-            }
-
-            if (leafId === readCurrentLeafId()) {
-                const frame = bridgeRef.__liveNodeReadFrame || 0;
-
-                if (
-                    bridgeRef.__liveFindFrame !== frame ||
-                    bridgeRef.__liveFindLeafId !== leafId
-                ) {
-                    bridgeRef.__liveFindFrame = frame;
-                    bridgeRef.__liveFindLeafId = leafId;
-                    bridgeRef.__liveFindCache = new Map();
-                }
-
-                const liveCache = bridgeRef.__liveFindCache;
-                const liveCached = liveCache.get(predicateSourceId);
-
-                if (liveCached !== undefined) {
-                    return rememberLastResult(
-                        predicateSourceId,
-                        leafId,
-                        liveCached === CACHE_MISS ? null : liveCached
-                    );
-                }
-
-                const activeNode = getNode(store, leafId);
-
-                if (activeNode && predicateFn.call(store, activeNode)) {
-                    liveCache.set(predicateSourceId, activeNode);
-                    return rememberLastResult(predicateSourceId, leafId, activeNode);
-                }
-
-                let dormantLeafCache = dormantAncestorResultCache.get(leafId);
-
-                if (dormantLeafCache !== undefined) {
-                    const dormantCached = dormantLeafCache.get(predicateSourceId);
-
-                    if (dormantCached !== undefined) {
-                        liveCache.set(predicateSourceId, dormantCached);
-
-                        return rememberLastResult(
-                            predicateSourceId,
-                            leafId,
-                            dormantCached === CACHE_MISS ? null : dormantCached
-                        );
+                store.findNodeFromLeaf = function cachedFindNodeFromLeaf(predicateFn, leafId, ...rest) {
+                    if (typeof predicateFn !== "function" || !leafId) {
+                        return original.call(store, predicateFn, leafId, ...rest) ?? null;
                     }
-                } else {
-                    dormantLeafCache = new Map();
-                    dormantAncestorResultCache.set(leafId, dormantLeafCache);
-                }
 
-                const chain = getAncestorChainWithoutLeafProduction(leafId, getRootId());
+                    const predicateSourceId = getPredicateSourceIdProduction(predicateFn);
 
-                for (let i = 0, len = chain.length; i < len; i += 1) {
-                    const node = chain[i];
-
-                    if (node && predicateFn.call(store, node)) {
-                        dormantLeafCache.set(predicateSourceId, node);
-                        liveCache.set(predicateSourceId, node);
-                        return rememberLastResult(predicateSourceId, leafId, node);
+                    if (
+                        predicateSourceId === lastResultPredicateSourceId &&
+                        leafId === lastResultLeafId
+                    ) {
+                        return lastResultValue === CACHE_MISS ? null : lastResultValue;
                     }
+
+                    let leafCache = sourceCache.get(leafId);
+
+                    if (leafCache !== undefined) {
+                        const cached = leafCache.get(predicateSourceId);
+
+                        if (cached !== undefined) {
+                            return rememberLastResult(
+                                predicateSourceId,
+                                leafId,
+                                cached === CACHE_MISS ? null : cached
+                            );
+                        }
+                    } else {
+                        leafCache = new Map();
+                        sourceCache.set(leafId, leafCache);
+                        insertionOrder.push(leafId);
+                    }
+
+                    if (leafId === readCurrentLeafId()) {
+                        const frame = bridgeRef.__liveNodeReadFrame || 0;
+
+                        if (
+                            bridgeRef.__liveFindFrame !== frame ||
+                            bridgeRef.__liveFindLeafId !== leafId
+                        ) {
+                            bridgeRef.__liveFindFrame = frame;
+                            bridgeRef.__liveFindLeafId = leafId;
+                            bridgeRef.__liveFindCache = new Map();
+                        }
+
+                        const liveCache = bridgeRef.__liveFindCache;
+                        const liveCached = liveCache.get(predicateSourceId);
+
+                        if (liveCached !== undefined) {
+                            return rememberLastResult(
+                                predicateSourceId,
+                                leafId,
+                                liveCached === CACHE_MISS ? null : liveCached
+                            );
+                        }
+
+                        const activeNode = getNode(store, leafId);
+
+                        if (activeNode && predicateFn.call(store, activeNode)) {
+                            liveCache.set(predicateSourceId, activeNode);
+                            return rememberLastResult(predicateSourceId, leafId, activeNode);
+                        }
+
+                        let dormantLeafCache = dormantAncestorResultCache.get(leafId);
+
+                        if (dormantLeafCache !== undefined) {
+                            const dormantCached = dormantLeafCache.get(predicateSourceId);
+
+                            if (dormantCached !== undefined) {
+                                liveCache.set(predicateSourceId, dormantCached);
+
+                                return rememberLastResult(
+                                    predicateSourceId,
+                                    leafId,
+                                    dormantCached === CACHE_MISS ? null : dormantCached
+                                );
+                            }
+                        } else {
+                            dormantLeafCache = new Map();
+                            dormantAncestorResultCache.set(leafId, dormantLeafCache);
+                        }
+
+                        const chain = getAncestorChainWithoutLeafProduction(leafId, getRootId());
+
+                        for (let i = 0, len = chain.length; i < len; i += 1) {
+                            const node = chain[i];
+
+                            if (node && predicateFn.call(store, node)) {
+                                dormantLeafCache.set(predicateSourceId, node);
+                                liveCache.set(predicateSourceId, node);
+                                return rememberLastResult(predicateSourceId, leafId, node);
+                            }
+                        }
+
+                        dormantLeafCache.set(predicateSourceId, CACHE_MISS);
+                        liveCache.set(predicateSourceId, CACHE_MISS);
+                        return rememberLastResult(predicateSourceId, leafId, null);
+                    }
+
+                    const result = original.call(store, predicateFn, leafId, ...rest);
+
+                    leafCache.set(predicateSourceId, result ?? CACHE_MISS);
+
+                    if (insertionOrder.length > maxSize) {
+                        sourceCache.delete(insertionOrder.shift());
+                    }
+
+                    return rememberLastResult(predicateSourceId, leafId, result);
+                };
+            }
+
+            this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
+
+            store.findNode = function cachedFindNode(predicateFn) {
+                if (typeof predicateFn !== "function") {
+                    return originalFindNode.call(store, predicateFn) ?? null;
                 }
 
-                dormantLeafCache.set(predicateSourceId, CACHE_MISS);
-                liveCache.set(predicateSourceId, CACHE_MISS);
-                return rememberLastResult(predicateSourceId, leafId, null);
-            }
+                return store.findNodeFromLeaf(predicateFn, readCurrentLeafId());
+            };
 
-            const result = original.call(store, predicateFn, leafId, ...rest);
+            this.__findNodeFromLeafFrameCacheInstalled = true;
 
-            leafCache.set(predicateSourceId, result ?? CACHE_MISS);
-
-            if (insertionOrder.length > maxSize) {
-                sourceCache.delete(insertionOrder.shift());
-            }
-
-            return rememberLastResult(predicateSourceId, leafId, result);
-        };
-    }
-
-    this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
-
-    store.findNode = function cachedFindNode(predicateFn) {
-        if (typeof predicateFn !== "function") {
-            return originalFindNode.call(store, predicateFn) ?? null;
-        }
-
-        return store.findNodeFromLeaf(predicateFn, readCurrentLeafId());
-    };
-
-    this.__findNodeFromLeafFrameCacheInstalled = true;
-
-    return {
-        ok: true,
-        installed: true,
-        methods: ["findNodeFromLeaf", "findNode"],
-        profiled,
-    };
-},
+            return {
+                ok: true,
+                installed: true,
+                methods: ["findNodeFromLeaf", "findNode"],
+                profiled,
+            };
+        },
 
         uninstallFindNodeFromLeafFrameCache() {
             if (this.__store && this.__findNodeFromLeafFindNodeOriginal?.findNode) {
@@ -3563,9 +3563,9 @@ installFindNodeFromLeafFrameCache({
             const argSummary = {
                 firstArg:
                     typeof firstArg === "string" ||
-                    typeof firstArg === "number" ||
-                    typeof firstArg === "boolean" ||
-                    firstArg == null
+                        typeof firstArg === "number" ||
+                        typeof firstArg === "boolean" ||
+                        firstArg == null
                         ? firstArg
                         : typeof firstArg,
                 argCount: args.length,
@@ -3776,9 +3776,9 @@ installFindNodeFromLeafFrameCache({
 
                         const key =
                             typeof id === "string" ||
-                            typeof id === "number" ||
-                            typeof id === "boolean" ||
-                            id == null
+                                typeof id === "number" ||
+                                typeof id === "boolean" ||
+                                id == null
                                 ? id
                                 : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
@@ -3829,9 +3829,9 @@ installFindNodeFromLeafFrameCache({
                     store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
                         const key =
                             typeof id === "string" ||
-                            typeof id === "number" ||
-                            typeof id === "boolean" ||
-                            id == null
+                                typeof id === "number" ||
+                                typeof id === "boolean" ||
+                                id == null
                                 ? id
                                 : id.id ?? id.nodeId ?? id.message?.id ?? id;
 
@@ -4116,291 +4116,291 @@ installFindNodeFromLeafFrameCache({
             );
         },
 
-installFindNodeCallSiteProfiler({
-    maxCallSites = 50,
-    sampleEvery = 100,
-    maxPredicateSourcesPerSite = 10,
-    predicateSourcePreviewLength = 500,
-} = {}) {
-    const store = requireStore(this);
-    if (!store) return unavailable("store not registered");
+        installFindNodeCallSiteProfiler({
+            maxCallSites = 50,
+            sampleEvery = 100,
+            maxPredicateSourcesPerSite = 10,
+            predicateSourcePreviewLength = 500,
+        } = {}) {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
 
-    if (this.__findNodeCallSiteProfilerInstalled) {
-        return { ok: true, alreadyInstalled: true };
-    }
-
-    const original = getStoreMethod(store, "findNode");
-    if (!original) return unavailable("findNode unavailable");
-
-    const bridgeRef = this;
-
-    const stats = {
-        installedAt: Date.now(),
-        totalCalls: 0,
-        sampledCalls: 0,
-        maxCallSites,
-        sampleEvery,
-        maxPredicateSourcesPerSite,
-        predicateSourcePreviewLength,
-        callSites: {},
-    };
-
-    function normalizeFindNodeStack(stack) {
-        if (!stack || typeof stack !== "string") return "unknown";
-
-        return stack
-            .split("\n")
-            .slice(2, 10)
-            .map((line) =>
-                line
-                    .trim()
-                    .replace(window.location.origin, "")
-                    .replace(/:\d+:\d+/g, ":<line>:<col>")
-            )
-            .join("\n");
-    }
-
-    function getPredicateSourcePreview(value) {
-        if (typeof value !== "function") return null;
-
-        try {
-            return Function.prototype.toString
-                .call(value)
-                .slice(0, predicateSourcePreviewLength);
-        } catch (error) {
-            return `[[Function#toString failed: ${String(error?.message || error)}]]`;
-        }
-    }
-
-    function recordPredicateSource(entry, source, now, cacheEvent) {
-        if (!source) return;
-
-        const sources = entry.predicateSources ??= {};
-        let sourceEntry = sources[source];
-
-        if (sourceEntry) {
-            sourceEntry.calls += 1;
-            sourceEntry.lastSeenAt = now;
-        } else {
-            const keys = Object.keys(sources);
-
-            if (keys.length >= maxPredicateSourcesPerSite) {
-                const lowest = keys.reduce((a, b) =>
-                    sources[a].calls < sources[b].calls ? a : b
-                );
-
-                delete sources[lowest];
+            if (this.__findNodeCallSiteProfilerInstalled) {
+                return { ok: true, alreadyInstalled: true };
             }
 
-            sourceEntry = sources[source] = {
-                calls: 1,
-                firstSeenAt: now,
-                lastSeenAt: now,
-                cacheHits: 0,
-                cacheMisses: 0,
-                cacheStaleHits: 0,
-                cacheWrites: 0,
-                cacheUnknown: 0,
+            const original = getStoreMethod(store, "findNode");
+            if (!original) return unavailable("findNode unavailable");
+
+            const bridgeRef = this;
+
+            const stats = {
+                installedAt: Date.now(),
+                totalCalls: 0,
+                sampledCalls: 0,
+                maxCallSites,
+                sampleEvery,
+                maxPredicateSourcesPerSite,
+                predicateSourcePreviewLength,
+                callSites: {},
             };
-        }
 
-        if (cacheEvent?.type === "hit") sourceEntry.cacheHits += 1;
-        else if (cacheEvent?.type === "miss") sourceEntry.cacheMisses += 1;
-        else if (cacheEvent?.type === "stale-hit") sourceEntry.cacheStaleHits += 1;
-        else if (cacheEvent?.type === "write") sourceEntry.cacheWrites += 1;
-        else sourceEntry.cacheUnknown += 1;
-    }
+            function normalizeFindNodeStack(stack) {
+                if (!stack || typeof stack !== "string") return "unknown";
 
-    store.findNode = function profiledFindNodeCallSite(...args) {
-        stats.totalCalls += 1;
+                return stack
+                    .split("\n")
+                    .slice(2, 10)
+                    .map((line) =>
+                        line
+                            .trim()
+                            .replace(window.location.origin, "")
+                            .replace(/:\d+:\d+/g, ":<line>:<col>")
+                    )
+                    .join("\n");
+            }
 
-        const sampleThisCall = (stats.totalCalls % sampleEvery) === 0;
-        let beforeCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
+            function getPredicateSourcePreview(value) {
+                if (typeof value !== "function") return null;
 
-        const result = original.apply(store, args);
+                try {
+                    return Function.prototype.toString
+                        .call(value)
+                        .slice(0, predicateSourcePreviewLength);
+                } catch (error) {
+                    return `[[Function#toString failed: ${String(error?.message || error)}]]`;
+                }
+            }
 
-        if (sampleThisCall) {
-            stats.sampledCalls += 1;
+            function recordPredicateSource(entry, source, now, cacheEvent) {
+                if (!source) return;
 
-            const now = Date.now();
-            const stack = normalizeFindNodeStack(new Error().stack);
-            const predicateSource = getPredicateSourcePreview(args[0]);
+                const sources = entry.predicateSources ??= {};
+                let sourceEntry = sources[source];
 
-            const afterCacheEvent = bridgeRef.__lastFindNodePredicateCacheEvent || null;
-            const afterCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
-            const cacheEvent =
-                afterCacheSeq !== beforeCacheSeq ? afterCacheEvent : null;
+                if (sourceEntry) {
+                    sourceEntry.calls += 1;
+                    sourceEntry.lastSeenAt = now;
+                } else {
+                    const keys = Object.keys(sources);
 
-            let entry = stats.callSites[stack];
+                    if (keys.length >= maxPredicateSourcesPerSite) {
+                        const lowest = keys.reduce((a, b) =>
+                            sources[a].calls < sources[b].calls ? a : b
+                        );
 
-            if (entry) {
-                entry.calls += 1;
-                entry.lastArgType = typeof args[0];
-                entry.lastSeenAt = now;
-            } else {
-                const keys = Object.keys(stats.callSites);
+                        delete sources[lowest];
+                    }
 
-                if (keys.length >= maxCallSites) {
-                    const lowest = keys.reduce((a, b) =>
-                        stats.callSites[a].calls < stats.callSites[b].calls ? a : b
-                    );
-
-                    delete stats.callSites[lowest];
+                    sourceEntry = sources[source] = {
+                        calls: 1,
+                        firstSeenAt: now,
+                        lastSeenAt: now,
+                        cacheHits: 0,
+                        cacheMisses: 0,
+                        cacheStaleHits: 0,
+                        cacheWrites: 0,
+                        cacheUnknown: 0,
+                    };
                 }
 
-                entry = stats.callSites[stack] = {
-                    calls: 1,
-                    firstArgType: typeof args[0],
-                    lastArgType: typeof args[0],
-                    firstSeenAt: now,
-                    lastSeenAt: now,
-                    cacheHits: 0,
-                    cacheMisses: 0,
-                    cacheStaleHits: 0,
-                    cacheWrites: 0,
-                    cacheUnknown: 0,
-                    predicateSources: {},
+                if (cacheEvent?.type === "hit") sourceEntry.cacheHits += 1;
+                else if (cacheEvent?.type === "miss") sourceEntry.cacheMisses += 1;
+                else if (cacheEvent?.type === "stale-hit") sourceEntry.cacheStaleHits += 1;
+                else if (cacheEvent?.type === "write") sourceEntry.cacheWrites += 1;
+                else sourceEntry.cacheUnknown += 1;
+            }
+
+            store.findNode = function profiledFindNodeCallSite(...args) {
+                stats.totalCalls += 1;
+
+                const sampleThisCall = (stats.totalCalls % sampleEvery) === 0;
+                let beforeCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
+
+                const result = original.apply(store, args);
+
+                if (sampleThisCall) {
+                    stats.sampledCalls += 1;
+
+                    const now = Date.now();
+                    const stack = normalizeFindNodeStack(new Error().stack);
+                    const predicateSource = getPredicateSourcePreview(args[0]);
+
+                    const afterCacheEvent = bridgeRef.__lastFindNodePredicateCacheEvent || null;
+                    const afterCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
+                    const cacheEvent =
+                        afterCacheSeq !== beforeCacheSeq ? afterCacheEvent : null;
+
+                    let entry = stats.callSites[stack];
+
+                    if (entry) {
+                        entry.calls += 1;
+                        entry.lastArgType = typeof args[0];
+                        entry.lastSeenAt = now;
+                    } else {
+                        const keys = Object.keys(stats.callSites);
+
+                        if (keys.length >= maxCallSites) {
+                            const lowest = keys.reduce((a, b) =>
+                                stats.callSites[a].calls < stats.callSites[b].calls ? a : b
+                            );
+
+                            delete stats.callSites[lowest];
+                        }
+
+                        entry = stats.callSites[stack] = {
+                            calls: 1,
+                            firstArgType: typeof args[0],
+                            lastArgType: typeof args[0],
+                            firstSeenAt: now,
+                            lastSeenAt: now,
+                            cacheHits: 0,
+                            cacheMisses: 0,
+                            cacheStaleHits: 0,
+                            cacheWrites: 0,
+                            cacheUnknown: 0,
+                            predicateSources: {},
+                        };
+                    }
+
+                    if (cacheEvent?.type === "hit") entry.cacheHits += 1;
+                    else if (cacheEvent?.type === "miss") entry.cacheMisses += 1;
+                    else if (cacheEvent?.type === "stale-hit") entry.cacheStaleHits += 1;
+                    else if (cacheEvent?.type === "write") entry.cacheWrites += 1;
+                    else entry.cacheUnknown += 1;
+
+                    recordPredicateSource(entry, predicateSource, now, cacheEvent);
+                }
+
+                return result;
+            };
+
+            this.__findNodeCallSiteProfilerInstalled = true;
+            this.__findNodeCallSiteProfilerOriginal = original;
+            this.__findNodeCallSiteProfilerStats = stats;
+
+            return {
+                ok: true,
+                installed: true,
+                method: "findNode",
+                sampleEvery,
+                maxCallSites,
+                maxPredicateSourcesPerSite,
+            };
+        },
+
+        uninstallFindNodeCallSiteProfiler() {
+            if (!this.__findNodeCallSiteProfilerInstalled) {
+                return { ok: true, alreadyUninstalled: true };
+            }
+
+            if (
+                this.__store &&
+                typeof this.__findNodeCallSiteProfilerOriginal === "function"
+            ) {
+                this.__store.findNode = this.__findNodeCallSiteProfilerOriginal;
+            }
+
+            this.__findNodeCallSiteProfilerInstalled = false;
+            this.__findNodeCallSiteProfilerOriginal = null;
+
+            return { ok: true, uninstalled: true };
+        },
+
+        clearFindNodeCallSiteProfilerStats() {
+            const stats = this.__findNodeCallSiteProfilerStats;
+
+            if (!stats) {
+                return { ok: false, reason: "findNode call-site profiler not installed" };
+            }
+
+            stats.totalCalls = 0;
+            stats.sampledCalls = 0;
+            stats.callSites = {};
+            stats.installedAt = Date.now();
+
+            return { ok: true };
+        },
+
+        getFindNodeCallSiteProfilerStats() {
+            const stats = this.__findNodeCallSiteProfilerStats;
+
+            if (!stats) {
+                return {
+                    installed: false,
+                    totalCalls: 0,
+                    sampledCalls: 0,
+                    topCallSites: [],
                 };
             }
 
-            if (cacheEvent?.type === "hit") entry.cacheHits += 1;
-            else if (cacheEvent?.type === "miss") entry.cacheMisses += 1;
-            else if (cacheEvent?.type === "stale-hit") entry.cacheStaleHits += 1;
-            else if (cacheEvent?.type === "write") entry.cacheWrites += 1;
-            else entry.cacheUnknown += 1;
+            return {
+                installed: this.__findNodeCallSiteProfilerInstalled,
+                installedAt: stats.installedAt,
+                totalCalls: stats.totalCalls,
+                sampledCalls: stats.sampledCalls,
+                sampleEvery: stats.sampleEvery,
+                maxCallSites: stats.maxCallSites,
+                maxPredicateSourcesPerSite: stats.maxPredicateSourcesPerSite,
+                topCallSites: Object.entries(stats.callSites)
+                    .map(([stack, data]) => {
+                        const cacheObserved =
+                            data.cacheHits +
+                            data.cacheMisses +
+                            data.cacheStaleHits +
+                            data.cacheWrites;
 
-            recordPredicateSource(entry, predicateSource, now, cacheEvent);
-        }
+                        const topPredicateSources = Object.entries(data.predicateSources || {})
+                            .map(([source, sourceData]) => {
+                                const sourceObserved =
+                                    sourceData.cacheHits +
+                                    sourceData.cacheMisses +
+                                    sourceData.cacheStaleHits +
+                                    sourceData.cacheWrites;
 
-        return result;
-    };
-
-    this.__findNodeCallSiteProfilerInstalled = true;
-    this.__findNodeCallSiteProfilerOriginal = original;
-    this.__findNodeCallSiteProfilerStats = stats;
-
-    return {
-        ok: true,
-        installed: true,
-        method: "findNode",
-        sampleEvery,
-        maxCallSites,
-        maxPredicateSourcesPerSite,
-    };
-},
-
-uninstallFindNodeCallSiteProfiler() {
-    if (!this.__findNodeCallSiteProfilerInstalled) {
-        return { ok: true, alreadyUninstalled: true };
-    }
-
-    if (
-        this.__store &&
-        typeof this.__findNodeCallSiteProfilerOriginal === "function"
-    ) {
-        this.__store.findNode = this.__findNodeCallSiteProfilerOriginal;
-    }
-
-    this.__findNodeCallSiteProfilerInstalled = false;
-    this.__findNodeCallSiteProfilerOriginal = null;
-
-    return { ok: true, uninstalled: true };
-},
-
-clearFindNodeCallSiteProfilerStats() {
-    const stats = this.__findNodeCallSiteProfilerStats;
-
-    if (!stats) {
-        return { ok: false, reason: "findNode call-site profiler not installed" };
-    }
-
-    stats.totalCalls = 0;
-    stats.sampledCalls = 0;
-    stats.callSites = {};
-    stats.installedAt = Date.now();
-
-    return { ok: true };
-},
-
-getFindNodeCallSiteProfilerStats() {
-    const stats = this.__findNodeCallSiteProfilerStats;
-
-    if (!stats) {
-        return {
-            installed: false,
-            totalCalls: 0,
-            sampledCalls: 0,
-            topCallSites: [],
-        };
-    }
-
-    return {
-        installed: this.__findNodeCallSiteProfilerInstalled,
-        installedAt: stats.installedAt,
-        totalCalls: stats.totalCalls,
-        sampledCalls: stats.sampledCalls,
-        sampleEvery: stats.sampleEvery,
-        maxCallSites: stats.maxCallSites,
-        maxPredicateSourcesPerSite: stats.maxPredicateSourcesPerSite,
-        topCallSites: Object.entries(stats.callSites)
-            .map(([stack, data]) => {
-                const cacheObserved =
-                    data.cacheHits +
-                    data.cacheMisses +
-                    data.cacheStaleHits +
-                    data.cacheWrites;
-
-                const topPredicateSources = Object.entries(data.predicateSources || {})
-                    .map(([source, sourceData]) => {
-                        const sourceObserved =
-                            sourceData.cacheHits +
-                            sourceData.cacheMisses +
-                            sourceData.cacheStaleHits +
-                            sourceData.cacheWrites;
+                                return {
+                                    source,
+                                    calls: sourceData.calls,
+                                    firstSeenAt: sourceData.firstSeenAt,
+                                    lastSeenAt: sourceData.lastSeenAt,
+                                    cacheHits: sourceData.cacheHits,
+                                    cacheMisses: sourceData.cacheMisses,
+                                    cacheStaleHits: sourceData.cacheStaleHits,
+                                    cacheWrites: sourceData.cacheWrites,
+                                    cacheUnknown: sourceData.cacheUnknown,
+                                    cacheHitRate:
+                                        sourceObserved > 0
+                                            ? sourceData.cacheHits / sourceObserved
+                                            : 0,
+                                };
+                            })
+                            .sort((a, b) => b.calls - a.calls)
+                            .slice(0, stats.maxPredicateSourcesPerSite);
 
                         return {
-                            source,
-                            calls: sourceData.calls,
-                            firstSeenAt: sourceData.firstSeenAt,
-                            lastSeenAt: sourceData.lastSeenAt,
-                            cacheHits: sourceData.cacheHits,
-                            cacheMisses: sourceData.cacheMisses,
-                            cacheStaleHits: sourceData.cacheStaleHits,
-                            cacheWrites: sourceData.cacheWrites,
-                            cacheUnknown: sourceData.cacheUnknown,
+                            stack,
+                            calls: data.calls,
+                            firstArgType: data.firstArgType,
+                            lastArgType: data.lastArgType,
+                            firstSeenAt: data.firstSeenAt,
+                            lastSeenAt: data.lastSeenAt,
+                            cacheHits: data.cacheHits,
+                            cacheMisses: data.cacheMisses,
+                            cacheStaleHits: data.cacheStaleHits,
+                            cacheWrites: data.cacheWrites,
+                            cacheUnknown: data.cacheUnknown,
                             cacheHitRate:
-                                sourceObserved > 0
-                                    ? sourceData.cacheHits / sourceObserved
+                                cacheObserved > 0
+                                    ? data.cacheHits / cacheObserved
                                     : 0,
+                            uniquePredicateSourceCount: Object.keys(data.predicateSources || {}).length,
+                            topPredicateSources,
                         };
                     })
                     .sort((a, b) => b.calls - a.calls)
-                    .slice(0, stats.maxPredicateSourcesPerSite);
-
-                return {
-                    stack,
-                    calls: data.calls,
-                    firstArgType: data.firstArgType,
-                    lastArgType: data.lastArgType,
-                    firstSeenAt: data.firstSeenAt,
-                    lastSeenAt: data.lastSeenAt,
-                    cacheHits: data.cacheHits,
-                    cacheMisses: data.cacheMisses,
-                    cacheStaleHits: data.cacheStaleHits,
-                    cacheWrites: data.cacheWrites,
-                    cacheUnknown: data.cacheUnknown,
-                    cacheHitRate:
-                        cacheObserved > 0
-                            ? data.cacheHits / cacheObserved
-                            : 0,
-                    uniquePredicateSourceCount: Object.keys(data.predicateSources || {}).length,
-                    topPredicateSources,
-                };
-            })
-            .sort((a, b) => b.calls - a.calls)
-            .slice(0, 20),
-    };
-},
+                    .slice(0, 20),
+            };
+        },
 
         installFindNodePredicateCache({
             maxSize = CONFIG.cache.defaultMaxSize,
