@@ -3226,6 +3226,9 @@ installFindNodeFromLeafFrameCache({
 
             const bridgeRef = this;
 
+            const leafDescendantCache = new Map();
+            this.__leafDescendantCache = leafDescendantCache;
+
             let activeLeafFrame = -1;
             let activeLeafKey = null;
             let activeLeafValue = null;
@@ -3282,6 +3285,45 @@ installFindNodeFromLeafFrameCache({
                         const cached = get(key);
                         if (cached !== undefined) return cached;
 
+                        const descendantCached = leafDescendantCache.get(key);
+                        if (descendantCached !== undefined) {
+                            set(key, descendantCached);
+                            return descendantCached;
+                        }
+
+                        let node = getNodeDirect(store, key);
+
+                        if (node && node.message?.status !== "in_progress") {
+                            let leaf = node;
+                            let guard = 0;
+
+                            while (
+                                leaf &&
+                                Array.isArray(leaf.children) &&
+                                leaf.children.length > 0 &&
+                                guard < 2000
+                            ) {
+                                const childId = leaf.children[0];
+                                const next = getNodeDirect(store, childId);
+
+                                if (!next || next === leaf) break;
+
+                                leaf = next;
+                                guard += 1;
+                            }
+
+                            if (leaf?.id && leaf.message?.status !== "in_progress") {
+                                leafDescendantCache.set(key, leaf);
+                                set(key, leaf);
+
+                                if (leaf.id !== key) {
+                                    set(leaf.id, leaf);
+                                }
+
+                                return leaf;
+                            }
+                        }
+
                         const result = original.call(store, id) ?? null;
 
                         set(key, result);
@@ -3289,6 +3331,7 @@ installFindNodeFromLeafFrameCache({
                         const leafId = result?.id ?? null;
                         if (leafId && leafId !== key) {
                             set(leafId, result);
+                            leafDescendantCache.set(key, result);
                         }
 
                         return result;
@@ -4506,6 +4549,13 @@ installFindNodeFromLeafFrameCache({
                 if (cacheSlot === "__findNodeFromLeafFrameCache") {
                     this.__findNodeFromLeafAncestorChainCache?.clear?.();
                     this.__findNodeFromLeafPredicateNodeResultCache?.clear?.();
+                }
+
+                if (
+                    cacheSlot === "__getLeafFromNodeFrameCache" &&
+                    reason !== "store-mutation"
+                ) {
+                    this.__leafDescendantCache?.clear?.();
                 }
 
                 const keepAcrossStoreMutation =
