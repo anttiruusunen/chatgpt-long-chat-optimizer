@@ -2549,6 +2549,7 @@ installFindNodeFromLeafFrameCache({
 
     const original = getStoreMethod(store, "findNodeFromLeaf");
     if (!original) return unavailable("findNodeFromLeaf unavailable");
+
     const originalFindNode = getStoreMethod(store, "findNode");
     if (!originalFindNode) return unavailable("findNode unavailable");
 
@@ -2591,24 +2592,23 @@ installFindNodeFromLeafFrameCache({
             lastResultHits: 0,
             lastResultWrites: 0,
 
-            predicateCycleHits: 0,
-            predicateCycleMisses: 0,
-            predicateCycleGuards: 0,
-            predicateCycleGuardFailures: 0,
-            predicateCycleLearnSamples: 0,
-            predicateCycleLength: 0,
+            hotSetSamples: 0,
+            hotSetSize: 0,
+            hotSetLocked: false,
+            hotSetKnownFunctionHits: 0,
+            hotSetKnownFunctionMisses: 0,
 
             cached: 0,
             evictions: 0,
             maxSize,
-            mode: "profiled:hot-split+predicate-cycle+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
+            mode: "profiled:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
             lastClearReason: null,
         }
         : {
             cached: 0,
             evictions: 0,
             maxSize,
-            mode: "production:hot-split+predicate-cycle+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
+            mode: "production:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
             lastClearReason: null,
         };
 
@@ -2633,16 +2633,13 @@ installFindNodeFromLeafFrameCache({
     const SOURCE_KEY_LEN = 128;
     const fnToString = Function.prototype.toString;
 
-    const CYCLE_LEARN_LIMIT = 96;
-    const CYCLE_MIN_LENGTH = 2;
-    const CYCLE_MAX_LENGTH = 32;
-    const CYCLE_GUARD_MASK = 255;
+    const HOT_SET_LEARN_LIMIT = 96;
+    const HOT_SET_MAX = 12;
 
-    const predicateCycleLearned = [];
-    let predicateCycle = null;
-    let predicateCycleIndex = 0;
-    let predicateCycleHitCounter = 0;
-    let predicateCycleDisabled = false;
+    const hotCounts = new Map();
+    const hotPredicateIds = new Set();
+    let hotSamples = 0;
+    let hotSetLocked = false;
 
     const ancestorChainCache = new Map();
     const dormantAncestorResultCache = new Map();
@@ -2657,6 +2654,7 @@ installFindNodeFromLeafFrameCache({
 
     bridgeRef.__findNodeFromLeafAncestorChainCache = ancestorChainCache;
     bridgeRef.__findNodeFromLeafDormantAncestorResultCache = dormantAncestorResultCache;
+    bridgeRef.__findNodeFromLeafHotPredicateIds = hotPredicateIds;
 
     function getRootId() {
         return rootIdIsFn ? rootIdValue.call(store) : rootIdValue;
@@ -2675,24 +2673,54 @@ installFindNodeFromLeafFrameCache({
         return value ?? null;
     }
 
-    function findRepeatingCycle(samples) {
-        const sampleLength = samples.length;
-        const maxLen = Math.min(CYCLE_MAX_LENGTH, sampleLength >> 1);
+    function lockHotSetProduction() {
+        const sorted = Array.from(hotCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, HOT_SET_MAX);
 
-        for (let len = CYCLE_MIN_LENGTH; len <= maxLen; len += 1) {
-            let ok = true;
-
-            for (let i = 0; i < sampleLength; i += 1) {
-                if (samples[i] !== samples[i % len]) {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if (ok) return samples.slice(0, len);
+        for (let i = 0, len = sorted.length; i < len; i += 1) {
+            hotPredicateIds.add(sorted[i][0]);
         }
 
-        return null;
+        hotSetLocked = true;
+    }
+
+    function lockHotSetProfiled() {
+        const sorted = Array.from(hotCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, HOT_SET_MAX);
+
+        for (let i = 0, len = sorted.length; i < len; i += 1) {
+            hotPredicateIds.add(sorted[i][0]);
+        }
+
+        hotSetLocked = true;
+        stats.hotSetLocked = true;
+        stats.hotSetSize = hotPredicateIds.size;
+    }
+
+    function learnHotPredicateProduction(id) {
+        if (hotSetLocked) return;
+
+        hotSamples += 1;
+        hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
+
+        if (hotSamples >= HOT_SET_LEARN_LIMIT) {
+            lockHotSetProduction();
+        }
+    }
+
+    function learnHotPredicateProfiled(id) {
+        if (hotSetLocked) return;
+
+        hotSamples += 1;
+        stats.hotSetSamples = hotSamples;
+
+        hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
+
+        if (hotSamples >= HOT_SET_LEARN_LIMIT) {
+            lockHotSetProfiled();
+        }
     }
 
     function getSourceKeyAndId(predicateFn) {
@@ -2726,8 +2754,10 @@ installFindNodeFromLeafFrameCache({
         return id;
     }
 
-    function getPredicateSourceIdSlowProduction(predicateFn) {
-        if (predicateFn === lastPredicateFn) return lastPredicateId;
+    function getPredicateSourceIdProduction(predicateFn) {
+        if (predicateFn === lastPredicateFn) {
+            return lastPredicateId;
+        }
 
         let id = predicateSourceIdByFn.get(predicateFn);
 
@@ -2743,10 +2773,12 @@ installFindNodeFromLeafFrameCache({
         lastPredicateFn = predicateFn;
         lastPredicateId = id;
 
+        learnHotPredicateProduction(id);
+
         return id;
     }
 
-    function getPredicateSourceIdSlowProfiled(predicateFn) {
+    function getPredicateSourceIdProfiled(predicateFn) {
         if (predicateFn === lastPredicateFn) {
             stats.predicateSameFunctionHits += 1;
             return lastPredicateId;
@@ -2756,6 +2788,15 @@ installFindNodeFromLeafFrameCache({
 
         if (id !== undefined) {
             stats.predicateSameFunctionHits += 1;
+
+            if (hotSetLocked) {
+                if (hotPredicateIds.has(id)) {
+                    stats.hotSetKnownFunctionHits += 1;
+                } else {
+                    stats.hotSetKnownFunctionMisses += 1;
+                }
+            }
+
             lastPredicateFn = predicateFn;
             lastPredicateId = id;
             return id;
@@ -2777,114 +2818,8 @@ installFindNodeFromLeafFrameCache({
         lastPredicateFn = predicateFn;
         lastPredicateId = id;
 
-        return id;
-    }
+        learnHotPredicateProfiled(id);
 
-    function learnPredicateCycleProduction(id) {
-        if (predicateCycle || predicateCycleDisabled) return;
-
-        predicateCycleLearned.push(id);
-        if (predicateCycleLearned.length < CYCLE_LEARN_LIMIT) return;
-
-        const cycle = findRepeatingCycle(predicateCycleLearned);
-
-        if (cycle) {
-            predicateCycle = cycle;
-            predicateCycleIndex = predicateCycleLearned.length % cycle.length;
-        } else {
-            predicateCycleDisabled = true;
-        }
-    }
-
-    function learnPredicateCycleProfiled(id) {
-        if (predicateCycle || predicateCycleDisabled) return;
-
-        predicateCycleLearned.push(id);
-        stats.predicateCycleLearnSamples = predicateCycleLearned.length;
-
-        if (predicateCycleLearned.length < CYCLE_LEARN_LIMIT) return;
-
-        const cycle = findRepeatingCycle(predicateCycleLearned);
-
-        if (cycle) {
-            predicateCycle = cycle;
-            predicateCycleIndex = predicateCycleLearned.length % cycle.length;
-            stats.predicateCycleLength = cycle.length;
-            return;
-        }
-
-        predicateCycleDisabled = true;
-        stats.predicateCycleMisses += 1;
-    }
-
-    function getPredicateSourceIdProduction(predicateFn) {
-        if (predicateCycle) {
-            const expectedId = predicateCycle[predicateCycleIndex];
-
-            predicateCycleIndex += 1;
-            if (predicateCycleIndex === predicateCycle.length) {
-                predicateCycleIndex = 0;
-            }
-
-            predicateCycleHitCounter = (predicateCycleHitCounter + 1) | 0;
-
-            if ((predicateCycleHitCounter & CYCLE_GUARD_MASK) !== 0) {
-                return expectedId;
-            }
-
-            const actualId = getPredicateSourceIdSlowProduction(predicateFn);
-
-            if (actualId === expectedId) {
-                return expectedId;
-            }
-
-            predicateCycle = null;
-            predicateCycleIndex = 0;
-            predicateCycleDisabled = true;
-
-            return actualId;
-        }
-
-        const id = getPredicateSourceIdSlowProduction(predicateFn);
-        learnPredicateCycleProduction(id);
-        return id;
-    }
-
-    function getPredicateSourceIdProfiled(predicateFn) {
-        if (predicateCycle) {
-            const expectedId = predicateCycle[predicateCycleIndex];
-
-            predicateCycleIndex += 1;
-            if (predicateCycleIndex === predicateCycle.length) {
-                predicateCycleIndex = 0;
-            }
-
-            predicateCycleHitCounter = (predicateCycleHitCounter + 1) | 0;
-
-            if ((predicateCycleHitCounter & CYCLE_GUARD_MASK) !== 0) {
-                stats.predicateCycleHits += 1;
-                return expectedId;
-            }
-
-            stats.predicateCycleGuards += 1;
-
-            const actualId = getPredicateSourceIdSlowProfiled(predicateFn);
-
-            if (actualId === expectedId) {
-                stats.predicateCycleHits += 1;
-                return expectedId;
-            }
-
-            predicateCycle = null;
-            predicateCycleIndex = 0;
-            predicateCycleDisabled = true;
-            stats.predicateCycleGuardFailures += 1;
-
-            return actualId;
-        }
-
-        const id = getPredicateSourceIdSlowProfiled(predicateFn);
-        learnPredicateCycleProfiled(id);
         return id;
     }
 
@@ -3009,8 +2944,6 @@ installFindNodeFromLeafFrameCache({
                 if (liveCached !== undefined) {
                     stats.sourceKeyFastHits += 1;
                     stats.liveHits += 1;
-
-                    liveCache.set(predicateSourceId, liveCached);
 
                     if (liveCached === CACHE_MISS) {
                         stats.liveCacheReturnsNull += 1;
@@ -3225,21 +3158,15 @@ installFindNodeFromLeafFrameCache({
         };
     }
 
-    if (originalFindNode && !this.__findNodeFromLeafFindNodeOriginal) {
-        this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
+    this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
 
-        store.findNode = function cachedFindNode(predicateFn) {
-            if (typeof predicateFn !== "function") {
-                return originalFindNode.call(store, predicateFn) ?? null;
-            }
+    store.findNode = function cachedFindNode(predicateFn) {
+        if (typeof predicateFn !== "function") {
+            return originalFindNode.call(store, predicateFn) ?? null;
+        }
 
-            const currentLeafId = currentLeafIdIsFn
-                ? currentLeafIdValue.call(store)
-                : currentLeafIdValue;
-
-            return store.findNodeFromLeaf(predicateFn, currentLeafId);
-        };
-    }
+        return store.findNodeFromLeaf(predicateFn, readCurrentLeafId());
+    };
 
     this.__findNodeFromLeafFrameCacheInstalled = true;
 
