@@ -4440,18 +4440,6 @@
 
             const bridgeRef = this;
 
-            function recordFindNodePredicateCacheEvent(type, key = null, nodeId = null) {
-                bridgeRef.__findNodePredicateCacheEventSeq =
-                    (bridgeRef.__findNodePredicateCacheEventSeq || 0) + 1;
-
-                bridgeRef.__lastFindNodePredicateCacheEvent = {
-                    type,
-                    key,
-                    nodeId,
-                    at: Date.now(),
-                };
-            }
-
             function readCurrentLeafId() {
                 return typeof store.currentLeafId === "function"
                     ? store.currentLeafId()
@@ -4504,7 +4492,19 @@
                 }).join("|");
             }
 
-            function remember(key, node) {
+            function recordFindNodePredicateCacheEvent(type, key = null, nodeId = null) {
+                bridgeRef.__findNodePredicateCacheEventSeq =
+                    (bridgeRef.__findNodePredicateCacheEventSeq || 0) + 1;
+
+                bridgeRef.__lastFindNodePredicateCacheEvent = {
+                    type,
+                    key,
+                    nodeId,
+                    at: Date.now(),
+                };
+            }
+
+            function rememberProduction(key, node) {
                 if (!node?.id) return;
 
                 cache.set(key, node.id);
@@ -4512,44 +4512,68 @@
 
                 if (cache.size > maxSize) {
                     const oldest = insertionOrder.shift();
-                    if (oldest !== undefined && cache.delete(oldest) && profiled) {
+                    if (oldest !== undefined) {
+                        cache.delete(oldest);
+                    }
+                }
+            }
+
+            function rememberProfiled(key, node) {
+                if (!node?.id) return;
+
+                cache.set(key, node.id);
+                insertionOrder.push(key);
+
+                if (cache.size > maxSize) {
+                    const oldest = insertionOrder.shift();
+                    if (oldest !== undefined && cache.delete(oldest)) {
                         stats.evictions += 1;
                     }
                 }
 
-                if (profiled) {
-                    stats.writes += 1;
-                    stats.cached = cache.size;
-                }
+                stats.writes += 1;
+                stats.cached = cache.size;
 
                 recordFindNodePredicateCacheEvent("write", key, node.id);
             }
 
-            function getCachedNode(key, predicateFn) {
+            function getCachedNodeProduction(key, predicateFn) {
                 const nodeId = cache.get(key);
                 if (nodeId === undefined) return undefined;
 
                 const node = getNodeDirect(store, nodeId);
 
                 if (node && predicateFn.call(store, node)) {
-                    if (profiled) stats.hits += 1;
+                    return node;
+                }
+
+                cache.delete(key);
+                return undefined;
+            }
+
+            function getCachedNodeProfiled(key, predicateFn) {
+                const nodeId = cache.get(key);
+                if (nodeId === undefined) return undefined;
+
+                const node = getNodeDirect(store, nodeId);
+
+                if (node && predicateFn.call(store, node)) {
+                    stats.hits += 1;
                     recordFindNodePredicateCacheEvent("hit", key, nodeId);
                     return node;
                 }
 
                 cache.delete(key);
 
-                if (profiled) {
-                    stats.staleHits += 1;
-                    stats.cached = cache.size;
-                }
+                stats.staleHits += 1;
+                stats.cached = cache.size;
 
                 recordFindNodePredicateCacheEvent("stale-hit", key, nodeId);
 
                 return undefined;
             }
 
-            function callOriginalWithRafThrottle(key, restKey, predicateFn, rest) {
+            function callOriginalWithRafThrottleProduction(key, restKey, predicateFn, rest) {
                 const frame = getCurrentRafFrame();
 
                 if (
@@ -4557,16 +4581,39 @@
                     activeKey === key &&
                     activeRestKey === restKey
                 ) {
-                    if (profiled) stats.activeRafHits += 1;
+                    return activeValue;
+                }
+
+                const result = original.call(store, predicateFn, ...rest) ?? null;
+
+                activeFrame = frame;
+                activeKey = key;
+                activeRestKey = restKey;
+                activeValue = result;
+
+                return result;
+            }
+
+            function callOriginalWithRafThrottleProfiled(key, restKey, predicateFn, rest) {
+                const frame = getCurrentRafFrame();
+
+                if (
+                    activeFrame === frame &&
+                    activeKey === key &&
+                    activeRestKey === restKey
+                ) {
+                    stats.activeRafHits += 1;
+
                     recordFindNodePredicateCacheEvent(
                         "active-raf-hit",
                         key,
                         activeValue?.id ?? null
                     );
+
                     return activeValue;
                 }
 
-                if (profiled) stats.activeRafMisses += 1;
+                stats.activeRafMisses += 1;
 
                 const result = original.call(store, predicateFn, ...rest) ?? null;
 
@@ -4598,6 +4645,7 @@
                     }
 
                     const leafId = readCurrentLeafId();
+
                     if (!leafId) {
                         stats.misses += 1;
                         recordFindNodePredicateCacheEvent("miss", null, null);
@@ -4606,14 +4654,14 @@
 
                     const sourceKey = getPredicateSourceKey(predicateFn);
                     const key = makeKey(leafId, sourceKey);
-                    const restKey = makeRestKey(rest);
 
-                    const cached = getCachedNode(key, predicateFn);
+                    const cached = getCachedNodeProfiled(key, predicateFn);
                     if (cached !== undefined) return cached;
 
                     stats.misses += 1;
 
-                    const result = callOriginalWithRafThrottle(
+                    const restKey = rest.length === 0 ? "" : makeRestKey(rest);
+                    const result = callOriginalWithRafThrottleProfiled(
                         key,
                         restKey,
                         predicateFn,
@@ -4621,13 +4669,13 @@
                     );
 
                     if (result?.id) {
-                        remember(key, result);
+                        rememberProfiled(key, result);
                     }
 
                     return result;
                 };
             } else {
-                store.findNode = function cachedFindNodePredicate(predicateFn, ...rest) {
+                store.findNode = function cachedFindNodePredicateProduction(predicateFn, ...rest) {
                     if (typeof predicateFn !== "function") {
                         return original.call(store, predicateFn, ...rest) ?? null;
                     }
@@ -4639,12 +4687,12 @@
 
                     const sourceKey = getPredicateSourceKey(predicateFn);
                     const key = makeKey(leafId, sourceKey);
-                    const restKey = makeRestKey(rest);
 
-                    const cached = getCachedNode(key, predicateFn);
+                    const cached = getCachedNodeProduction(key, predicateFn);
                     if (cached !== undefined) return cached;
 
-                    const result = callOriginalWithRafThrottle(
+                    const restKey = rest.length === 0 ? "" : makeRestKey(rest);
+                    const result = callOriginalWithRafThrottleProduction(
                         key,
                         restKey,
                         predicateFn,
@@ -4652,7 +4700,7 @@
                     );
 
                     if (result?.id) {
-                        remember(key, result);
+                        rememberProduction(key, result);
                     }
 
                     return result;
