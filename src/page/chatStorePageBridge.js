@@ -1280,7 +1280,6 @@
                 "__findNodeFromLeafFrameCache",
                 "__findNodeFromLeafFrameCacheStats",
                 "__findNodeFromLeafCacheController",
-                "__findNodeFromLeafFindNodeOriginal",
                 "__findNodeFromLeafAncestorChainCache",
                 "__findNodeFromLeafDormantAncestorResultCache",
             ]);
@@ -2585,9 +2584,6 @@
             const original = getStoreMethod(store, "findNodeFromLeaf");
             if (!original) return unavailable("findNodeFromLeaf unavailable");
 
-            const originalFindNode = getStoreMethod(store, "findNode");
-            if (!originalFindNode) return unavailable("findNode unavailable");
-
             const stats = profiled
                 ? {
                     calls: 0,
@@ -2912,7 +2908,6 @@
             this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = {
                 findNodeFromLeaf: original,
-                findNode: originalFindNode,
             };
 
             if (profiled) {
@@ -3193,32 +3188,17 @@
                 };
             }
 
-            this.__findNodeFromLeafFindNodeOriginal = { findNode: originalFindNode };
-
-            store.findNode = function cachedFindNode(predicateFn) {
-                if (typeof predicateFn !== "function") {
-                    return originalFindNode.call(store, predicateFn) ?? null;
-                }
-
-                return store.findNodeFromLeaf(predicateFn, readCurrentLeafId());
-            };
-
             this.__findNodeFromLeafFrameCacheInstalled = true;
 
             return {
                 ok: true,
                 installed: true,
-                methods: ["findNodeFromLeaf", "findNode"],
+                methods: ["findNodeFromLeaf"],
                 profiled,
             };
         },
 
         uninstallFindNodeFromLeafFrameCache() {
-            if (this.__store && this.__findNodeFromLeafFindNodeOriginal?.findNode) {
-                this.__store.findNode = this.__findNodeFromLeafFindNodeOriginal.findNode;
-                this.__findNodeFromLeafFindNodeOriginal = null;
-            }
-
             return uninstallMethodFrameCache({
                 bridge: this,
                 originalSlot: "__findNodeFromLeafFrameCacheOriginal",
