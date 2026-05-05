@@ -59,8 +59,8 @@
 
         flags: {
             debug: false,
-            cacheProfiling: true,
-            storeProfiler: true,
+            cacheProfiling: false,
+            storeProfiler: false,
             branchCallSites: false,
             nodeCallSites: false,
         },
@@ -3298,13 +3298,18 @@ installFindNodeFromLeafFrameCache({
                     skippedClears: 0,
                     activeLeafRafHits: 0,
                     activeLeafRafMisses: 0,
+                    descendantHits: 0,
+                    descendantWrites: 0,
+                    directWalks: 0,
+                    directWalkReturns: 0,
+                    originalCalls: 0,
                     maxSize,
-                    mode: "profiled:persistent+active-leaf-raf-node",
+                    mode: "profiled:persistent+active-leaf-raf-node+descendant-direct",
                     lastClearReason: null,
                 }
                 : {
                     maxSize,
-                    mode: "production:persistent+active-leaf-raf-node",
+                    mode: "production:persistent+active-leaf-raf-node+descendant-direct",
                     lastClearReason: null,
                 };
 
@@ -3322,9 +3327,69 @@ installFindNodeFromLeafFrameCache({
             const leafDescendantCache = new Map();
             this.__leafDescendantCache = leafDescendantCache;
 
+            const get = frameCache.get;
+            const set = frameCache.set;
+
             let activeLeafFrame = -1;
             let activeLeafKey = null;
             let activeLeafValue = null;
+
+            function normalizeLeafInputKey(id) {
+                return typeof id === "string" ||
+                    typeof id === "number" ||
+                    typeof id === "boolean" ||
+                    id == null
+                    ? id
+                    : id.id ?? id.nodeId ?? id.message?.id ?? id;
+            }
+
+            function readCurrentLeafId() {
+                return typeof store.currentLeafId === "function"
+                    ? store.currentLeafId()
+                    : store.currentLeafId;
+            }
+
+            function tryDirectLeafWalk(key) {
+                let node = getNodeDirect(store, key);
+
+                if (!node || node.message?.status === "in_progress") {
+                    return null;
+                }
+
+                let leaf = node;
+                let guard = 0;
+
+                while (
+                    leaf &&
+                    Array.isArray(leaf.children) &&
+                    leaf.children.length > 0 &&
+                    guard < 2000
+                ) {
+                    const childId = leaf.children[0];
+                    const next = getNodeDirect(store, childId);
+
+                    if (!next || next === leaf) break;
+
+                    leaf = next;
+                    guard += 1;
+                }
+
+                if (!leaf?.id || leaf.message?.status === "in_progress") {
+                    return null;
+                }
+
+                return leaf;
+            }
+
+            function rememberLeaf(key, leaf) {
+                set(key, leaf);
+
+                if (leaf?.id && leaf.id !== key) {
+                    set(leaf.id, leaf);
+                }
+
+                return leaf;
+            }
 
             const result = installStoreMethodWrapper({
                 bridge: this,
@@ -3332,24 +3397,80 @@ installFindNodeFromLeafFrameCache({
                 originalSlot: "__getLeafFromNodeFrameCacheOriginal",
                 installedFlag: "__getLeafFromNodeFrameCacheInstalled",
                 createWrapper: ({ store, original }) => {
-                    const get = frameCache.get;
-                    const set = frameCache.set;
+                    if (profiled) {
+                        return function cachedGetLeafFromNodeProfiled(id) {
+                            const key = normalizeLeafInputKey(id);
 
-                    return function cachedGetLeafFromNode(id) {
-                        const key =
-                            typeof id === "string" ||
-                            typeof id === "number" ||
-                            typeof id === "boolean" ||
-                            id == null
-                                ? id
-                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
+                            if (key === readCurrentLeafId()) {
+                                const frame =
+                                    bridgeRef.__displayTurnsRafFrame ||
+                                    bridgeRef.__liveNodeReadFrame ||
+                                    0;
 
-                        const currentLeafId =
-                            typeof store.currentLeafId === "function"
-                                ? store.currentLeafId()
-                                : store.currentLeafId;
+                                if (
+                                    activeLeafFrame === frame &&
+                                    activeLeafKey === key &&
+                                    activeLeafValue !== null
+                                ) {
+                                    stats.activeLeafRafHits += 1;
+                                    return activeLeafValue;
+                                }
 
-                        if (key === currentLeafId) {
+                                stats.activeLeafRafMisses += 1;
+                                stats.originalCalls += 1;
+
+                                const result = original.call(store, id) ?? null;
+
+                                activeLeafFrame = frame;
+                                activeLeafKey = key;
+                                activeLeafValue = result;
+
+                                return result;
+                            }
+
+                            const cached = get(key);
+                            if (cached !== undefined) return cached;
+
+                            const descendantCached = leafDescendantCache.get(key);
+                            if (descendantCached !== undefined) {
+                                stats.descendantHits += 1;
+                                set(key, descendantCached);
+                                return descendantCached;
+                            }
+
+                            stats.directWalks += 1;
+
+                            const directLeaf = tryDirectLeafWalk(key);
+
+                            if (directLeaf) {
+                                stats.directWalkReturns += 1;
+                                stats.descendantWrites += 1;
+
+                                leafDescendantCache.set(key, directLeaf);
+                                return rememberLeaf(key, directLeaf);
+                            }
+
+                            stats.originalCalls += 1;
+
+                            const result = original.call(store, id) ?? null;
+
+                            set(key, result);
+
+                            const leafId = result?.id ?? null;
+                            if (leafId && leafId !== key) {
+                                set(leafId, result);
+                                leafDescendantCache.set(key, result);
+                                stats.descendantWrites += 1;
+                            }
+
+                            return result;
+                        };
+                    }
+
+                    return function cachedGetLeafFromNodeProduction(id) {
+                        const key = normalizeLeafInputKey(id);
+
+                        if (key === readCurrentLeafId()) {
                             const frame =
                                 bridgeRef.__displayTurnsRafFrame ||
                                 bridgeRef.__liveNodeReadFrame ||
@@ -3360,7 +3481,6 @@ installFindNodeFromLeafFrameCache({
                                 activeLeafKey === key &&
                                 activeLeafValue !== null
                             ) {
-                                if (profiled) stats.activeLeafRafHits += 1;
                                 return activeLeafValue;
                             }
 
@@ -3369,8 +3489,6 @@ installFindNodeFromLeafFrameCache({
                             activeLeafFrame = frame;
                             activeLeafKey = key;
                             activeLeafValue = result;
-
-                            if (profiled) stats.activeLeafRafMisses += 1;
 
                             return result;
                         }
@@ -3384,37 +3502,11 @@ installFindNodeFromLeafFrameCache({
                             return descendantCached;
                         }
 
-                        let node = getNodeDirect(store, key);
+                        const directLeaf = tryDirectLeafWalk(key);
 
-                        if (node && node.message?.status !== "in_progress") {
-                            let leaf = node;
-                            let guard = 0;
-
-                            while (
-                                leaf &&
-                                Array.isArray(leaf.children) &&
-                                leaf.children.length > 0 &&
-                                guard < 2000
-                            ) {
-                                const childId = leaf.children[0];
-                                const next = getNodeDirect(store, childId);
-
-                                if (!next || next === leaf) break;
-
-                                leaf = next;
-                                guard += 1;
-                            }
-
-                            if (leaf?.id && leaf.message?.status !== "in_progress") {
-                                leafDescendantCache.set(key, leaf);
-                                set(key, leaf);
-
-                                if (leaf.id !== key) {
-                                    set(leaf.id, leaf);
-                                }
-
-                                return leaf;
-                            }
+                        if (directLeaf) {
+                            leafDescendantCache.set(key, directLeaf);
+                            return rememberLeaf(key, directLeaf);
                         }
 
                         const result = original.call(store, id) ?? null;
