@@ -207,6 +207,35 @@ describe("codeBlockDetachStore", () => {
         expect(scheduleRefreshMock).toHaveBeenCalledTimes(1);
     });
 
+    it("cleans up a corrupted detached entry instead of leaving an empty placeholder area", () => {
+        const { assistant2 } = buildConversation();
+
+        const pre = makePre("const value = 1;");
+        assistant2.appendChild(pre);
+
+        const placeholder = ensurePlaceholderForPre(pre);
+        const id = storeDetachedCodeBlock(pre, placeholder);
+
+        pre.remove();
+
+        state.detachedCodeBlocks.set(id, {
+            id,
+            pre: null,
+            placeholder,
+            originalParent: assistant2,
+            originalNextSibling: null,
+        });
+
+        expect(() => {
+            revealCollapsedCodeBlockFromPlaceholder(placeholder);
+        }).not.toThrow();
+
+        expect(assistant2.contains(placeholder)).toBe(false);
+        expect(placeholder.isConnected).toBe(false);
+        expect(state.detachedCodeBlocks.has(id)).toBe(false);
+        expect(scheduleRefreshMock).toHaveBeenCalledTimes(1);
+    });
+
     it("clears the pre placeholder id when restoring and removing the placeholder", () => {
         const wrapper = document.createElement("div");
         const pre = document.createElement("pre");

@@ -7,50 +7,109 @@
             install: "installMessageIdIndex",
             uninstall: "uninstallMessageIdIndex",
             installedFlag: "__messageIdIndexInstalled",
+            slots: [
+                "__messageIdIndexOriginal",
+                "__messageIdIndex",
+                "__messageIdIndexStats",
+            ],
         },
         {
             key: "nodeFrameCache",
             install: "installExistingNodeFrameCache",
             uninstall: "uninstallExistingNodeFrameCache",
             installedFlag: "__existingNodeFrameCacheInstalled",
+            slots: [
+                "__existingNodeFrameCacheOriginal",
+                "__existingNodeFrameCache",
+                "__existingNodeFrameCacheStats",
+                "__existingNodeFrameCacheMode",
+                "__existingNodeFrameCacheApi",
+            ],
         },
         {
             key: "findNodeFromLeafFrameCache",
             install: "installFindNodeFromLeafFrameCache",
             uninstall: "uninstallFindNodeFromLeafFrameCache",
             installedFlag: "__findNodeFromLeafFrameCacheInstalled",
+            slots: [
+                "__findNodeFromLeafFrameCacheOriginal",
+                "__findNodeFromLeafFrameCache",
+                "__findNodeFromLeafFrameCacheStats",
+                "__findNodeFromLeafCacheController",
+                "__findNodeFromLeafAncestorChainCache",
+                "__findNodeFromLeafDormantAncestorResultCache",
+                "__findNodeFromLeafHotPredicateIds",
+            ],
         },
         {
             key: "findNodePredicateCache",
             install: "installFindNodePredicateCache",
             uninstall: "uninstallFindNodePredicateCache",
             installedFlag: "__findNodePredicateCacheInstalled",
+            slots: [
+                "__findNodePredicateCacheOriginal",
+                "__findNodePredicateCache",
+                "__findNodePredicateCacheStats",
+            ],
         },
         {
             key: "getLeafFromNodeFrameCache",
             install: "installGetLeafFromNodeFrameCache",
             uninstall: "uninstallGetLeafFromNodeFrameCache",
             installedFlag: "__getLeafFromNodeFrameCacheInstalled",
+            slots: [
+                "__getLeafFromNodeFrameCacheOriginal",
+                "__getLeafFromNodeFrameCache",
+                "__getLeafFromNodeFrameCacheStats",
+                "__leafDescendantCache",
+                "__leafDescendantMissCache",
+            ],
         },
         {
             key: "branchCache",
             install: "installBranchCache",
             uninstall: "uninstallBranchCache",
             installedFlag: "__branchCacheInstalled",
+            slots: [
+                "__branchCacheOriginals",
+                "__branchCache",
+                "__branchCacheStats",
+                "__branchCacheLastInstallResult",
+            ],
         },
         {
             key: "resolvedNodeFrameCache",
             install: "installResolvedNodeFrameCache",
             uninstall: "uninstallResolvedNodeFrameCache",
             installedFlag: "__resolvedNodeFrameCacheInstalled",
+            slots: [
+                "__resolvedNodeFrameCache",
+                "__resolvedNodeFrameCacheStats",
+                "__resolveNodeFast",
+            ],
         },
         {
             key: "getDisplayTurnsCache",
             install: "installGetDisplayTurnsCache",
             uninstall: "uninstallGetDisplayTurnsCache",
             installedFlag: "__getDisplayTurnsCacheInstalled",
+            slots: [
+                "__getDisplayTurnsCache",
+                "__getDisplayTurnsCacheStats",
+                "__getDisplayTurnsCacheOriginal",
+            ],
         },
     ];
+
+    function resetStoreEnhancementSlots(bridge) {
+        for (const enhancement of STORE_ENHANCEMENTS) {
+            bridge[enhancement.installedFlag] = false;
+
+            if (Array.isArray(enhancement.slots) && enhancement.slots.length > 0) {
+                clearBridgeSlots(bridge, enhancement.slots);
+            }
+        }
+    }
 
     function runStoreEnhancementInstalls(bridge) {
         const result = {};
@@ -1332,62 +1391,10 @@
                 "__storeProfile",
             ]);
 
-            this.__messageIdIndexInstalled = false;
-            clearBridgeSlots(this, [
-                "__messageIdIndexOriginal",
-                "__messageIdIndex",
-            ]);
+            resetStoreEnhancementSlots(this);
 
-            this.__existingNodeFrameCacheInstalled = false;
-            clearBridgeSlots(this, [
-                "__existingNodeFrameCacheOriginal",
-                "__existingNodeFrameCache",
-                "__existingNodeFrameCacheStats",
-                "__existingNodeFrameCacheMode",
-                "__existingNodeFrameCacheApi",
-            ]);
-
-            this.__findNodeFromLeafFrameCacheInstalled = false;
-            clearBridgeSlots(this, [
-                "__findNodeFromLeafFrameCacheOriginal",
-                "__findNodeFromLeafFrameCache",
-                "__findNodeFromLeafFrameCacheStats",
-                "__findNodeFromLeafCacheController",
-                "__findNodeFromLeafAncestorChainCache",
-                "__findNodeFromLeafDormantAncestorResultCache",
-            ]);
-
-            this.__getLeafFromNodeFrameCacheInstalled = false;
-            clearBridgeSlots(this, [
-                "__getLeafFromNodeFrameCacheOriginal",
-                "__getLeafFromNodeFrameCache",
-                "__getLeafFromNodeFrameCacheStats",
-                "__leafDescendantCache",
-                "__leafDescendantMissCache",
-            ]);
-
-            this.__branchCacheInstalled = false;
             this.__branchCacheClearScheduled = false;
-            clearBridgeSlots(this, [
-                "__branchCacheOriginals",
-                "__branchCache",
-                "__branchCacheStats",
-            ]);
-
-            this.__resolvedNodeFrameCacheInstalled = false;
             this.__resolvedNodeFrameCacheClearScheduled = false;
-            clearBridgeSlots(this, [
-                "__resolvedNodeFrameCache",
-                "__resolvedNodeFrameCacheStats",
-                "__resolveNodeFast",
-            ]);
-
-            this.__getDisplayTurnsCacheInstalled = false;
-            clearBridgeSlots(this, [
-                "__getDisplayTurnsCache",
-                "__getDisplayTurnsCacheStats",
-                "__getDisplayTurnsCacheOriginal",
-            ]);
 
             this.__indexRefreshHooksInstalled = false;
             clearBridgeSlots(this, [
@@ -1417,13 +1424,6 @@
             clearBridgeSlots(this, [
                 "__updateNodeMessageRafBatcherOriginal",
                 "__updateNodeMessageRafBatcherPending",
-            ]);
-
-            this.__findNodePredicateCacheInstalled = false;
-            clearBridgeSlots(this, [
-                "__findNodePredicateCacheOriginal",
-                "__findNodePredicateCache",
-                "__findNodePredicateCacheStats",
             ]);
 
             this.__findNodeCallSiteProfilerInstalled = false;
