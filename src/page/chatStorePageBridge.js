@@ -310,6 +310,18 @@
         return { get, set, clear, cache };
     }
 
+    function createCacheStats(profiled, profileStats, productionStats = {}) {
+        return profiled
+            ? {
+                ...profileStats,
+                lastClearReason: null,
+            }
+            : {
+                ...productionStats,
+                lastClearReason: null,
+            };
+    }
+
     function getVisibleConversationTurnCount() {
         try {
             return document.querySelectorAll(
@@ -3939,8 +3951,9 @@
                 return { ok: true, alreadyInstalled: true };
             }
 
-            const stats = profiled
-                ? {
+            const stats = createCacheStats(
+                profiled,
+                {
                     calls: 0,
                     hits: 0,
                     misses: 0,
@@ -3959,15 +3972,14 @@
                     cached: 0,
                     frameClears: 0,
                     mode: "profiled:persistent",
-                    lastClearReason: null,
 
                     inputSamples: [],
                     resultSamples: [],
-                }
-                : {
+                },
+                {
                     mode: "production:persistent",
-                    lastClearReason: null,
-                };
+                }
+            );
 
             const frameCache = createPersistentCache({
                 stats,
@@ -4072,16 +4084,10 @@
 
                     const node = resolve(bridgeRef, id);
 
-                    if (node) {
-                        const nodeId = node.id;
+                    set(id, node ?? null);
 
-                        set(id, node);
-
-                        if (nodeId && nodeId !== id) {
-                            set(nodeId, node);
-                        }
-                    } else {
-                        set(id, null);
+                    if (node?.id && node.id !== id) {
+                        set(node.id, node);
                     }
 
                     return node;
@@ -4093,6 +4099,7 @@
             return {
                 ok: true,
                 installed: true,
+                methods: ["resolveNodeFast"],
                 profiled,
             };
         },
