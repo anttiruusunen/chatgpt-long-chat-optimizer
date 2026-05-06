@@ -4,7 +4,34 @@ import {
     isConversationSection,
     invalidateConversationDomCache,
 } from "../core/dom.js";
+import { notifyVisibleMessagesReadyForStoreBridge } from "../bridge/chatStoreBridgeClient.js";
 import { debugLog } from "../core/logger.js";
+
+let visibleMessagesReadyPostedForContainer = null;
+
+function maybeNotifyVisibleMessagesReady(container, reason = "unknown") {
+    if (!container || visibleMessagesReadyPostedForContainer === container) {
+        return;
+    }
+
+    const hasVisibleMessage = Boolean(
+        container.querySelector(
+            "[data-message-id], [data-message-author-role][data-message-id]"
+        )
+    );
+
+    if (!hasVisibleMessage) {
+        return;
+    }
+
+    visibleMessagesReadyPostedForContainer = container;
+
+    notifyVisibleMessagesReadyForStoreBridge();
+
+    debugLog("Observers: notified page bridge that visible messages are ready", {
+        reason,
+    });
+}
 
 function nodeIsOrContainsConversationSection(node) {
     if (!(node instanceof Element)) {
@@ -131,6 +158,8 @@ export function handleObservedMutations(
     const container = state.observedContainer;
     let shouldConsiderPrune = false;
 
+    maybeNotifyVisibleMessagesReady(container, "mutation-batch");
+
     for (const mutation of mutations) {
         if (mutationNeedsPrune(mutation, container)) {
             shouldConsiderPrune = true;
@@ -190,6 +219,7 @@ export function attachObserverToContainer(container, deps) {
     }
 
     if (state.observedContainer === container) {
+        maybeNotifyVisibleMessagesReady(container, "observer-already-attached");
         return;
     }
 
@@ -201,6 +231,9 @@ export function attachObserverToContainer(container, deps) {
     });
 
     state.observedContainer = container;
+    visibleMessagesReadyPostedForContainer = null;
+
+    maybeNotifyVisibleMessagesReady(container, "observer-attached");
 
     debugLog(
         "[Thread Optimizer] Auto-prune observer attached to conversation container"

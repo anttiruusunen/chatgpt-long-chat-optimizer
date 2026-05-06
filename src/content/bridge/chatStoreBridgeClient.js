@@ -3,6 +3,7 @@ import { getChatStorePageBridgeToken } from "./bridgeBootstrap.js";
 
 const RECORD_SOURCE = "thread-optimizer";
 const RECORD_TYPE = "thread-optimizer:record-pruned-message-id";
+const VISIBLE_MESSAGES_READY_TYPE = "thread-optimizer:visible-messages-ready";
 
 const MAX_MESSAGE_ID_LENGTH = 300;
 
@@ -131,4 +132,10 @@ export function recordPrunedSectionMessageForManualBridgeDelete(section) {
         messageId,
         reason: posted ? null : "failed to post bridge message",
     };
+}
+
+export function notifyVisibleMessagesReadyForStoreBridge() {
+    return postThreadOptimizerBridgeMessage({
+        type: VISIBLE_MESSAGES_READY_TYPE,
+    });
 }

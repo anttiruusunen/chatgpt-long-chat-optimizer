@@ -44,17 +44,6 @@
         discovery: {
             maxFibers: 4000,
             maxObjects: 15000,
-            retryMs: 1200,
-            maxRuns: 30,
-        },
-
-        cache: {
-            defaultMaxSize: 10000,
-        },
-
-        promotion: {
-            intervalMs: 10000,
-            initialDelayMs: 8000,
         },
 
         flags: {
@@ -77,6 +66,7 @@
         "thread-optimizer:record-pruned-message-id",
         "thread-optimizer:log-store-performance",
         "thread-optimizer:set-store-read-optimization",
+        "thread-optimizer:visible-messages-ready",
     ]);
 
     function getBridgeTokenFromCurrentScript() {
@@ -121,7 +111,7 @@
 
     const CACHE_MISS = Symbol("threadOptimizerCacheMiss");
 
-    function createPersistentCache({ maxSize, stats, profiled = false }) {
+    function createPersistentCache({ stats, profiled = false }) {
         const cache = new Map();
 
         function clear(reason) {
@@ -160,20 +150,10 @@
         const set = profiled
             ? function setProfiled(key, value) {
                 cache.set(key, value === null ? CACHE_MISS : value);
-
-                if (cache.size > maxSize) {
-                    cache.delete(cache.keys().next().value);
-                    stats.evictions += 1;
-                }
-
                 stats.cached = cache.size;
             }
             : function setProduction(key, value) {
                 cache.set(key, value === null ? CACHE_MISS : value);
-
-                if (cache.size > maxSize) {
-                    cache.delete(cache.keys().next().value);
-                }
             };
 
         return { get, set, clear, cache };
@@ -371,7 +351,6 @@
 
         stats.cached = cache?.size ?? 0;
 
-        if ("evictions" in stats) stats.evictions = 0;
         if ("frameClears" in stats) stats.frameClears = 0;
 
         stats.lastClearReason = null;
@@ -1107,6 +1086,13 @@
         __found: false,
         __messageIdResolveWarningShown: false,
 
+        __storeDiscoveryLocked: false,
+        __storeDiscoveryLockReason: null,
+        __visibleMessagesReadyChecks: 0,
+        __visibleMessagesVerificationDone: false,
+        __visibleMessagesVerificationConversationKey: null,
+        __lastVisibleMessagesVerificationResult: null,
+
         __anchorCount: 0,
         __discoveryRuns: 0,
         __visitedFibers: 0,
@@ -1172,11 +1158,6 @@
 
         __indexRefreshHooksInstalled: false,
         __indexRefreshHookOriginals: null,
-
-        __storePromotionStableCount: 0,
-        __storePromotionLocked: false,
-        __lastPromotionAttemptAt: 0,
-        __promotionTimer: null,
 
         __nodeIdDirectIndex: null,
         __nodeIdDirectIndexSource: null,
@@ -1582,6 +1563,9 @@
         },
 
         discoverNow() {
+            if (this.__storeDiscoveryLocked) {
+                return true;
+            }
             if (this.__discoveryInProgress) {
                 return false;
             }
@@ -1652,110 +1636,100 @@
             }
         },
 
-        retryDiscovery() {
-            this.clearStore();
-            this.__lastError = null;
-            return this.discoverNow();
-        },
+        lockStoreDiscovery(reason = "unknown") {
+            this.__storeDiscoveryLocked = true;
+            this.__storeDiscoveryLockReason = reason;
 
-        promoteStoreDiscovery() {
-            // Match the manual fix that works: detach the root-only store first,
-            // then rediscover against the hydrated page.
-            this.clearStore();
-            this.__lastError = null;
-
-            window.setTimeout(() => {
-                this.discoverNow();
-            }, 0);
+            console.debug("[thread-optimizer bridge] locked store discovery", {
+                reason,
+                status: this.status(),
+            });
 
             return true;
         },
 
-        maybePromoteStore(reason = "unknown") {
-            if (this.__storePromotionLocked) return true;
+        verifyRegisteredStoreAgainstVisibleMessages(reason = "visible-messages-ready") {
+            const conversationKey = location.pathname + location.search;
 
-            const currentNodeCount = getStoreNodeCount(this.__store);
-
-            if (currentNodeCount > 1) {
-                this.__storePromotionLocked = true;
-
-                if (this.__promotionTimer) {
-                    clearInterval(this.__promotionTimer);
-                    this.__promotionTimer = null;
-                }
-
-                return true;
+            if (
+                this.__visibleMessagesVerificationDone &&
+                this.__visibleMessagesVerificationConversationKey === conversationKey
+            ) {
+                return {
+                    ok: true,
+                    skipped: true,
+                    reason: "visible messages verification already completed",
+                    previousResult: this.__lastVisibleMessagesVerificationResult,
+                };
             }
 
-            // Never lock onto the bootstrap/root-only store.
-            // Keep trying lightweight promotion until a real hydrated store appears.
-            if (this.__store && currentNodeCount <= 1) {
-                const now = Date.now();
+            this.__visibleMessagesReadyChecks += 1;
+            this.__visibleMessagesVerificationConversationKey = conversationKey;
 
-                // Give ChatGPT time to hydrate the real conversation store before rescanning.
-                if (performance.now() - this.__initTiming.installedAt < CONFIG.promotion.initialDelayMs) {
-                    return false;
-                }
+            const currentCheck = this.__store
+                ? candidateStoreCanResolveVisibleNewestNode(this.__store)
+                : { ok: false, reason: "store not registered" };
 
-                if (now - this.__lastPromotionAttemptAt < CONFIG.promotion.intervalMs) return false;
+            if (currentCheck.ok) {
+                this.lockStoreDiscovery(`${reason}:current-store-resolves-visible-newest`);
 
-                this.__lastPromotionAttemptAt = now;
-                this.promoteStoreDiscovery();
-                return true;
+                const result = {
+                    ok: true,
+                    locked: true,
+                    rediscovered: false,
+                    currentCheck,
+                };
+
+                this.__visibleMessagesVerificationDone = true;
+                this.__lastVisibleMessagesVerificationResult = result;
+
+                return result;
             }
 
-            if (this.__store && isStoreGoodEnough(this.__store)) {
-                this.__storePromotionStableCount += 1;
+            if (this.__storeDiscoveryLocked) {
+                const result = {
+                    ok: false,
+                    locked: true,
+                    rediscovered: false,
+                    currentCheck,
+                    reason: "store discovery already locked",
+                };
 
-                if (this.__storePromotionStableCount >= 3) {
-                    this.__storePromotionLocked = true;
-                    if (this.__promotionTimer) clearInterval(this.__promotionTimer);
-                    this.__promotionTimer = null;
-                }
+                this.__visibleMessagesVerificationDone = true;
+                this.__lastVisibleMessagesVerificationResult = result;
 
-                return true;
+                return result;
             }
 
-            const now = Date.now();
-            if (now - this.__lastPromotionAttemptAt < 3000) return false;
+            this.clearStore();
+            this.__lastError = null;
 
-            this.__lastPromotionAttemptAt = now;
-            this.promoteStoreDiscovery();
-            return true;
-        },
+            const rediscovered = this.discoverNow();
 
-        startDiscoveryLoop() {
-            let attempts = 0;
+            const nextNodeCount = getStoreNodeCount(this.__store);
+            const nextCheck = this.__store
+                ? candidateStoreCanResolveVisibleNewestNode(this.__store)
+                : { ok: false, reason: "store not registered after rediscovery" };
 
-            const tick = () => {
-                attempts += 1;
+            if (nextCheck.ok) {
+                this.lockStoreDiscovery(`${reason}:rediscovered-store-resolves-visible-newest`);
+            } else if (nextNodeCount > 1) {
+                this.lockStoreDiscovery(`${reason}:rediscovered-hydrated-store`);
+            }
 
-                try {
-                    if (!this.__store) {
-                        this.retryDiscovery();
-                    }
-                } catch (error) {
-                    this.__lastError = String(error?.message || error);
-                    console.debug("[thread-optimizer bridge] discovery loop failed", error);
-                }
-
-                if (this.__store) {
-                    console.log(DISCOVERY_LOG_PREFIX, "startup completed", this.getInitTiming());
-
-                    if (!this.__promotionTimer) {
-                        this.__promotionTimer = window.setInterval(() => {
-                            this.maybePromoteStore("startup-promotion");
-                        }, CONFIG.promotion.intervalMs);
-                    }
-
-                    return;
-                }
-
-                if (attempts >= CONFIG.discovery.maxRuns) return;
-                window.setTimeout(tick, CONFIG.discovery.retryMs);
+            const result = {
+                ok: Boolean(nextCheck.ok || nextNodeCount > 1),
+                locked: Boolean(this.__storeDiscoveryLocked),
+                rediscovered,
+                currentCheck,
+                nextCheck,
+                nodeCount: nextNodeCount,
             };
 
-            tick();
+            this.__visibleMessagesVerificationDone = true;
+            this.__lastVisibleMessagesVerificationResult = result;
+
+            return result;
         },
 
         installStoreProfiler() {
@@ -2433,7 +2407,6 @@
         },
 
         installExistingNodeFrameCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -2456,26 +2429,21 @@
                     confirmedFastHits: 0,
                     fallbackHits: 0,
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
                     activeOriginal: 0,
                     activeCached: 0,
                     normalOriginal: 0,
                     normalCached: 0,
-                    maxSize,
                     mode: "profiled:persistent+confirmed-direct-index",
                     lastClearReason: null,
                 }
                 : {
                     cached: 0,
-                    evictions: 0,
-                    maxSize,
                     mode: "production:persistent+confirmed-direct-index",
                     lastClearReason: null,
                 };
 
             const frameCache = createPersistentCache({
-                maxSize,
                 stats,
                 profiled,
             });
@@ -2567,7 +2535,6 @@
         },
 
         installFindNodeFromLeafFrameCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -2630,15 +2597,11 @@
                     hotSetKnownFunctionMisses: 0,
 
                     cached: 0,
-                    evictions: 0,
-                    maxSize,
                     mode: "profiled:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
                     lastClearReason: null,
                 }
                 : {
                     cached: 0,
-                    evictions: 0,
-                    maxSize,
                     mode: "production:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
                     lastClearReason: null,
                 };
@@ -3065,15 +3028,6 @@
 
                     leafCache.set(predicateSourceId, result ?? CACHE_MISS);
 
-                    if (insertionOrder.length > maxSize) {
-                        const oldestLeafId = insertionOrder.shift();
-
-                        if (oldestLeafId !== undefined && sourceCache.delete(oldestLeafId)) {
-                            stats.cached -= 1;
-                            stats.evictions += 1;
-                        }
-                    }
-
                     stats.lastResultWrites += 1;
                     return rememberLastResult(predicateSourceId, leafId, result);
                 };
@@ -3180,10 +3134,6 @@
 
                     leafCache.set(predicateSourceId, result ?? CACHE_MISS);
 
-                    if (insertionOrder.length > maxSize) {
-                        sourceCache.delete(insertionOrder.shift());
-                    }
-
                     return rememberLastResult(predicateSourceId, leafId, result);
                 };
             }
@@ -3216,7 +3166,6 @@
         },
 
         installGetLeafFromNodeFrameCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -3235,7 +3184,6 @@
                     hits: 0,
                     misses: 0,
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
                     skippedClears: 0,
                     activeLeafRafHits: 0,
@@ -3247,18 +3195,15 @@
                     directWalks: 0,
                     directWalkReturns: 0,
                     originalCalls: 0,
-                    maxSize,
                     mode: "profiled:persistent+active-leaf-raf-node+descendant-direct",
                     lastClearReason: null,
                 }
                 : {
-                    maxSize,
                     mode: "production:persistent+active-leaf-raf-node+descendant-direct",
                     lastClearReason: null,
                 };
 
             const frameCache = createPersistentCache({
-                maxSize,
                 stats,
                 profiled,
             });
@@ -3629,7 +3574,6 @@
         },
 
         installBranchCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -3665,14 +3609,11 @@
                     hits: 0,
                     misses: 0,
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
-                    maxSize,
                     mode: "profiled:persistent:getBranch",
                     lastClearReason: null,
                 }
                 : {
-                    maxSize,
                     mode: "production:persistent:getBranch",
                     lastClearReason: null,
                 };
@@ -3688,26 +3629,21 @@
                     prefixRejected: 0,
                     originalCalls: 0,
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
-                    maxSize,
                     mode: "profiled:persistent:getBranchFromLeaf",
                     lastClearReason: null,
                 }
                 : {
-                    maxSize,
                     mode: "production:persistent:getBranchFromLeaf",
                     lastClearReason: null,
                 };
 
             const getBranchCache = createPersistentCache({
-                maxSize,
                 stats: getBranchStats,
                 profiled,
             });
 
             const getBranchFromLeafCache = createPersistentCache({
-                maxSize,
                 stats: getBranchFromLeafStats,
                 profiled,
             });
@@ -3902,7 +3838,6 @@
         },
 
         installResolvedNodeFrameCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -3930,9 +3865,7 @@
                     unknownInputs: 0,
 
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
-                    maxSize,
                     mode: "profiled:persistent",
                     lastClearReason: null,
 
@@ -3940,13 +3873,11 @@
                     resultSamples: [],
                 }
                 : {
-                    maxSize,
                     mode: "production:persistent",
                     lastClearReason: null,
                 };
 
             const frameCache = createPersistentCache({
-                maxSize,
                 stats,
                 profiled,
             });
@@ -4383,7 +4314,6 @@
         },
 
         installFindNodePredicateCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -4424,15 +4354,11 @@
                     activeRafHits: 0,
                     activeRafMisses: 0,
                     cached: 0,
-                    evictions: 0,
-                    maxSize,
                     mode: "profiled:findNode-predicate-positive-result-cache+raf-throttle",
                     lastClearReason: null,
                 }
                 : {
                     cached: 0,
-                    evictions: 0,
-                    maxSize,
                     mode: "production:findNode-predicate-positive-result-cache+raf-throttle",
                     lastClearReason: null,
                 };
@@ -4491,13 +4417,6 @@
 
                 cache.set(key, node.id);
                 insertionOrder.push(key);
-
-                if (cache.size > maxSize) {
-                    const oldest = insertionOrder.shift();
-                    if (oldest !== undefined) {
-                        cache.delete(oldest);
-                    }
-                }
             }
 
             function rememberProfiled(key, node) {
@@ -4505,13 +4424,6 @@
 
                 cache.set(key, node.id);
                 insertionOrder.push(key);
-
-                if (cache.size > maxSize) {
-                    const oldest = insertionOrder.shift();
-                    if (oldest !== undefined && cache.delete(oldest)) {
-                        stats.evictions += 1;
-                    }
-                }
 
                 stats.writes += 1;
                 stats.cached = cache.size;
@@ -4715,7 +4627,6 @@
         },
 
         installGetDisplayTurnsCache({
-            maxSize = CONFIG.cache.defaultMaxSize,
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
@@ -4731,9 +4642,7 @@
                     misses: 0,
                     bypassed: 0,
                     cached: 0,
-                    evictions: 0,
                     frameClears: 0,
-                    maxSize,
                     lastClearReason: null,
 
                     liveHits: 0,
@@ -4751,7 +4660,7 @@
                 }
                 : null;
 
-            const cacheApi = createPersistentCache({ maxSize, stats, profiled });
+            const cacheApi = createPersistentCache({ stats, profiled });
             const bridgeRef = this;
             const get = cacheApi.get;
             const set = cacheApi.set;
@@ -5043,8 +4952,6 @@
                 hitRate: total > 0 ? hits / total : 0,
                 size,
                 cached: stats?.cached ?? size,
-                evictions: stats?.evictions ?? 0,
-                maxSize: stats?.maxSize ?? null,
                 liveHits: stats?.liveHits ?? 0,
                 liveMisses: stats?.liveMisses ?? 0,
                 prefixHits: stats?.prefixHits ?? 0,
@@ -5172,12 +5079,12 @@
 
         applyStoreReadOptimization({ debug = false, clearStats = false } = {}) {
             const optimizationStartedAt = performance.now();
-            const discoveryResult = this.hasStore() ? true : this.promoteStoreDiscovery();
+            const discoveryResult = this.hasStore();
 
             if (!this.hasStore()) {
                 return {
                     ok: false,
-                    reason: "store not registered after promoteStoreDiscovery",
+                    reason: "store not registered",
                     discoveryResult,
                     status: this.status(),
                 };
@@ -5352,7 +5259,6 @@
                 if ("writes" in stats) stats.writes = 0;
                 if ("activeRafHits" in stats) stats.activeRafHits = 0;
                 if ("activeRafMisses" in stats) stats.activeRafMisses = 0;
-                if ("evictions" in stats) stats.evictions = 0;
 
                 stats.cached = this.__findNodePredicateCache?.size ?? 0;
                 stats.lastClearReason = null;
@@ -5747,6 +5653,13 @@
                 };
             }
 
+            case "thread-optimizer:visible-messages-ready": {
+                return {
+                    ok: true,
+                    value: {},
+                };
+            }
+
             default:
                 return {
                     ok: false,
@@ -5781,10 +5694,6 @@
                     prunedTurnCount: payload.prunedTurnCount,
                 });
 
-                if (!isStoreGoodEnough(bridge.__store)) {
-                    bridge.retryDiscovery();
-                }
-
                 return;
             }
 
@@ -5799,25 +5708,25 @@
                 return;
             }
 
-            if (data.type === "thread-optimizer:set-store-read-optimization") {
-                console.debug("[thread-optimizer bridge] received store read optimization setting", {
-                    enabled: payload.enabled,
-                    debug: payload.debug,
-                });
+            if (data.type === "thread-optimizer:visible-messages-ready") {
+                bridge.verifyRegisteredStoreAgainstVisibleMessages(
+                    "visible-messages-ready"
+                );
 
+                return;
+            }
+
+            if (data.type === "thread-optimizer:set-store-read-optimization") {
                 bridge.__storeReadOptimizationRequested = payload.enabled;
                 bridge.__storeReadOptimizationDebug = payload.debug;
 
-                if (payload.enabled) {
-                    bridge.applyStoreReadOptimization({
-                        debug: payload.debug,
-                        clearStats: true,
-                    });
-                } else {
+                if (!payload.enabled) {
                     bridge.disableStoreReadOptimization({
                         debug: payload.debug,
                     });
                 }
+
+                return;
             }
         },
         false
@@ -5844,6 +5753,11 @@
 
         lastConversationKey = nextKey;
         resetToStartupCachePolicy("conversation-change");
+
+        bridge.__storeDiscoveryLocked = false;
+        bridge.__visibleMessagesVerificationDone = false;
+        bridge.__visibleMessagesVerificationConversationKey = null;
+        bridge.__lastVisibleMessagesVerificationResult = null;
     }
 
     window.addEventListener("popstate", checkConversationChanged);
@@ -5914,6 +5828,4 @@
 
     document.addEventListener("input", bumpLiveNodeReadFrame, true);
     document.addEventListener("compositionend", bumpLiveNodeReadFrame, true);
-
-    bridge.startDiscoveryLoop();
 })();
