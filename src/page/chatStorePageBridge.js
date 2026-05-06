@@ -4423,7 +4423,6 @@
             if (!original) return unavailable("findNode unavailable");
 
             const cache = new Map();
-            const insertionOrder = [];
 
             const fnToString = Function.prototype.toString;
             const SOURCE_KEY_LEN = 160;
@@ -4506,16 +4505,13 @@
 
             function rememberProduction(key, node) {
                 if (!node?.id) return;
-
                 cache.set(key, node.id);
-                insertionOrder.push(key);
             }
 
             function rememberProfiled(key, node) {
                 if (!node?.id) return;
 
                 cache.set(key, node.id);
-                insertionOrder.push(key);
 
                 stats.writes += 1;
                 stats.cached = cache.size;
@@ -4562,10 +4558,7 @@
             function callOriginalWithRafThrottleProduction(key, predicateFn) {
                 const frame = getCurrentRafFrame();
 
-                if (
-                    activeFrame === frame &&
-                    activeKey === key
-                ) {
+                if (activeFrame === frame && activeKey === key) {
                     return activeValue;
                 }
 
@@ -4581,10 +4574,7 @@
             function callOriginalWithRafThrottleProfiled(key, predicateFn) {
                 const frame = getCurrentRafFrame();
 
-                if (
-                    activeFrame === frame &&
-                    activeKey === key
-                ) {
+                if (activeFrame === frame && activeKey === key) {
                     stats.activeRafHits += 1;
 
                     recordFindNodePredicateCacheEvent(
