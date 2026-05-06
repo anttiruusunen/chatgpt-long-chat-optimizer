@@ -199,8 +199,8 @@
 
         flags: {
             debug: false,
-            cacheProfiling: false,
-            storeProfiler: false,
+            cacheProfiling: true,
+            storeProfiler: true,
             branchCallSites: false,
             nodeCallSites: false,
             findNodeCallSites: false,
@@ -1331,6 +1331,8 @@
         __liveNodeReadFrame: 0,
         __liveNodeCacheFrame: -1,
 
+        __storeReadEpoch: 0,
+
         __lastLiveFindFrame: -1,
         __lastLiveFindLeafId: null,
         __lastLiveFindPredicateSource: null,
@@ -2074,8 +2076,8 @@
                 activeMisses: 0,
                 cached: 0,
                 mode: profiled
-                    ? "profiled:lazy-unbounded-stale-plus-active-raf"
-                    : "production:lazy-unbounded-stale-plus-active-raf",
+                    ? "profiled:lazy-unbounded-stale-plus-active-epoch"
+                    : "production:lazy-unbounded-stale-plus-active-epoch",
             };
 
             const index = new Map();
@@ -2091,7 +2093,7 @@
                 createWrapper: ({ store, original, bridge }) => {
                     const getCurrentLeafId = createCurrentLeafIdReader(store);
 
-                    let activeFrame = -1;
+                    let activeEpoch = -1;
                     let activeKey = null;
                     let activeValue = null;
 
@@ -2119,13 +2121,10 @@
                             const currentLeafId = getCurrentLeafId();
 
                             if (messageId === currentLeafId) {
-                                const frame =
-                                    bridge.__displayTurnsRafFrame ||
-                                    bridge.__liveNodeReadFrame ||
-                                    0;
+                                const epoch = bridge.__storeReadEpoch;
 
                                 if (
-                                    activeFrame === frame &&
+                                    activeEpoch === epoch &&
                                     activeKey === messageId
                                 ) {
                                     stats.activeHits += 1;
@@ -2136,7 +2135,7 @@
 
                                 const result = original.call(store, messageId) ?? null;
 
-                                activeFrame = frame;
+                                activeEpoch = epoch;
                                 activeKey = messageId;
                                 activeValue = result;
 
@@ -2163,13 +2162,10 @@
                         const currentLeafId = getCurrentLeafId();
 
                         if (messageId === currentLeafId) {
-                            const frame =
-                                bridge.__displayTurnsRafFrame ||
-                                bridge.__liveNodeReadFrame ||
-                                0;
+                            const epoch = bridge.__storeReadEpoch;
 
                             if (
-                                activeFrame === frame &&
+                                activeEpoch === epoch &&
                                 activeKey === messageId
                             ) {
                                 return activeValue;
@@ -2177,7 +2173,7 @@
 
                             const result = original.call(store, messageId) ?? null;
 
-                            activeFrame = frame;
+                            activeEpoch = epoch;
                             activeKey = messageId;
                             activeValue = result;
 
@@ -2325,24 +2321,24 @@
         installLiveGetNodeIfExistsWrapper(original, cacheApi) {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
+
             const bridgeRef = this;
             const get = cacheApi.get;
             const set = cacheApi.set;
             const getCurrentLeafId = createCurrentLeafIdReader(store);
 
-            let activeFrame = -1;
+            let activeEpoch = -1;
             let activeId = null;
             let activeValue = null;
 
             store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
                 const currentLeafId = getCurrentLeafId();
 
-                // Active streaming leaf: cache only inside the current rAF frame.
                 if (id === currentLeafId) {
-                    const frame = bridgeRef.__displayTurnsRafFrame || 0;
+                    const epoch = bridgeRef.__storeReadEpoch;
 
                     if (
-                        activeFrame === frame &&
+                        activeEpoch === epoch &&
                         activeId === id
                     ) {
                         return activeValue;
@@ -2350,7 +2346,7 @@
 
                     const result = original.call(store, id) ?? null;
 
-                    activeFrame = frame;
+                    activeEpoch = epoch;
                     activeId = id;
                     activeValue = result;
 
@@ -2369,17 +2365,22 @@
                 return result ?? null;
             };
 
-            this.__existingNodeFrameCacheMode = "live";
+            this.__existingNodeFrameCacheMode = "live-epoch";
         },
 
         installLiveGetNodeIfExistsWrapperProfiled(original, cacheApi) {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
+
             const bridgeRef = this;
             const stats = this.__existingNodeFrameCacheStats;
             const getCurrentLeafId = createCurrentLeafIdReader(store);
             const get = cacheApi.get;
             const set = cacheApi.set;
+
+            let activeEpoch = -1;
+            let activeId = null;
+            let activeValue = null;
 
             store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
                 if (ENABLE_NODE_CALLSITE_STATS) {
@@ -2394,7 +2395,6 @@
                     stats.total += 1;
 
                     const stack = normalizeStack(new Error().stack);
-
                     const existing = stats.callSites[stack];
 
                     if (existing) {
@@ -2417,32 +2417,33 @@
                         };
                     }
                 }
-                const leafId = getCurrentLeafId();
-                const frame = bridgeRef.__liveNodeReadFrame || 0;
 
-                // 🔴 ACTIVE LEAF
+                const leafId = getCurrentLeafId();
+
                 if (id === leafId) {
+                    const epoch = bridgeRef.__storeReadEpoch;
+
                     if (
-                        bridgeRef.__liveNodeCacheId === id &&
-                        bridgeRef.__liveNodeCacheFrame === frame
+                        activeEpoch === epoch &&
+                        activeId === id
                     ) {
                         stats.activeCached += 1;
-                        return bridgeRef.__liveNodeCacheValue;
+                        return activeValue;
                     }
 
                     stats.activeOriginal += 1;
 
                     const result = original.call(store, id) ?? null;
 
-                    bridgeRef.__liveNodeCacheId = id;
-                    bridgeRef.__liveNodeCacheValue = result;
-                    bridgeRef.__liveNodeCacheFrame = frame;
+                    activeEpoch = epoch;
+                    activeId = id;
+                    activeValue = result;
 
                     return result;
                 }
 
-                // 🟢 NORMAL PATH
                 const cached = get(id);
+
                 if (cached !== undefined) {
                     stats.normalCached += 1;
                     return cached;
@@ -2459,7 +2460,7 @@
                 return result;
             };
 
-            this.__existingNodeFrameCacheMode = "live";
+            this.__existingNodeFrameCacheMode = "live-epoch";
         },
 
         enableLiveNodeCachePolicy() {
@@ -4437,7 +4438,7 @@
             let lastPredicateFn = null;
             let lastPredicateSourceKey = null;
 
-            let activeFrame = -1;
+            let activeEpoch = -1;
             let activeKey = null;
             let activeValue = null;
 
@@ -4449,19 +4450,21 @@
                     staleHits: 0,
                     invalidPredicate: 0,
                     writes: 0,
-                    activeRafHits: 0,
-                    activeRafMisses: 0,
+                    activeEpochHits: 0,
+                    activeEpochMisses: 0,
                     cached: 0,
-                    mode: "profiled:findNode-predicate-positive-result-cache+raf-throttle",
+                    mode: "profiled:findNode-predicate-positive-result-cache+epoch-throttle",
                     lastClearReason: null,
                 }
                 : {
                     cached: 0,
-                    mode: "production:findNode-predicate-positive-result-cache+raf-throttle",
+                    mode: "production:findNode-predicate-positive-result-cache+epoch-throttle",
                     lastClearReason: null,
                 };
 
             const bridgeRef = this;
+
+            bridgeRef.__storeReadEpoch = 0;
 
             function readCurrentLeafId() {
                 return typeof store.currentLeafId === "function"
@@ -4469,12 +4472,8 @@
                     : store.currentLeafId;
             }
 
-            function getCurrentRafFrame() {
-                return (
-                    bridgeRef.__displayTurnsRafFrame ||
-                    bridgeRef.__liveNodeReadFrame ||
-                    0
-                );
+            function getCurrentStoreReadEpoch() {
+                return bridgeRef.__storeReadEpoch;
             }
 
             function getPredicateSourceKey(predicateFn) {
@@ -4506,6 +4505,7 @@
                     type,
                     key,
                     nodeId,
+                    epoch: getCurrentStoreReadEpoch(),
                     at: Date.now(),
                 };
             }
@@ -4562,30 +4562,30 @@
                 return undefined;
             }
 
-            function callOriginalWithRafThrottleProduction(key, predicateFn) {
-                const frame = getCurrentRafFrame();
+            function callOriginalWithEpochThrottleProduction(key, predicateFn) {
+                const epoch = getCurrentStoreReadEpoch();
 
-                if (activeFrame === frame && activeKey === key) {
+                if (activeEpoch === epoch && activeKey === key) {
                     return activeValue;
                 }
 
                 const result = original.call(store, predicateFn) ?? null;
 
-                activeFrame = frame;
+                activeEpoch = epoch;
                 activeKey = key;
                 activeValue = result;
 
                 return result;
             }
 
-            function callOriginalWithRafThrottleProfiled(key, predicateFn) {
-                const frame = getCurrentRafFrame();
+            function callOriginalWithEpochThrottleProfiled(key, predicateFn) {
+                const epoch = getCurrentStoreReadEpoch();
 
-                if (activeFrame === frame && activeKey === key) {
-                    stats.activeRafHits += 1;
+                if (activeEpoch === epoch && activeKey === key) {
+                    stats.activeEpochHits += 1;
 
                     recordFindNodePredicateCacheEvent(
-                        "active-raf-hit",
+                        "active-epoch-hit",
                         key,
                         activeValue?.id ?? null
                     );
@@ -4593,16 +4593,16 @@
                     return activeValue;
                 }
 
-                stats.activeRafMisses += 1;
+                stats.activeEpochMisses += 1;
 
                 const result = original.call(store, predicateFn) ?? null;
 
-                activeFrame = frame;
+                activeEpoch = epoch;
                 activeKey = key;
                 activeValue = result;
 
                 recordFindNodePredicateCacheEvent(
-                    "active-raf-miss",
+                    "active-epoch-miss",
                     key,
                     result?.id ?? null
                 );
@@ -4641,7 +4641,10 @@
 
                     stats.misses += 1;
 
-                    const result = callOriginalWithRafThrottleProfiled(key, predicateFn);
+                    const result = callOriginalWithEpochThrottleProfiled(
+                        key,
+                        predicateFn
+                    );
 
                     if (result?.id) {
                         rememberProfiled(key, result);
@@ -4668,7 +4671,10 @@
                         return cached;
                     }
 
-                    const result = callOriginalWithRafThrottleProduction(key, predicateFn);
+                    const result = callOriginalWithEpochThrottleProduction(
+                        key,
+                        predicateFn
+                    );
 
                     if (result?.id) {
                         rememberProduction(key, result);
@@ -5381,6 +5387,10 @@
         },
 
         clearStoreReadCache(reason = "manual") {
+            if (shouldAdvanceFindNodeEpoch(reason)) {
+                this.__storeReadEpoch += 1;
+            }
+
             const invalidationStats = this.__cacheInvalidationStats ??= {
                 totalCalls: 0,
                 byReason: {},
@@ -5427,7 +5437,8 @@
 
             const isNonTopologyMutation =
                 reason === "store-mutation" ||
-                reason === "raf-updateNodeMessage";
+                reason === "raf-updateNodeMessage" ||
+                reason === "streaming-mutation";
 
             const isFullClear =
                 reason === "manual" ||
@@ -5588,6 +5599,7 @@
 
         wrapMutationForIndexRefresh(methodName, {
             clearCaches = true,
+            cacheReason = null,
         } = {}) {
             const result = installStoreMethodWrapper({
                 bridge: this,
@@ -5599,7 +5611,9 @@
                     const res = original.apply(store, args);
 
                     if (clearCaches) {
-                        bridge.clearStoreReadCache?.("store-mutation");
+                        bridge.clearStoreReadCache?.(
+                            cacheReason || getMutationCacheReason(methodName, args)
+                        );
                     }
 
                     return res;
@@ -5610,6 +5624,7 @@
                 ...result,
                 method: methodName,
                 clearCaches,
+                cacheReason,
             };
         },
 
@@ -5828,6 +5843,58 @@
         bridge.__visibleMessagesVerificationDone = false;
         bridge.__visibleMessagesVerificationConversationKey = null;
         bridge.__lastVisibleMessagesVerificationResult = null;
+    }
+
+    function shouldAdvanceFindNodeEpoch(reason) {
+        return (
+            reason === "topology-mutation" ||
+            reason === "conversation-change" ||
+            reason === "manual"
+        );
+    }
+
+    function getMutationCacheReason(methodName, args) {
+        if (
+            methodName === "addMessageNode" ||
+            methodName === "addOptimisticMessageNode" ||
+            methodName === "prependNode" ||
+            methodName === "prependOptismisticNode"
+        ) {
+            const message = args?.[1];
+
+            const role = message?.author?.role;
+            const status = message?.status;
+            const metadata = message?.metadata || {};
+
+            // User send is the one we care about for findNode epoch.
+            if (role === "user") {
+                return "topology-mutation";
+            }
+
+            // Assistant/tool/system streaming nodes should not keep nuking findNode sharing.
+            if (
+                role === "assistant" ||
+                role === "tool" ||
+                role === "system" ||
+                status === "in_progress" ||
+                metadata.is_loading_message ||
+                metadata.async_task_id ||
+                metadata.async_completion_id
+            ) {
+                return "streaming-mutation";
+            }
+
+            return "store-mutation";
+        }
+
+        if (
+            methodName === "deleteNode" ||
+            methodName === "moveNode"
+        ) {
+            return "topology-mutation";
+        }
+
+        return "store-mutation";
     }
 
     window.addEventListener("popstate", checkConversationChanged);
