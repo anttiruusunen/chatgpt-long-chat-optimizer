@@ -1,6 +1,98 @@
 (() => {
     const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
 
+    const STORE_ENHANCEMENTS = [
+        {
+            key: "messageIdIndex",
+            install: "installMessageIdIndex",
+            uninstall: "uninstallMessageIdIndex",
+            installedFlag: "__messageIdIndexInstalled",
+        },
+        {
+            key: "nodeFrameCache",
+            install: "installExistingNodeFrameCache",
+            uninstall: "uninstallExistingNodeFrameCache",
+            installedFlag: "__existingNodeFrameCacheInstalled",
+        },
+        {
+            key: "findNodeFromLeafFrameCache",
+            install: "installFindNodeFromLeafFrameCache",
+            uninstall: "uninstallFindNodeFromLeafFrameCache",
+            installedFlag: "__findNodeFromLeafFrameCacheInstalled",
+        },
+        {
+            key: "findNodePredicateCache",
+            install: "installFindNodePredicateCache",
+            uninstall: "uninstallFindNodePredicateCache",
+            installedFlag: "__findNodePredicateCacheInstalled",
+        },
+        {
+            key: "getLeafFromNodeFrameCache",
+            install: "installGetLeafFromNodeFrameCache",
+            uninstall: "uninstallGetLeafFromNodeFrameCache",
+            installedFlag: "__getLeafFromNodeFrameCacheInstalled",
+        },
+        {
+            key: "branchCache",
+            install: "installBranchCache",
+            uninstall: "uninstallBranchCache",
+            installedFlag: "__branchCacheInstalled",
+        },
+        {
+            key: "resolvedNodeFrameCache",
+            install: "installResolvedNodeFrameCache",
+            uninstall: "uninstallResolvedNodeFrameCache",
+            installedFlag: "__resolvedNodeFrameCacheInstalled",
+        },
+        {
+            key: "getDisplayTurnsCache",
+            install: "installGetDisplayTurnsCache",
+            uninstall: "uninstallGetDisplayTurnsCache",
+            installedFlag: "__getDisplayTurnsCacheInstalled",
+        },
+    ];
+
+    function runStoreEnhancementInstalls(bridge) {
+        const result = {};
+
+        for (const enhancement of STORE_ENHANCEMENTS) {
+            const install = bridge[enhancement.install];
+
+            result[enhancement.key] =
+                typeof install === "function"
+                    ? install.call(bridge, { profiled: ENABLE_CACHE_PROFILING })
+                    : { ok: false, reason: `missing installer: ${enhancement.install}` };
+        }
+
+        return result;
+    }
+
+    function runStoreEnhancementUninstalls(bridge) {
+        const result = {};
+
+        for (let i = STORE_ENHANCEMENTS.length - 1; i >= 0; i -= 1) {
+            const enhancement = STORE_ENHANCEMENTS[i];
+            const uninstall = bridge[enhancement.uninstall];
+
+            result[enhancement.key] =
+                typeof uninstall === "function"
+                    ? uninstall.call(bridge)
+                    : { ok: false, reason: `missing uninstaller: ${enhancement.uninstall}` };
+        }
+
+        return result;
+    }
+
+    function getStoreEnhancementInstallSummary(result) {
+        const installed = {};
+
+        for (const enhancement of STORE_ENHANCEMENTS) {
+            installed[enhancement.key] = result[enhancement.key]?.ok;
+        }
+
+        return installed;
+    }
+
     function waitForBridge(timeout = 5000, interval = 50) {
         return new Promise(resolve => {
             const start = Date.now();
@@ -5104,9 +5196,7 @@
                 ok: true,
                 discoveryResult,
                 statusBefore: this.status(),
-                messageIdIndex: this.installMessageIdIndex({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
+
                 updateNodeMessageRafBatcher: this.installUpdateNodeMessageRafBatcher(),
                 indexRefreshHooks: [
                     this.wrapMutationForIndexRefresh("addMessageNode"),
@@ -5117,34 +5207,26 @@
                         clearCaches: false,
                     }),
                 ],
-                nodeFrameCache: this.installExistingNodeFrameCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
-                findNodeFromLeafFrameCache: this.installFindNodeFromLeafFrameCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
-                findNodePredicateCache: this.installFindNodePredicateCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
+
+                ...runStoreEnhancementInstalls(this),
+
                 findNodeCallSiteProfiler: ENABLE_FIND_NODE_CALLSITE_STATS
                     ? this.installFindNodeCallSiteProfiler()
-                    : { ok: true, skipped: true, reason: "disabled by ENABLE_FIND_NODE_CALLSITE_STATS" },
-                getLeafFromNodeFrameCache: this.installGetLeafFromNodeFrameCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
-                branchCache: this.installBranchCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
-                resolvedNodeFrameCache: this.installResolvedNodeFrameCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
+                    : {
+                        ok: true,
+                        skipped: true,
+                        reason: "disabled by ENABLE_FIND_NODE_CALLSITE_STATS",
+                    },
+
                 profiler: ENABLE_STORE_PROFILER
                     ? this.installStoreProfiler()
-                    : { ok: true, skipped: true, reason: "disabled by ENABLE_STORE_PROFILER" },
+                    : {
+                        ok: true,
+                        skipped: true,
+                        reason: "disabled by ENABLE_STORE_PROFILER",
+                    },
+
                 cleared: null,
-                getDisplayTurnsCache: this.installGetDisplayTurnsCache({
-                    profiled: ENABLE_CACHE_PROFILING,
-                }),
             };
 
             if (clearStats) {
@@ -5157,20 +5239,16 @@
                 console.log("[thread-optimizer bridge] store read optimization applied", result);
             }
 
-            this.__initTiming.lastApplyOptimizationMs = performance.now() - optimizationStartedAt;
+            this.__initTiming.lastApplyOptimizationMs =
+                performance.now() - optimizationStartedAt;
 
             console.log(DISCOVERY_LOG_PREFIX, "optimization install completed", {
                 elapsedMs: Math.round(this.__initTiming.lastApplyOptimizationMs * 10) / 10,
                 ok: result.ok,
                 installed: {
-                    messageIdIndex: result.messageIdIndex?.ok,
-                    nodeFrameCache: result.nodeFrameCache?.ok,
-                    findNodeFromLeafFrameCache: result.findNodeFromLeafFrameCache?.ok,
-                    findNodePredicateCache: result.findNodePredicateCache?.ok,
+                    ...getStoreEnhancementInstallSummary(result),
+                    updateNodeMessageRafBatcher: result.updateNodeMessageRafBatcher?.ok,
                     findNodeCallSiteProfiler: result.findNodeCallSiteProfiler?.ok,
-                    getLeafFromNodeFrameCache: result.getLeafFromNodeFrameCache?.ok,
-                    branchCache: result.branchCache?.ok,
-                    resolvedNodeFrameCache: result.resolvedNodeFrameCache?.ok,
                     profiler: result.profiler?.ok,
                 },
                 statusAfter: result.statusAfter,
@@ -5194,18 +5272,13 @@
 
         disableStoreReadOptimization({ debug = false } = {}) {
             const result = {
-                updateNodeMessageRafBatcher: this.uninstallUpdateNodeMessageRafBatcher?.(),
                 profiler: this.uninstallStoreProfiler?.(),
-                getDisplayTurnsCache: this.uninstallGetDisplayTurnsCache?.(),
-                resolvedNodeFrameCache: this.uninstallResolvedNodeFrameCache(),
-                getLeafFromNodeFrameCache: this.uninstallGetLeafFromNodeFrameCache(),
                 findNodeCallSiteProfiler: this.uninstallFindNodeCallSiteProfiler?.(),
-                findNodePredicateCache: this.uninstallFindNodePredicateCache?.(),
-                findNodeFromLeafFrameCache: this.uninstallFindNodeFromLeafFrameCache(),
-                nodeFrameCache: this.uninstallExistingNodeFrameCache(),
-                branchCache: this.uninstallBranchCache(),
+
+                ...runStoreEnhancementUninstalls(this),
+
                 indexRefreshHooks: this.uninstallIndexRefreshHooks?.(),
-                messageIdIndex: this.uninstallMessageIdIndex(),
+                updateNodeMessageRafBatcher: this.uninstallUpdateNodeMessageRafBatcher?.(),
             };
 
             if (debug) {
