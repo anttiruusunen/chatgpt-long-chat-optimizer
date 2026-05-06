@@ -28,6 +28,165 @@ function dispatchBridgeMessage(data, options = {}) {
     );
 }
 
+function appendVisibleMessage(messageId = "msg-3") {
+    document.body.innerHTML = `
+        <main>
+            <div id="conversation">
+                <section data-testid="conversation-turn-1" data-turn="user" data-message-id="msg-1">
+                    user
+                </section>
+                <section data-testid="conversation-turn-2" data-turn="assistant" data-message-id="msg-2">
+                    assistant
+                </section>
+                <section data-testid="conversation-turn-3" data-turn="user" data-message-id="${messageId}" data-scroll-anchor="true">
+                    latest
+                </section>
+            </div>
+        </main>
+    `;
+}
+
+function createFakeStore(nodeCount = 4) {
+    const nodeMap = new Map();
+
+    for (let i = 0; i < nodeCount; i += 1) {
+        const id = i === 0 ? "root" : `node-${i}`;
+        const parentId = i <= 1 ? "root" : `node-${i - 1}`;
+        const nextId = i + 1 < nodeCount ? `node-${i + 1}` : null;
+
+        nodeMap.set(id, {
+            id,
+            parentId,
+            children: nextId ? [nextId] : [],
+            message: {
+                id: i === 0 ? "root-message" : `msg-${i}`,
+                author: {
+                    role: i === 0 ? "root" : i % 2 ? "user" : "assistant",
+                },
+                content: {
+                    content_type: "text",
+                    parts: [],
+                },
+                metadata: {},
+                clientMetadata: {},
+            },
+        });
+    }
+
+    const store = {
+        rootId: "root",
+        currentLeafId: `node-${nodeCount - 1}`,
+
+        get nodes() {
+            return Array.from(nodeMap.values());
+        },
+
+        messageIdToExistingNodeId(id) {
+            if (nodeMap.has(id)) return id;
+
+            for (const node of nodeMap.values()) {
+                if (node.message?.id === id) {
+                    return node.id;
+                }
+            }
+
+            return null;
+        },
+
+        messageIdToNodeId(id) {
+            return this.messageIdToExistingNodeId(id) ?? id;
+        },
+
+        containsNodeOrMessageId(id) {
+            return this.messageIdToExistingNodeId(id) != null;
+        },
+
+        getNodeIfExists(id) {
+            const nodeId = this.messageIdToExistingNodeId(id);
+            return nodeId ? nodeMap.get(nodeId) : undefined;
+        },
+
+        getNodeByIdOrMessageId(id) {
+            const node = this.getNodeIfExists(id);
+            if (!node) throw new Error(`missing node ${id}`);
+            return node;
+        },
+
+        findNode(predicate) {
+            return this.findNodeFromLeaf(predicate, this.currentLeafId);
+        },
+
+        findNodeFromLeaf(predicate, leafId, rootId = this.rootId) {
+            const root = this.getNodeIfExists(rootId);
+            let node = this.getNodeIfExists(leafId);
+
+            while (root && node && node !== root) {
+                if (predicate(node)) return node;
+                node = this.getNodeIfExists(node.parentId);
+            }
+
+            return undefined;
+        },
+
+        getLeafFromNode(id) {
+            let node = this.getNodeByIdOrMessageId(id);
+
+            while (node.children.length > 0) {
+                node = this.getNodeByIdOrMessageId(node.children[0]);
+            }
+
+            return node;
+        },
+
+        getBranch() {
+            return this.getBranchFromLeaf(this.currentLeafId);
+        },
+
+        getBranchFromLeaf(id) {
+            const branch = [];
+            let node = this.getNodeByIdOrMessageId(id);
+
+            while (node) {
+                branch.push(node);
+                if (node.id === this.rootId) break;
+                node = this.getNodeByIdOrMessageId(node.parentId);
+            }
+
+            return branch.reverse();
+        },
+
+        getDisplayTurns() {
+            return [];
+        },
+
+        addMessageNode() {},
+        addOptimisticMessageNode() {},
+        prependNode() {},
+        prependOptismisticNode() {},
+        processUpdate() {},
+        deleteNode() {},
+        clearNodeMessageParts() {},
+        updateNodeMetadata() {},
+        updateNodeMessage() {},
+        updateNodeMessageMetadata() {},
+        getParent(id) {
+            const node = this.getNodeByIdOrMessageId(id);
+            return this.getNodeByIdOrMessageId(node.parentId);
+        },
+    };
+
+    return store;
+}
+
+function dispatchValidBridgeMessage(type, payload = {}) {
+    dispatchBridgeMessage({
+        source: "thread-optimizer",
+        token: TOKEN,
+        type,
+        ...payload,
+    });
+}
+
 describe("chatStorePageBridge", () => {
     let script;
 
@@ -332,5 +491,228 @@ describe("chatStorePageBridge", () => {
         );
 
         expect(messageListenerCalls).toHaveLength(1);
+    });
+
+    it("starts dormant and does not discover or optimize on bridge load", () => {
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        expect(bridge).toBeTruthy();
+        expect(bridge.hasStore()).toBe(false);
+        expect(bridge.__discoveryRuns).toBe(0);
+        expect(bridge.__initTiming.lastApplyOptimizationMs).toBe(0);
+
+        expect(bridge.__messageIdIndexInstalled).toBe(false);
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
+    });
+
+    it("set-store-read-optimization only records requested state when no store exists", () => {
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        dispatchValidBridgeMessage("thread-optimizer:set-store-read-optimization", {
+            enabled: true,
+            debug: true,
+        });
+
+        expect(bridge.__storeReadOptimizationRequested).toBe(true);
+        expect(bridge.__storeReadOptimizationDebug).toBe(true);
+
+        expect(bridge.hasStore()).toBe(false);
+        expect(bridge.__discoveryRuns).toBe(0);
+        expect(bridge.__messageIdIndexInstalled).toBe(false);
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
+    });
+
+    it("visible-messages-ready discovers, registers store, and installs optimizations once", () => {
+        appendVisibleMessage("msg-3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(4);
+
+        const discoverSpy = vi
+            .spyOn(bridge, "discoverNow")
+            .mockImplementation(function discoverNowForTest() {
+                this.__discoveryRuns += 1;
+                return this.registerStore(fakeStore, {
+                    source: "test-visible-messages-ready",
+                });
+            });
+
+        dispatchValidBridgeMessage("thread-optimizer:set-store-read-optimization", {
+            enabled: true,
+            debug: false,
+        });
+
+        dispatchValidBridgeMessage("thread-optimizer:visible-messages-ready");
+
+        expect(discoverSpy).toHaveBeenCalledTimes(1);
+        expect(bridge.hasStore()).toBe(true);
+        expect(bridge.getStore()).toBe(fakeStore);
+
+        expect(bridge.__messageIdIndexInstalled).toBe(true);
+        expect(bridge.__existingNodeFrameCacheInstalled).toBe(true);
+        expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(true);
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(true);
+        expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(true);
+        expect(bridge.__branchCacheInstalled).toBe(true);
+        expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(true);
+        expect(bridge.__getDisplayTurnsCacheInstalled).toBe(true);
+
+        expect(bridge.__initTiming.lastApplyOptimizationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("visible-messages-ready discovery is one-shot for the same conversation", () => {
+        appendVisibleMessage("msg-3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(4);
+
+        const discoverSpy = vi
+            .spyOn(bridge, "discoverNow")
+            .mockImplementation(function discoverNowForTest() {
+                this.__initTiming.discoveryRuns += 1;
+                return this.registerStore(fakeStore, {
+                    source: "test-visible-messages-ready",
+                });
+            });
+
+        dispatchValidBridgeMessage("thread-optimizer:set-store-read-optimization", {
+            enabled: true,
+            debug: false,
+        });
+
+        dispatchValidBridgeMessage("thread-optimizer:visible-messages-ready");
+        dispatchValidBridgeMessage("thread-optimizer:visible-messages-ready");
+
+        expect(discoverSpy).toHaveBeenCalledTimes(1);
+        expect(bridge.__visibleMessagesVerificationDone).toBe(true);
+    });
+
+    it("disableStoreReadOptimization uninstalls store wrappers", () => {
+        appendVisibleMessage("msg-3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(4);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-register-store",
+        });
+
+        expect(bridge.__messageIdIndexInstalled).toBe(true);
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(true);
+
+        const result = bridge.disableStoreReadOptimization();
+
+        expect(result.ok).toBe(true);
+        expect(bridge.__messageIdIndexInstalled).toBe(false);
+        expect(bridge.__existingNodeFrameCacheInstalled).toBe(false);
+        expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(false);
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
+        expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(false);
+        expect(bridge.__branchCacheInstalled).toBe(false);
+        expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(false);
+        expect(bridge.__getDisplayTurnsCacheInstalled).toBe(false);
+    });
+
+    it("resetInstalledStoreEnhancements clears registry-owned cache slots", () => {
+        appendVisibleMessage("msg-3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(4);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-register-store",
+        });
+
+        expect(bridge.__messageIdIndex).toBeTruthy();
+        expect(bridge.__findNodePredicateCache).toBeTruthy();
+
+        bridge.resetInstalledStoreEnhancements();
+
+        expect(bridge.__messageIdIndexInstalled).toBe(false);
+        expect(bridge.__messageIdIndexOriginal).toBeNull();
+        expect(bridge.__messageIdIndex).toBeNull();
+        expect(bridge.__messageIdIndexStats).toBeNull();
+
+        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
+        expect(bridge.__findNodePredicateCacheOriginal).toBeNull();
+        expect(bridge.__findNodePredicateCache).toBeNull();
+        expect(bridge.__findNodePredicateCacheStats).toBeNull();
+
+        expect(bridge.__branchCacheInstalled).toBe(false);
+        expect(bridge.__branchCacheOriginals).toBeNull();
+        expect(bridge.__branchCache).toBeNull();
+        expect(bridge.__branchCacheStats).toBeNull();
+    });
+
+    it("creates profiled cache stats shape correctly", () => {
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore();
+
+        bridge.registerStore(fakeStore, {
+            source: "test-profiled-stats",
+        });
+
+        bridge.disableStoreReadOptimization();
+        bridge.resetInstalledStoreEnhancements();
+
+        const result = bridge.installResolvedNodeFrameCache({
+            profiled: true,
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.alreadyInstalled).not.toBe(true);
+
+        const stats = bridge.__resolvedNodeFrameCacheStats;
+
+        expect(stats).toBeTruthy();
+
+        expect(stats.calls).toBe(0);
+        expect(stats.hits).toBe(0);
+        expect(stats.misses).toBe(0);
+
+        expect(stats.mode).toContain("profiled");
+
+        expect(Array.isArray(stats.inputSamples)).toBe(true);
+        expect(Array.isArray(stats.resultSamples)).toBe(true);
+    });
+
+    it("creates production cache stats shape correctly", () => {
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore();
+
+        bridge.registerStore(fakeStore, {
+            source: "test-production-stats",
+        });
+
+        bridge.disableStoreReadOptimization();
+        bridge.resetInstalledStoreEnhancements();
+
+        const result = bridge.installResolvedNodeFrameCache({
+            profiled: false,
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.alreadyInstalled).not.toBe(true);
+
+        const stats = bridge.__resolvedNodeFrameCacheStats;
+
+        expect(stats).toBeTruthy();
+
+        expect(stats.mode).toContain("production");
+
+        expect(stats.calls).toBeUndefined();
+        expect(stats.inputSamples).toBeUndefined();
     });
 });
