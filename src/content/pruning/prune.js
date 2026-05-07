@@ -36,6 +36,7 @@ import {
 } from "./pruneScroll.js";
 import { recordPrunedSectionMessageForManualBridgeDelete } from "../bridge/chatStoreBridgeClient.js";
 import { isIncompleteAssistantSection } from "../streaming/assistantSignals.js";
+import { cleanupDetachedCodeBlocksForSection } from "../offscreen/codeBlockDetachStore.js";
 
 const VISIBLE_EXCHANGES = 1;
 const SECTIONS_PER_EXCHANGE = 2;
@@ -123,8 +124,11 @@ function getLatestIncompleteAssistantSection(sections) {
 function hardEvictSectionsWithManualBridgeRecords(sections) {
     let evictedCount = 0;
     let recordedCount = 0;
+    let cleanedDetachedCodeBlocks = 0;
 
     for (const section of sections) {
+        cleanedDetachedCodeBlocks += cleanupDetachedCodeBlocksForSection(section);
+
         const recordResult = recordPrunedSectionMessageForManualBridgeDelete(section);
 
         if (recordResult?.recorded) {
@@ -140,11 +144,13 @@ function hardEvictSectionsWithManualBridgeRecords(sections) {
         sections: sections.length,
         evictedCount,
         recordedCount,
+        cleanedDetachedCodeBlocks,
     });
 
     return {
         evictedCount,
         recordedCount,
+        cleanedDetachedCodeBlocks,
     };
 }
 

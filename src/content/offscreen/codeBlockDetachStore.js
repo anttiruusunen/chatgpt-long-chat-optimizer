@@ -54,6 +54,30 @@ export function storeDetachedCodeBlock(pre, placeholder) {
     return id;
 }
 
+function cleanupInvalidDetachedCodeBlockEntry(entry, { scheduleRefresh = false } = {}) {
+    if (!entry) return null;
+
+    const id = entry.id ?? getPlaceholderId(entry.placeholder);
+
+    if (entry.placeholder instanceof HTMLElement) {
+        setPlaceholderVisibility(entry.placeholder, false);
+
+        if (entry.placeholder.isConnected) {
+            entry.placeholder.remove();
+        }
+    }
+
+    if (id) {
+        state.detachedCodeBlocks.delete(id);
+    }
+
+    if (scheduleRefresh) {
+        scheduleRefreshCallback?.();
+    }
+
+    return null;
+}
+
 function normalizeRevealedCodeBlockLayout(pre) {
     if (!(pre instanceof HTMLPreElement)) {
         return;
@@ -77,13 +101,38 @@ function normalizeRevealedCodeBlockLayout(pre) {
 export function restoreDetachedCodeBlockEntry(
     entry,
     {
-        removePlaceholder = true,
-        preserveExpanded = true,
+        removePlaceholder = false,
+        preserveExpanded = false,
     } = {}
 ) {
     if (!entry) return null;
 
-    const { pre, placeholder } = entry;
+    if (!(entry.pre instanceof HTMLPreElement)) {
+        return cleanupInvalidDetachedCodeBlockEntry(entry);
+    }
+
+    const {
+        id,
+        pre,
+        placeholder,
+        originalParent,
+        originalNextSibling,
+    } = entry;
+
+    if (!(pre instanceof HTMLElement)) {
+        if (placeholder instanceof HTMLElement) {
+            placeholder.remove();
+        }
+
+        if (id != null) {
+            state.detachedCodeBlocks.delete(String(id));
+        }
+
+        scheduleRefresh?.();
+
+        return null;
+    }
+
     const placeholderId = entry.id ?? getPlaceholderId(placeholder);
 
     if (
@@ -178,20 +227,33 @@ export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
 
     const placeholderId = getPlaceholderId(placeholder);
 
-    if (!placeholderId) {
+    function removePlaceholderAndEntry() {
         setPlaceholderVisibility(placeholder, false);
 
         if (placeholder.isConnected) {
             placeholder.remove();
         }
 
+        if (placeholderId) {
+            state.detachedCodeBlocks.delete(placeholderId);
+        }
+
         scheduleRefreshCallback?.();
+    }
+
+    if (!placeholderId) {
+        removePlaceholderAndEntry();
         return;
     }
 
     const detachedEntry = getDetachedEntryForPlaceholder(placeholder);
 
     if (detachedEntry) {
+        if (!(detachedEntry.pre instanceof HTMLPreElement)) {
+            removePlaceholderAndEntry();
+            return;
+        }
+
         detachedEntry.pre.dataset.threadOptimizerCodeExpanded = "true";
 
         restoreDetachedCodeBlockEntry(detachedEntry, {
@@ -220,14 +282,7 @@ export function revealCollapsedCodeBlockFromPlaceholder(placeholder) {
         return;
     }
 
-    setPlaceholderVisibility(placeholder, false);
-
-    if (placeholder.isConnected) {
-        placeholder.remove();
-    }
-
-    state.detachedCodeBlocks.delete(placeholderId);
-    scheduleRefreshCallback?.();
+    removePlaceholderAndEntry();
 }
 
 /**
@@ -278,4 +333,45 @@ export function selfHealDetachedCodeBlockEntry(entry) {
     state.detachedCodeBlocks.delete(entry.id);
 
     return pre;
+}
+
+export function cleanupDetachedCodeBlocksForSection(section) {
+    if (!(section instanceof Element)) {
+        return 0;
+    }
+
+    let cleaned = 0;
+
+    for (const [id, entry] of Array.from(state.detachedCodeBlocks.entries())) {
+        if (!entry) continue;
+
+        const belongsToSection =
+            (entry.pre instanceof Node && section.contains(entry.pre)) ||
+            (entry.placeholder instanceof Node && section.contains(entry.placeholder)) ||
+            (entry.originalParent instanceof Node && section.contains(entry.originalParent)) ||
+            (entry.originalNextSibling instanceof Node && section.contains(entry.originalNextSibling));
+
+        if (!belongsToSection) {
+            continue;
+        }
+
+        if (entry.placeholder instanceof HTMLElement) {
+            setPlaceholderVisibility(entry.placeholder, false);
+
+            if (entry.placeholder.isConnected) {
+                entry.placeholder.remove();
+            }
+        }
+
+        if (entry.pre instanceof HTMLPreElement) {
+            clearPlaceholderIdForPre(entry.pre);
+            clearCodeBlockOffscreenOptimization(entry.pre);
+            entry.pre.removeAttribute("data-thread-optimizer-code-collapsed");
+        }
+
+        state.detachedCodeBlocks.delete(id);
+        cleaned += 1;
+    }
+
+    return cleaned;
 }

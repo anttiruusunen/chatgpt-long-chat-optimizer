@@ -8,6 +8,7 @@ import {
     clearCollapsedCodeBlock,
     revealCollapsedCodeBlockFromPlaceholder,
     selfHealDetachedCodeBlockEntry,
+    cleanupDetachedCodeBlocksForSection,
 } from "../../src/content/offscreen/codeBlockDetachStore.js";
 import {
     createCodeBlockPlaceholder,
@@ -357,5 +358,38 @@ describe("codeBlockDetachStore", () => {
         expect(newMarkdown.querySelector("pre")).toBe(null);
         expect(state.detachedCodeBlocks.size).toBe(0);
         expect(getPlaceholderIdForPre(pre)).toBe(null);
+    });
+
+    it("cleans detached code block entries that belong to a hard-evicted section", () => {
+        const { assistant1, assistant2 } = buildConversation();
+
+        const oldMarkdown = document.createElement("div");
+        const oldPre = makePre("const old = true;");
+        const oldPlaceholder = ensurePlaceholderForPre(oldPre);
+
+        oldMarkdown.appendChild(oldPlaceholder);
+        oldMarkdown.appendChild(oldPre);
+        assistant1.appendChild(oldMarkdown);
+
+        const newPre = makePre("const new = true;");
+        const newPlaceholder = ensurePlaceholderForPre(newPre);
+
+        assistant2.appendChild(newPlaceholder);
+        assistant2.appendChild(newPre);
+
+        const oldId = storeDetachedCodeBlock(oldPre, oldPlaceholder);
+        const newId = storeDetachedCodeBlock(newPre, newPlaceholder);
+
+        oldPre.remove();
+        newPre.remove();
+
+        expect(state.detachedCodeBlocks.size).toBe(2);
+
+        const cleaned = cleanupDetachedCodeBlocksForSection(assistant1);
+
+        expect(cleaned).toBe(1);
+        expect(state.detachedCodeBlocks.has(oldId)).toBe(false);
+        expect(state.detachedCodeBlocks.has(newId)).toBe(true);
+        expect(getPlaceholderIdForPre(oldPre)).toBe(null);
     });
 });
