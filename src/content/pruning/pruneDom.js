@@ -1,8 +1,5 @@
 import {
-    state,
     PRUNED_ATTR,
-    OFFSCREEN_OPT_ATTR,
-    CODE_BLOCK_OFFSCREEN_OPT_ATTR,
     UNPRUNEABLE_ATTR,
 } from "../core/state.js";
 import { getConversationTurnRoot } from "../core/dom.js";
@@ -36,14 +33,6 @@ function insertTurnRoot(container, turnRoot, beforeRoot = null) {
     container.appendChild(turnRoot);
 }
 
-function getSectionCodeBlocks(section) {
-    if (!(section instanceof HTMLElement)) {
-        return [];
-    }
-
-    return Array.from(section.querySelectorAll("pre"));
-}
-
 function getSoftPrunePlan(section) {
     if (!(section instanceof HTMLElement)) {
         return null;
@@ -55,12 +44,6 @@ function getSoftPrunePlan(section) {
     };
 }
 
-/**
- * Soft-prune removes a turn from the DOM but keeps the section object alive.
- *
- * This lets restore-one / restore-all reinsert recoverable history without
- * rebuilding ChatGPT's DOM from scratch.
- */
 function applySoftPrunePlan(plan) {
     if (!plan) {
         return false;
@@ -74,51 +57,6 @@ function applySoftPrunePlan(plan) {
     detachTurnRoot(turnRoot);
 
     return true;
-}
-
-/**
- * Clears references, observers, optimizer attributes, and child DOM so an
- * evicted section can be garbage-collected.
- */
-export function destroySectionForGc(section, { codeBlocks = null } = {}) {
-    try {
-        state.intersectionObserver?.unobserve(section);
-    } catch {}
-
-    try {
-        state.resizeObserver?.unobserve(section);
-    } catch {}
-
-    state.observedSections?.delete(section);
-
-    const sectionCodeBlocks = Array.isArray(codeBlocks)
-        ? codeBlocks
-        : getSectionCodeBlocks(section);
-
-    for (const pre of sectionCodeBlocks) {
-        try {
-            state.codeBlockIntersectionObserver?.unobserve(pre);
-        } catch {}
-
-        state.observedCodeBlocks?.delete(pre);
-
-        pre.style.contentVisibility = "";
-        pre.style.containIntrinsicSize = "";
-        pre.removeAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR);
-
-        delete pre.dataset.threadOptimizerCodeHeight;
-        delete pre.dataset.threadOptimizerLargeCode;
-    }
-
-    section.style.contentVisibility = "";
-    section.style.containIntrinsicSize = "";
-    section.removeAttribute(OFFSCREEN_OPT_ATTR);
-    section.removeAttribute(PRUNED_ATTR);
-    section.removeAttribute(UNPRUNEABLE_ATTR);
-
-    delete section.dataset.threadOptimizerHeight;
-
-    section.replaceChildren();
 }
 
 export function softPruneSection(section) {
@@ -155,12 +93,6 @@ export function restoreSoftPrunedSection(section, container, beforeNode = null) 
     insertTurnRoot(container, turnRoot, beforeRoot);
 }
 
-/**
- * Restores multiple soft-pruned sections in one fragment insertion.
- *
- * This avoids repeated layout work and preserves the original order of the
- * restored exchange.
- */
 export function restoreSoftPrunedSections(
     sections,
     container,

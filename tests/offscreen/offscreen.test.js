@@ -1,19 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushDomWriteBatchNow } from "../../src/content/core/domWriteBatch.js";
-
-vi.mock("../../src/content/offscreen/offscreenCodeBlocks.js", async () => {
-    const actual = await vi.importActual(
-        "../../src/content/offscreen/offscreenCodeBlocks.js"
-    );
-
-    return {
-        ...actual,
-        refreshObservedCodeBlocks: vi.fn(),
-        resetCodeBlockOptimization: vi.fn(),
-        configureCodeBlockOptimization: vi.fn(),
-    };
-});
-
 import {
     refreshObservedSections,
     setOffscreenOptimizationEnabled,
@@ -64,7 +50,6 @@ describe("offscreen CSS-driven section mode", () => {
         createConversationDom();
 
         state.featureFlags.offscreenOptimization = true;
-        state.featureFlags.largeCodeBlockOptimization = false;
         state.isOffscreenRefreshScheduled = false;
         state.offscreenRefreshTimer = null;
         state.offscreenLiveSection = null;

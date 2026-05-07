@@ -6,12 +6,6 @@ import {
 import { debugLog } from "../core/logger.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 import {
-    configureCodeBlockOptimization,
-    refreshObservedCodeBlocks,
-    resetCodeBlockOptimization,
-    reconcileLatestStreamingAssistantCodeBlocksNow,
-} from "./offscreenCodeBlocks.js";
-import {
     registerUiPipelineTask,
     scheduleUiPipelineTask,
 } from "../core/uiPipelineScheduler.js";
@@ -77,13 +71,6 @@ function applySectionCssModePlan({ root, enabled }) {
     }
 }
 
-/**
- * Computes which assistant section must stay fully live.
- *
- * CSS content-visibility can safely skip old turns, but the latest assistant
- * needs a live override while it streams and while ChatGPT continues mutating
- * its action/code-block DOM.
- */
 function collectLiveSectionPlan() {
     const previousLiveSection = getCurrentLiveSection();
     const enabled = Boolean(state.featureFlags.offscreenOptimization);
@@ -210,12 +197,6 @@ export function clearOffscreenOptimization(section) {
     setSectionLiveOverride(section, false);
 }
 
-/**
- * Ensures section offscreening is enabled/disabled through root CSS state.
- *
- * Individual sections are not measured here anymore; the current system relies
- * on CSS content-visibility plus a live override for the latest assistant.
- */
 export function ensureSectionCssOffscreenMode() {
     applyOffscreenSectionPlan(collectOffscreenSectionPlan());
 
@@ -225,21 +206,15 @@ export function ensureSectionCssOffscreenMode() {
 
 export function handleReplyStreamingStarted() {
     applyOffscreenSectionPlan(collectOffscreenSectionPlan());
-
-    reconcileLatestStreamingAssistantCodeBlocksNow();
     scheduleOffscreenRefresh("reply-streaming-started");
 
     debugLog("Offscreen: reply streaming started");
 }
 
-export function resetOffscreenOptimization({
-    clearMeasurements = false,
-} = {}) {
+export function resetOffscreenOptimization() {
     clearCurrentLiveSection();
     clearStaleLiveOverridesExcept(null);
     syncSectionCssMode();
-
-    resetCodeBlockOptimization({ clearMeasurements });
 
     if (state.offscreenRefreshTimer) {
         clearTimeout(state.offscreenRefreshTimer);
@@ -249,20 +224,12 @@ export function resetOffscreenOptimization({
     state.isOffscreenRefreshScheduled = false;
 
     debugLog("Offscreen: reset optimization state", {
-        clearMeasurements,
         sectionMode: "css-driven",
     });
 }
 
 export function refreshObservedSections() {
     applyOffscreenSectionPlan(collectOffscreenSectionPlan());
-
-    if (!state.featureFlags.offscreenOptimization) {
-        resetCodeBlockOptimization();
-        return;
-    }
-
-    refreshObservedCodeBlocks();
 
     debugLog("Offscreen: refreshed CSS-driven section state");
 }
@@ -286,7 +253,6 @@ export function setOffscreenOptimizationEnabled(enabled) {
 
     if (!enabled) {
         clearStaleLiveOverridesExcept(null);
-        resetCodeBlockOptimization({ clearMeasurements: true });
 
         debugLog("Offscreen: feature disabled");
         return;
@@ -304,8 +270,4 @@ registerUiPipelineTask(OFFSCREEN_REFRESH_TASK, () => {
         state.isOffscreenRefreshScheduled = false;
         state.offscreenRefreshTimer = null;
     }
-});
-
-configureCodeBlockOptimization({
-    scheduleRefresh: scheduleOffscreenRefresh,
 });

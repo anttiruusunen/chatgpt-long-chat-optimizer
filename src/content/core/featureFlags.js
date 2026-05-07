@@ -11,9 +11,7 @@ export function syncFeatureFlagsFromSettings() {
 
     featureFlags.pruning = Boolean(settings.enablePruning);
     featureFlags.offscreenOptimization = Boolean(settings.enableOffscreenOptimization);
-    featureFlags.largeCodeBlockOptimization = Boolean(settings.enableLargeCodeBlockOptimization);
     featureFlags.storeReadOptimization = Boolean(settings.enableStoreReadOptimization);
     featureFlags.codeBlockScrollbars = Boolean(settings.enableCodeBlockScrollbars);
     featureFlags.userMessageClamp = Boolean(settings.enableUserMessageClamp);
-    featureFlags.codeBlockCollapse = Boolean(settings.enableCodeBlockCollapse);
 }

@@ -18,11 +18,9 @@ export function resetCoreStateForTests(state, DEFAULT_SETTINGS) {
     state.featureFlags = {
         pruning: DEFAULT_SETTINGS.enablePruning,
         offscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
-        largeCodeBlockOptimization: DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
         storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
         codeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
         userMessageClamp: DEFAULT_SETTINGS.enableUserMessageClamp,
-        codeBlockCollapse: DEFAULT_SETTINGS.enableCodeBlockCollapse,
     };
 
     state.settings = {

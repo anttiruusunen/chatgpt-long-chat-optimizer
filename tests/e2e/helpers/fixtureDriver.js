@@ -1,8 +1,96 @@
 import { expect } from "@playwright/test";
 import { loadFixtureWithOptimizer } from "./loadFixtureWithOptimizer.js";
 
+const E2E_BRIDGE_TOKEN = "0123456789abcdef0123456789abcdef";
+
+async function installReactPruneBridgeMock(page) {
+    await page.evaluate((token) => {
+        window.THREAD_OPTIMIZER_BRIDGE_TOKEN =
+            window.THREAD_OPTIMIZER_BRIDGE_TOKEN || token;
+
+        if (window.__threadOptimizerE2EReactPruneMockInstalled) {
+            return;
+        }
+
+        window.__threadOptimizerE2EReactPruneMockInstalled = true;
+
+        const originalPostMessage = window.postMessage.bind(window);
+
+        function removeByMessageIds(messageIds) {
+            let removedCount = 0;
+
+            for (const messageId of messageIds) {
+                const section = Array.from(
+                    document.querySelectorAll("section[data-message-id]")
+                ).find(
+                    (candidate) =>
+                        candidate.getAttribute("data-message-id") === messageId
+                );
+
+                if (section?.isConnected) {
+                    section.remove();
+                    removedCount += 1;
+                }
+            }
+
+            return removedCount;
+        }
+
+        function removeOldestFallback(messageIds) {
+            const requestedCount = Array.isArray(messageIds)
+                ? messageIds.length
+                : 0;
+
+            if (requestedCount <= 0) {
+                return 0;
+            }
+
+            const sections = Array.from(
+                document.querySelectorAll("section[data-turn]")
+            );
+
+            const keepCount = 2;
+            const removableCount = Math.max(0, sections.length - keepCount);
+            const removeCount = Math.min(requestedCount, removableCount);
+
+            for (let i = 0; i < removeCount; i += 1) {
+                sections[i]?.remove();
+            }
+
+            return removeCount;
+        }
+
+        window.postMessage = function patchedPostMessage(
+            message,
+            targetOrigin,
+            transfer
+        ) {
+            if (
+                message?.source === "thread-optimizer" &&
+                message?.token === window.THREAD_OPTIMIZER_BRIDGE_TOKEN &&
+                message?.type === "thread-optimizer:prune-react-message-ids"
+            ) {
+                const messageIds = Array.isArray(message.messageIds)
+                    ? message.messageIds
+                    : [];
+
+                const removedCount = removeByMessageIds(messageIds);
+
+                if (removedCount === 0) {
+                    removeOldestFallback(messageIds);
+                }
+
+                return;
+            }
+
+            return originalPostMessage(message, targetOrigin, transfer);
+        };
+    }, E2E_BRIDGE_TOKEN);
+}
+
 export async function loadOptimizerFixture(page, options = {}) {
     await loadFixtureWithOptimizer(page, options);
+    await installReactPruneBridgeMock(page);
 
     return {
         turns: () => page.locator("section[data-turn]"),
@@ -12,9 +100,6 @@ export async function loadOptimizerFixture(page, options = {}) {
 
         prunePlaceholder: () =>
             page.locator('[data-thread-optimizer-placeholder="true"]'),
-
-        codePlaceholder: () =>
-            page.locator('[data-thread-optimizer-code-placeholder="true"]'),
 
         liveAssistant: () =>
             page.locator(
@@ -39,6 +124,10 @@ export async function loadOptimizerFixture(page, options = {}) {
                     ...document.querySelectorAll('section[data-turn="assistant"]'),
                 ];
                 const latest = assistants[assistants.length - 1];
+
+                if (!latest) {
+                    return;
+                }
 
                 const button = document.createElement("button");
                 button.setAttribute(

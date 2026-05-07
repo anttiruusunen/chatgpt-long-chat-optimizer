@@ -334,10 +334,8 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     let historyKeptChanged = false;
     let offscreenFlagChanged = false;
-    let largeCodeBlockFlagChanged = false;
     let storeReadOptimizationFlagChanged = false;
     let userMessageClampChanged = false;
-    let codeBlockCollapseChanged = false;
 
     if (changes.historyKeptExchanges) {
         state.settings.historyKeptExchanges = changes.historyKeptExchanges.newValue;
@@ -357,13 +355,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
             changes.enableOffscreenOptimization.newValue
         );
         offscreenFlagChanged = true;
-    }
-
-    if (changes.enableLargeCodeBlockOptimization) {
-        state.settings.enableLargeCodeBlockOptimization = Boolean(
-            changes.enableLargeCodeBlockOptimization.newValue
-        );
-        largeCodeBlockFlagChanged = true;
     }
 
     if (changes.enableDebugLogging) {
@@ -393,13 +384,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         userMessageClampChanged = true;
     }
 
-    if (changes.enableCodeBlockCollapse) {
-        state.settings.enableCodeBlockCollapse = Boolean(
-            changes.enableCodeBlockCollapse.newValue
-        );
-        codeBlockCollapseChanged = true;
-    }
-
     syncFeatureFlagsFromSettings();
 
     if (changes.enableCodeBlockScrollbars) {
@@ -408,10 +392,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     if (userMessageClampChanged) {
         syncUserMessageClampStyles();
-    }
-
-    if (codeBlockCollapseChanged) {
-        scheduleRefreshPostPruneState();
     }
 
     syncPruningStateToPageBridge();
@@ -432,11 +412,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     if (offscreenFlagChanged) {
         setOffscreenOptimizationEnabled(state.featureFlags.offscreenOptimization);
-    } else if (
-        largeCodeBlockFlagChanged &&
-        state.featureFlags.offscreenOptimization
-    ) {
-        scheduleRefreshPostPruneState();
     }
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {

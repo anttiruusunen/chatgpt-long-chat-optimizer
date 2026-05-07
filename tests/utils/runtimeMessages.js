@@ -20,9 +20,6 @@ export function createFeatureFlagSyncMock(state) {
         state.featureFlags.offscreenOptimization = Boolean(
             state.settings.enableOffscreenOptimization
         );
-        state.featureFlags.largeCodeBlockOptimization = Boolean(
-            state.settings.enableLargeCodeBlockOptimization
-        );
         state.featureFlags.storeReadOptimization = Boolean(
             state.settings.enableStoreReadOptimization
         );
@@ -31,9 +28,6 @@ export function createFeatureFlagSyncMock(state) {
         );
         state.featureFlags.userMessageClamp = Boolean(
             state.settings.enableUserMessageClamp
-        );
-        state.featureFlags.codeBlockCollapse = Boolean(
-            state.settings.enableCodeBlockCollapse
         );
     });
 }

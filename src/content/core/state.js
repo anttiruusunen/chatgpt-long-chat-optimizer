@@ -3,12 +3,6 @@ export const STATE_KEY = "__threadOptimizerState";
 export const PRUNED_ATTR = "data-thread-optimizer-pruned";
 export const PLACEHOLDER_ATTR = "data-thread-optimizer-placeholder";
 export const OFFSCREEN_OPT_ATTR = "data-thread-optimizer-offscreen-opt";
-export const CODE_BLOCK_OFFSCREEN_OPT_ATTR =
-    "data-thread-optimizer-code-offscreen-opt";
-export const CODE_BLOCK_COLLAPSED_ATTR =
-    "data-thread-optimizer-code-collapsed";
-export const CODE_BLOCK_PLACEHOLDER_ATTR =
-    "data-thread-optimizer-code-placeholder";
 export const TOP_RESTORE_SENTINEL_ATTR =
     "data-thread-optimizer-top-restore-sentinel";
 export const BOTTOM_PRUNE_SENTINEL_ATTR =
@@ -21,24 +15,19 @@ export const DEFAULT_SETTINGS = {
     autoPrune: true,
     enablePruning: true,
     enableOffscreenOptimization: true,
-    enableLargeCodeBlockOptimization: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
     enableCodeBlockScrollbars: true,
     enableUserMessageClamp: true,
-    enableCodeBlockCollapse: true,
 };
 
 function createDefaultFeatureFlags() {
     return {
         pruning: DEFAULT_SETTINGS.enablePruning,
         offscreenOptimization: DEFAULT_SETTINGS.enableOffscreenOptimization,
-        largeCodeBlockOptimization:
-            DEFAULT_SETTINGS.enableLargeCodeBlockOptimization,
         storeReadOptimization: DEFAULT_SETTINGS.enableStoreReadOptimization,
         codeBlockScrollbars: DEFAULT_SETTINGS.enableCodeBlockScrollbars,
         userMessageClamp: DEFAULT_SETTINGS.enableUserMessageClamp,
-        codeBlockCollapse: DEFAULT_SETTINGS.enableCodeBlockCollapse,
     };
 }
 
@@ -52,10 +41,6 @@ function createDefaultReplyTimingState() {
     };
 }
 
-/**
- * State is stored on window so hot reloads / repeated script injection do not
- * lose bookkeeping while the page is still alive.
- */
 function createDefaultState() {
     return {
         softPrunedSections: [],
@@ -97,18 +82,6 @@ function createDefaultState() {
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,
         didInitialPrune: false,
 
-        codeBlockRefreshTimer: null,
-        isCodeBlockRefreshScheduled: false,
-        codeBlockStructureObserver: null,
-        observedCodeBlockStructureRoot: null,
-        observedCodeBlockStructureSection: null,
-        streamingCodeBlockLastSection: null,
-        streamingCodeBlockLastPre: null,
-        streamingCodeBlockLastCount: 0,
-
-        detachedCodeBlocks: new Map(),
-        nextDetachedCodeBlockId: 1,
-
         isApplyingDomChanges: false,
         offscreenLiveSection: null,
     };
@@ -138,21 +111,20 @@ function ensureNumberProperty(name, fallbackValue = 0) {
     }
 }
 
-/**
- * State migration hook.
- *
- * Runs on every content script load to normalize or migrate
- * persisted window-level state across extension versions.
- *
- * Currently a no-op (RC1).
- */
+function removeLegacyCodeBlockOptimizationState() {
+    delete state.codeBlockRefreshTimer;
+    delete state.isCodeBlockRefreshScheduled;
+    delete state.codeBlockStructureObserver;
+    delete state.observedCodeBlockStructureRoot;
+    delete state.observedCodeBlockStructureSection;
+    delete state.streamingCodeBlockLastSection;
+    delete state.streamingCodeBlockLastPre;
+    delete state.streamingCodeBlockLastCount;
+    delete state.nextDetachedCodeBlockId;
+}
+
 function migrateLegacyState() {
-    // Intentionally a no-op for RC1.
-    // 
-    // This hook exists for forward compatibility:
-    // once the extension is released, we may need to migrate
-    // existing in-page state when users upgrade versions
-    // without reloading ChatGPT tabs.
+    removeLegacyCodeBlockOptimizationState();
 }
 
 function normalizePruningState() {
@@ -191,38 +163,28 @@ function normalizeReplyTimingState() {
     ensureBooleanProperty("replyTimingListenersInstalled");
 }
 
-function normalizeCodeBlockState() {
-    ensureProperty("codeBlockRefreshTimer", null);
-    ensureBooleanProperty("isCodeBlockRefreshScheduled");
-
-    ensureProperty("codeBlockStructureObserver", null);
-    ensureProperty("observedCodeBlockStructureRoot", null);
-    ensureProperty("observedCodeBlockStructureSection", null);
-    ensureProperty("streamingCodeBlockLastSection", null);
-    ensureProperty("streamingCodeBlockLastPre", null);
-
-    ensureNumberProperty("streamingCodeBlockLastCount", 0);
-
-    if (!(state.detachedCodeBlocks instanceof Map)) {
-        state.detachedCodeBlocks = new Map();
-    }
-
-    ensureNumberProperty("nextDetachedCodeBlockId", 1);
-}
-
 function normalizeSettingsAndFlags() {
+    const {
+        ...existingSettings
+    } = state.settings && typeof state.settings === "object"
+        ? state.settings
+        : {};
+
     state.settings = {
         ...DEFAULT_SETTINGS,
-        ...state.settings,
+        ...existingSettings,
     };
 
-    if (
-        !("featureFlags" in state) ||
-        typeof state.featureFlags !== "object" ||
-        state.featureFlags === null
-    ) {
-        state.featureFlags = createDefaultFeatureFlags();
-    }
+    const {
+        ...existingFeatureFlags
+    } = state.featureFlags && typeof state.featureFlags === "object"
+        ? state.featureFlags
+        : {};
+
+    state.featureFlags = {
+        ...createDefaultFeatureFlags(),
+        ...existingFeatureFlags,
+    };
 
     ensureBooleanProperty("debugLoggingEnabled", DEFAULT_SETTINGS.enableDebugLogging);
 }
@@ -236,6 +198,5 @@ function normalizeMiscState() {
 migrateLegacyState();
 normalizePruningState();
 normalizeReplyTimingState();
-normalizeCodeBlockState();
 normalizeSettingsAndFlags();
 normalizeMiscState();

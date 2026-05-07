@@ -50,12 +50,6 @@ function applySettingsFromMessage(message) {
         state.settings.enableOffscreenOptimization
     );
 
-    state.settings.enableLargeCodeBlockOptimization = getBooleanMessageSetting(
-        message,
-        "enableLargeCodeBlockOptimization",
-        state.settings.enableLargeCodeBlockOptimization
-    );
-
     state.settings.enableDebugLogging = getBooleanMessageSetting(
         message,
         "enableDebugLogging",
@@ -78,12 +72,6 @@ function applySettingsFromMessage(message) {
         message,
         "enableUserMessageClamp",
         state.settings.enableUserMessageClamp
-    );
-
-    state.settings.enableCodeBlockCollapse = getBooleanMessageSetting(
-        message,
-        "enableCodeBlockCollapse",
-        state.settings.enableCodeBlockCollapse
     );
 }
 
@@ -138,6 +126,9 @@ export function registerRuntimeMessageHandlers({
             }
 
             if (message.action === "settings-updated") {
+                const previousPruningEnabled =
+                    state.featureFlags.pruning;
+
                 const previousOffscreenEnabled =
                     state.featureFlags.offscreenOptimization;
 
@@ -150,6 +141,10 @@ export function registerRuntimeMessageHandlers({
 
                 // Keep featureFlags as the canonical runtime view of settings.
                 syncFeatureFlagsFromSettings();
+
+                const pruningJustEnabled =
+                    !previousPruningEnabled &&
+                    state.featureFlags.pruning;
 
                 postToPageBridge("thread-optimizer:set-store-read-optimization", {
                     enabled: state.featureFlags.storeReadOptimization,
@@ -170,7 +165,10 @@ export function registerRuntimeMessageHandlers({
                 }
 
                 if (state.settings.autoPrune && state.featureFlags.pruning) {
-                    if (!state.didInitialPrune) {
+                    if (
+                        !state.didInitialPrune ||
+                        pruningJustEnabled
+                    ) {
                         // Runtime enable can happen after the DOM is already mounted,
                         // so prune directly instead of waiting for startup observers.
                         pruneOldSections(

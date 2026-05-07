@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-thread-optimizer",
   "version": "1.0.0",
-  "description": "Browser extension that optimizes ChatGPT performance by pruning old messages and collapsing large code blocks.",
+  "description": "Browser extension that optimizes ChatGPT performance by pruning old messages.",
   "type": "module",
   "private": true,
   "scripts": {

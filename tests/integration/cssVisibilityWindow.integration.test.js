@@ -64,9 +64,7 @@ vi.mock("../../src/shared/ext.js", () => ({
         autoPrune: true,
         enablePruning: true,
         enableOffscreenOptimization: false,
-        enableLargeCodeBlockOptimization: false,
         enableDebugLogging: false,
-        largeCodeBlockMinChars: 1,
     })),
 }));
 

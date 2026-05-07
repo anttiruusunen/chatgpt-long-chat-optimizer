@@ -125,7 +125,6 @@ describe("core/messages", () => {
                 autoPrune: true,
                 enablePruning: true,
                 enableOffscreenOptimization: true,
-                enableLargeCodeBlockOptimization: true,
                 enableDebugLogging: true,
             },
             {},
@@ -138,7 +137,6 @@ describe("core/messages", () => {
         expect(state.settings.autoPrune).toBe(true);
         expect(state.settings.enablePruning).toBe(true);
         expect(state.settings.enableOffscreenOptimization).toBe(true);
-        expect(state.settings.enableLargeCodeBlockOptimization).toBe(true);
         expect(state.settings.enableDebugLogging).toBe(true);
         expect(state.debugLoggingEnabled).toBe(true);
 
@@ -243,12 +241,10 @@ describe("core/messages", () => {
             ...DEFAULT_SETTINGS,
             enablePruning: true,
             enableOffscreenOptimization: true,
-            enableLargeCodeBlockOptimization: true,
             enableDebugLogging: true,
             enableStoreReadOptimization: true,
             enableCodeBlockScrollbars: true,
             enableUserMessageClamp: true,
-            enableCodeBlockCollapse: true,
             autoPrune: true,
             historyKeptExchanges: 10,
         };
@@ -256,11 +252,9 @@ describe("core/messages", () => {
         state.featureFlags = {
             pruning: true,
             offscreenOptimization: true,
-            largeCodeBlockOptimization: true,
             storeReadOptimization: true,
             codeBlockScrollbars: true,
             userMessageClamp: true,
-            codeBlockCollapse: true,
         };
 
         const { listener } = setupRuntimeHandlers(messagesModule, {
@@ -286,12 +280,41 @@ describe("core/messages", () => {
         expect(state.settings.autoPrune).toBe(true);
         expect(state.settings.enablePruning).toBe(true);
         expect(state.settings.enableOffscreenOptimization).toBe(true);
-        expect(state.settings.enableLargeCodeBlockOptimization).toBe(true);
         expect(state.settings.enableDebugLogging).toBe(true);
         expect(state.settings.enableStoreReadOptimization).toBe(true);
         expect(state.settings.enableCodeBlockScrollbars).toBe(true);
         expect(state.settings.enableUserMessageClamp).toBe(true);
-        expect(state.settings.enableCodeBlockCollapse).toBe(true);
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+
+    it("settings-updated re-enables pruning feature flag", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state } = stateModule;
+
+        state.settings.enablePruning = false;
+        state.featureFlags.pruning = false;
+
+        const syncFeatureFlagsFromSettings = createFeatureFlagSyncMock(state);
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings,
+        });
+
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            {
+                action: "settings-updated",
+                enablePruning: true,
+                autoPrune: false,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+        expect(state.settings.enablePruning).toBe(true);
+        expect(state.featureFlags.pruning).toBe(true);
     });
 });

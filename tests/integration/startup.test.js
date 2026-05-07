@@ -19,9 +19,7 @@ vi.mock("../../src/shared/ext.js", () => ({
         autoPrune: true,
         enablePruning: true,
         enableOffscreenOptimization: true,
-        enableLargeCodeBlockOptimization: true,
         enableDebugLogging: false,
-        largeCodeBlockMinChars: 1,
     })),
 }));
 
@@ -106,7 +104,6 @@ async function flush() {
 function buildConversation({
     exchangeCount = 6,
     includeAnchor = true,
-    includeLargeCodeBlock = false,
     latestAssistantFinished = true,
 } = {}) {
     document.body.innerHTML = "";
@@ -143,14 +140,6 @@ function buildConversation({
         markdown.className = "markdown";
         markdown.textContent = `Assistant ${i + 1}`;
         body.appendChild(markdown);
-
-        if (includeLargeCodeBlock && i === exchangeCount - 1) {
-            const pre = document.createElement("pre");
-            const code = document.createElement("code");
-            code.textContent = "const x = 1;\n".repeat(300);
-            pre.appendChild(code);
-            body.appendChild(pre);
-        }
 
         assistant.appendChild(body);
 
@@ -205,7 +194,6 @@ describe("startup integration", () => {
             buildConversation({
                 exchangeCount: 6,
                 includeAnchor: true,
-                includeLargeCodeBlock: false,
                 latestAssistantFinished: true,
             });
 
@@ -227,7 +215,6 @@ describe("startup integration", () => {
         buildConversation({
             exchangeCount: 4,
             includeAnchor: false,
-            includeLargeCodeBlock: false,
             latestAssistantFinished: true,
         });
 
@@ -243,25 +230,15 @@ describe("startup integration", () => {
         buildConversation({
             exchangeCount: 4,
             includeAnchor: true,
-            includeLargeCodeBlock: true,
             latestAssistantFinished: true,
         });
 
         const domModule = await import("../../src/content/core/dom.js");
-        const offscreenCodeBlocksModule = await import(
-            "../../src/content/offscreen/offscreenCodeBlocks.js"
-        );
 
         await import("../../src/content/core/index.js");
         await flush();
 
-        offscreenCodeBlocksModule.refreshObservedCodeBlocks();
-        await flush();
-
         const latestAssistant = domModule.getLatestAssistantSection();
-        const codePlaceholder = latestAssistant?.querySelector(
-            '[data-thread-optimizer-code-placeholder="true"]'
-        );
         const remainingPre = latestAssistant?.querySelector("pre");
         const processed =
             latestAssistant?.getAttribute(
@@ -269,18 +246,12 @@ describe("startup integration", () => {
             ) === "true";
 
         expect(latestAssistant).not.toBeNull();
-        expect(
-            Boolean(codePlaceholder) ||
-                processed ||
-                remainingPre === null
-        ).toBe(true);
     });
 
     it("reports the latest assistant as actively streaming when unfinished", async () => {
         buildConversation({
             exchangeCount: 4,
             includeAnchor: true,
-            includeLargeCodeBlock: false,
             latestAssistantFinished: false,
         });
 

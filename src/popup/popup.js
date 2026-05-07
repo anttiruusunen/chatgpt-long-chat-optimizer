@@ -9,11 +9,9 @@ const DEFAULT_SETTINGS = {
     historyKeptExchanges: 10,
     enablePruning: true,
     enableOffscreenOptimization: true,
-    enableLargeCodeBlockOptimization: true,
     enableDebugLogging: false,
     enableStoreReadOptimization: false,
     enableCodeBlockScrollbars: true,
-    enableCodeBlockCollapse: true,
     enableUserMessageClamp: true,
 };
 
@@ -25,11 +23,9 @@ const elements = {
     clearHistoryKeptExchanges: document.getElementById("clearHistoryKeptExchanges"),
     enablePruning: document.getElementById("enablePruning"),
     enableOffscreenOptimization: document.getElementById("enableOffscreenOptimization"),
-    enableLargeCodeBlockOptimization: document.getElementById("enableLargeCodeBlockOptimization"),
     enableCodeBlockScrollbars: document.getElementById("enableCodeBlockScrollbars"),
     enableDebugLogging: document.getElementById("enableDebugLogging"),
     enableStoreReadOptimization: document.getElementById("enableStoreReadOptimization"),
-    enableCodeBlockCollapse: document.getElementById("enableCodeBlockCollapse"),
     enableUserMessageClamp: document.getElementById("enableUserMessageClamp"),
     hiddenMessagesValue: document.getElementById("hiddenMessagesValue"),
     lastReplyTimeValue: document.getElementById("lastReplyTimeValue"),
@@ -222,18 +218,12 @@ async function loadSettings() {
     elements.enableOffscreenOptimization.checked = Boolean(
         stored.enableOffscreenOptimization
     );
-    elements.enableLargeCodeBlockOptimization.checked = Boolean(
-        stored.enableLargeCodeBlockOptimization
-    );
     elements.enableDebugLogging.checked = Boolean(stored.enableDebugLogging);
     elements.enableStoreReadOptimization.checked = Boolean(
         stored.enableStoreReadOptimization
     );
     elements.enableCodeBlockScrollbars.checked = Boolean(
         stored.enableCodeBlockScrollbars
-    );
-    elements.enableCodeBlockCollapse.checked = Boolean(
-        stored.enableCodeBlockCollapse
     );
     elements.enableUserMessageClamp.checked = Boolean(
         stored.enableUserMessageClamp
@@ -262,13 +252,10 @@ function collectSettingsFromForm() {
             autoPrune: historyKeptExchanges != null,
             enablePruning: elements.enablePruning.checked,
             enableOffscreenOptimization: elements.enableOffscreenOptimization.checked,
-            enableLargeCodeBlockOptimization:
-                elements.enableLargeCodeBlockOptimization.checked,
             enableDebugLogging: elements.enableDebugLogging.checked,
             enableStoreReadOptimization:
                 elements.enableStoreReadOptimization.checked,
             enableCodeBlockScrollbars: elements.enableCodeBlockScrollbars.checked,
-            enableCodeBlockCollapse: elements.enableCodeBlockCollapse.checked,
             enableUserMessageClamp: elements.enableUserMessageClamp.checked,
         },
     };
@@ -348,10 +335,8 @@ function bindEvents() {
 
     bindEvent(elements.enablePruning, "change", saveSettings);
     bindEvent(elements.enableOffscreenOptimization, "change", saveSettings);
-    bindEvent(elements.enableLargeCodeBlockOptimization, "change", saveSettings);
     bindEvent(elements.enableStoreReadOptimization, "change", saveSettings);
     bindEvent(elements.enableCodeBlockScrollbars, "change", saveSettings);
-    bindEvent(elements.enableCodeBlockCollapse, "change", saveSettings);
     bindEvent(elements.enableUserMessageClamp, "change", saveSettings);
 
     bindEvent(elements.enableDebugLogging, "change", async () => {

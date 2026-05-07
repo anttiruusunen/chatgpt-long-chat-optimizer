@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import {
-    destroySectionForGc,
     softPruneSection,
     softPruneSections,
     restoreSoftPrunedSection,
@@ -12,8 +11,6 @@ import { getConversationTurnRoot } from "../../src/content/core/dom.js";
 import {
     PRUNED_ATTR,
     UNPRUNEABLE_ATTR,
-    OFFSCREEN_OPT_ATTR,
-    CODE_BLOCK_OFFSCREEN_OPT_ATTR,
 } from "../../src/content/core/state.js";
 
 function makeWrappedTurn(id, turn) {
@@ -239,66 +236,29 @@ describe("pruneDom wrapper-aware behavior", () => {
         ).toBe(0);
     });
 
-    it("destroySectionForGc clears the section without requiring it to stay mounted", () => {
-        const turn = makeWrappedTurn("1", "assistant");
-        const inner = document.createElement("div");
-        inner.textContent = "hello";
+    it("calls onRestore for each restored valid section", () => {
+        const host = document.getElementById("conversation-host");
 
-        turn.section.setAttribute(PRUNED_ATTR, "true");
-        turn.section.setAttribute(UNPRUNEABLE_ATTR, "true");
-        turn.section.setAttribute(OFFSCREEN_OPT_ATTR, "true");
-        turn.section.style.contentVisibility = "auto";
-        turn.section.style.containIntrinsicSize = "100px";
-        turn.section.dataset.threadOptimizerHeight = "100";
+        const first = makeWrappedTurn("1", "user");
+        const second = makeWrappedTurn("2", "assistant");
+        const restored = [];
 
-        turn.section.appendChild(inner);
+        host.appendChild(first.wrapper);
+        host.appendChild(second.wrapper);
 
-        destroySectionForGc(turn.section);
+        softPruneSection(first.section);
 
-        expect(turn.section.childElementCount).toBe(0);
-        expect(turn.section.hasAttribute(PRUNED_ATTR)).toBe(false);
-        expect(turn.section.hasAttribute(UNPRUNEABLE_ATTR)).toBe(false);
-        expect(turn.section.hasAttribute(OFFSCREEN_OPT_ATTR)).toBe(false);
-        expect(turn.section.style.contentVisibility).toBe("");
-        expect(turn.section.style.containIntrinsicSize).toBe("");
-        expect(turn.section.dataset.threadOptimizerHeight).toBeUndefined();
-    });
+        const restoredCount = restoreSoftPrunedSections(
+            [first.section],
+            host,
+            second.section,
+            {
+                onRestore: (section) => restored.push(section),
+            }
+        );
 
-    it("destroySectionForGc clears code block optimization state", () => {
-        const turn = makeWrappedTurn("1", "assistant");
-        const pre = document.createElement("pre");
-
-        pre.setAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR, "true");
-        pre.style.contentVisibility = "auto";
-        pre.style.containIntrinsicSize = "200px";
-        pre.dataset.threadOptimizerCodeHeight = "200";
-        pre.dataset.threadOptimizerLargeCode = "true";
-
-        turn.section.appendChild(pre);
-
-        destroySectionForGc(turn.section);
-
-        expect(pre.hasAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR)).toBe(false);
-        expect(pre.style.contentVisibility).toBe("");
-        expect(pre.style.containIntrinsicSize).toBe("");
-        expect(pre.dataset.threadOptimizerCodeHeight).toBeUndefined();
-        expect(pre.dataset.threadOptimizerLargeCode).toBeUndefined();
-        expect(turn.section.childElementCount).toBe(0);
-    });
-
-    it("destroySectionForGc accepts pre-collected codeBlocks", () => {
-        const turn = makeWrappedTurn("1", "assistant");
-        const pre = document.createElement("pre");
-
-        pre.setAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR, "true");
-        pre.dataset.threadOptimizerLargeCode = "true";
-
-        destroySectionForGc(turn.section, {
-            codeBlocks: [pre],
-        });
-
-        expect(pre.hasAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR)).toBe(false);
-        expect(pre.dataset.threadOptimizerLargeCode).toBeUndefined();
+        expect(restoredCount).toBe(1);
+        expect(restored).toEqual([first.section]);
     });
 
     it("getConversationTurnRoot stays aligned with pruning behavior", () => {

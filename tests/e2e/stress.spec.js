@@ -10,11 +10,17 @@ test("handles large conversation without breaking", async ({ page }) => {
         for (let i = 0; i < 100; i++) {
             const s = document.createElement("section");
             s.setAttribute("data-turn", "assistant");
+            s.setAttribute("data-testid", `conversation-turn-extra-${i}`);
+            s.setAttribute("data-message-id", `extra-msg-${i}`);
             s.textContent = "Extra " + i;
             convo.appendChild(s);
         }
 
-        window.dispatchEvent(new Event("scroll"));
+        chrome.runtime.onMessage.__listeners[0](
+            { action: "prune-now" },
+            {},
+            () => {}
+        );
     });
 
     await page.waitForTimeout(300);
