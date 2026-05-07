@@ -1325,7 +1325,6 @@
         __visitedFibers: 0,
         __visitedObjects: 0,
 
-        __prunedMessageIds: [],
         __knownPruningEnabled: false,
         __knownPrunedTurnCount: 0,
 
@@ -1393,10 +1392,6 @@
         __nodeIdDirectIndex: null,
         __nodeIdDirectIndexSource: null,
         __confirmedExistingNodeIds: null,
-
-        __prunedMessageIdSet: new Set(),
-        __prunedLeafIdSet: new Set(),
-        __liveNodeCacheFrame: -1,
 
         __storeReadEpoch: 0,
 
@@ -1690,73 +1685,6 @@
             };
         },
 
-        recordPrunedMessageId(messageId) {
-            if (typeof messageId !== "string" || messageId.trim() === "") {
-                this.__lastError = "record blocked: invalid message id";
-
-                return {
-                    recorded: false,
-                    reason: this.__lastError,
-                    messageId,
-                };
-            }
-
-            const normalizedMessageId = messageId.trim();
-
-            if (!this.__prunedMessageIds.includes(normalizedMessageId)) {
-                this.__prunedMessageIds.push(normalizedMessageId);
-            }
-
-            this.__prunedMessageIdSet.add(normalizedMessageId);
-            this.__prunedLeafIdSet ??= new Set();
-
-            if (this.__storeValidationFailed || !this.__store) {
-                return {
-                    recorded: true,
-                    resolved: false,
-                    reason: this.__storeValidationFailed
-                        ? "store validation failed"
-                        : "store not registered",
-                    messageId: normalizedMessageId,
-                    count: this.__prunedMessageIds.length,
-                };
-            }
-
-            const nodeCache = window[GLOBAL_KEY]?.__nodeObjectCacheApi;
-
-            const node = nodeCache
-                ? nodeCache.resolve(normalizedMessageId)
-                : getNodeDirect(store, normalizedMessageId);
-
-            if (node?.id) {
-                this.__prunedMessageIdSet.add(node.id);
-
-                try {
-                    const leaf = this.__store.getLeafFromNode?.(node.id);
-                    const leafId = typeof leaf === "string" ? leaf : leaf?.id ?? null;
-
-                    if (leafId) {
-                        this.__prunedLeafIdSet.add(leafId);
-                    }
-                } catch { }
-            }
-
-            const inspection = this.inspectMessageById(normalizedMessageId);
-
-            if (inspection.nodeId) {
-                this.__prunedMessageIdSet.add(inspection.nodeId);
-            }
-
-            return {
-                recorded: true,
-                resolved: Boolean(inspection.nodeId && inspection.exists),
-                messageId: normalizedMessageId,
-                nodeId: inspection.nodeId,
-                count: this.__prunedMessageIds.length,
-                inspection,
-            };
-        },
-
         setKnownPruningState({ enabled, prunedTurnCount } = {}) {
             this.__knownPruningEnabled = Boolean(enabled);
 
@@ -1772,18 +1700,6 @@
                 estimatedTurnCount: getEstimatedConversationTurnCount(),
                 minimumNodeCount: getExpectedMinimumStoreNodeCount(),
             };
-        },
-
-        getPrunedMessageIds() {
-            return [...this.__prunedMessageIds];
-        },
-
-        clearPrunedMessageIds() {
-            this.__prunedMessageIds = [];
-            this.__lastError = null;
-            this.__prunedMessageIdSet.clear();
-            this.__prunedLeafIdSet.clear();
-            return true;
         },
 
         discoverNow() {
@@ -5164,8 +5080,8 @@
                 return;
             }
 
+            // No-op for now
             if (data.type === "thread-optimizer:record-pruned-message-id") {
-                bridge.recordPrunedMessageId(payload.messageId);
                 return;
             }
 
