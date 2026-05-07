@@ -20,3 +20,6 @@ playwright/.auth/
 # Extension builds
 dist-*
 *.crx
+
+# Vitest
+vitest.config.js.timestamp-*.mjs
