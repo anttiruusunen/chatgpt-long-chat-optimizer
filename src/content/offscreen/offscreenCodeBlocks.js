@@ -27,6 +27,7 @@ import {
     clearCollapsedCodeBlock,
     revealCollapsedCodeBlockFromPlaceholder,
     selfHealDetachedCodeBlockEntry,
+    cleanupDetachedCodeBlocksForSection,
 } from "./codeBlockDetachStore.js";
 import {
     isStreamingLatestAssistantSection,
@@ -158,6 +159,85 @@ function getCodeBlocksForSection(section) {
     }
 
     return result;
+}
+
+export function cleanupCodeBlockDomReferencesForSection(section) {
+    if (!(section instanceof Element)) {
+        return {
+            ok: false,
+            cleanedDetachedCodeBlocks: 0,
+            clearedStreamingTracking: false,
+            clearedObservedStructureSection: false,
+            clearedObservedStructureRoot: false,
+            disconnectedStructureObserver: false,
+        };
+    }
+
+    let cleanedDetachedCodeBlocks = 0;
+    let clearedStreamingTracking = false;
+    let clearedObservedStructureSection = false;
+    let clearedObservedStructureRoot = false;
+    let disconnectedStructureObserver = false;
+
+    if (typeof cleanupDetachedCodeBlocksForSection === "function") {
+        cleanedDetachedCodeBlocks =
+            cleanupDetachedCodeBlocksForSection(section);
+    }
+
+    const sectionContains = (node) =>
+        node instanceof Node && section.contains(node);
+
+    const streamingTouchesSection =
+        state.streamingCodeBlockLastSection === section ||
+        sectionContains(state.streamingCodeBlockLastSection) ||
+        sectionContains(state.streamingCodeBlockLastPre) ||
+        (
+            Array.isArray(state.streamingCodeBlocks) &&
+            state.streamingCodeBlocks.some((pre) => sectionContains(pre))
+        );
+
+    if (streamingTouchesSection) {
+        state.streamingCodeBlockLastSection = null;
+        state.streamingCodeBlockLastPre = null;
+        state.streamingCodeBlockLastCount = 0;
+        state.streamingCodeBlocks = [];
+        clearedStreamingTracking = true;
+    }
+
+    if (
+        state.observedCodeBlockStructureSection === section ||
+        sectionContains(state.observedCodeBlockStructureSection)
+    ) {
+        state.observedCodeBlockStructureSection = null;
+        clearedObservedStructureSection = true;
+    }
+
+    if (
+        state.observedCodeBlockStructureRoot === section ||
+        sectionContains(state.observedCodeBlockStructureRoot)
+    ) {
+        state.observedCodeBlockStructureRoot = null;
+        clearedObservedStructureRoot = true;
+    }
+
+    if (
+        clearedObservedStructureSection ||
+        clearedObservedStructureRoot ||
+        streamingTouchesSection
+    ) {
+        state.codeBlockStructureObserver?.disconnect?.();
+        state.codeBlockStructureObserver = null;
+        disconnectedStructureObserver = true;
+    }
+
+    return {
+        ok: true,
+        cleanedDetachedCodeBlocks,
+        clearedStreamingTracking,
+        clearedObservedStructureSection,
+        clearedObservedStructureRoot,
+        disconnectedStructureObserver,
+    };
 }
 
 function resetStreamingObserverTracking() {

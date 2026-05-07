@@ -6,6 +6,7 @@ import {
 import {
     refreshObservedCodeBlocks,
     reconcileLatestStreamingAssistantCodeBlocksNow,
+    cleanupCodeBlockDomReferencesForSection
 } from "../../src/content/offscreen/offscreenCodeBlocks.js";
 import { revealCollapsedCodeBlockFromPlaceholder } from "../../src/content/offscreen/codeBlockDetachStore.js";
 import { isLargeCodeBlock } from "../../src/content/offscreen/codeBlockPlaceholders.js";
@@ -570,5 +571,27 @@ describe("offscreenCodeBlocks", () => {
         ).toBeNull();
 
         expect(section.querySelector(".cm-editor pre")).not.toBeNull();
+    });
+
+    it("clears streaming code block references for a hard-evicted section", () => {
+        const section = document.createElement("section");
+        const pre = document.createElement("pre");
+
+        section.appendChild(pre);
+        document.body.appendChild(section);
+
+        state.streamingCodeBlockLastSection = section;
+        state.streamingCodeBlockLastPre = pre;
+        state.streamingCodeBlockLastCount = 1;
+        state.streamingCodeBlocks = [pre];
+
+        const result = cleanupCodeBlockDomReferencesForSection(section);
+
+        expect(result.ok).toBe(true);
+        expect(result.clearedStreamingTracking).toBe(true);
+        expect(state.streamingCodeBlockLastSection).toBe(null);
+        expect(state.streamingCodeBlockLastPre).toBe(null);
+        expect(state.streamingCodeBlockLastCount).toBe(0);
+        expect(state.streamingCodeBlocks).toEqual([]);
     });
 });
