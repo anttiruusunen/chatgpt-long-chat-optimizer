@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushAsyncWork } from "../utils/async.js";
+import {
+    buildConversation,
+} from "../utils/conversationDom.js";
 
 const mockRefs = vi.hoisted(() => ({
     registeredHandlers: null,
@@ -121,43 +124,6 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
     isReplyStreaming: vi.fn(() => mockRefs.isReplyStreamingValue),
 }));
 
-function createConversationContainer() {
-    const root = document.createElement("div");
-    const wrapper = document.createElement("div");
-    const container = document.createElement("div");
-
-    root.appendChild(wrapper);
-    wrapper.appendChild(container);
-    document.body.appendChild(root);
-
-    return container;
-}
-
-function appendConversationSection(container, label, turn, { anchor = false } = {}) {
-    const section = document.createElement("section");
-    section.setAttribute("data-testid", `conversation-turn-${label}`);
-    section.setAttribute("data-turn", turn);
-    if (anchor) {
-        section.setAttribute("data-scroll-anchor", "true");
-    }
-    section.textContent = `${turn}-${label}`;
-    container.appendChild(section);
-    return section;
-}
-
-function buildConversation() {
-    const container = createConversationContainer();
-
-    const s1 = appendConversationSection(container, "1", "user");
-    const s2 = appendConversationSection(container, "2", "assistant");
-    const s3 = appendConversationSection(container, "3", "user");
-    const s4 = appendConversationSection(container, "4", "assistant");
-    const s5 = appendConversationSection(container, "5", "user");
-    const s6 = appendConversationSection(container, "6", "assistant", { anchor: true });
-
-    return { container, sections: [s1, s2, s3, s4, s5, s6] };
-}
-
 describe("cssVisibilityWindow integration", () => {
     let originalRAF;
     let originalCAF;
@@ -202,20 +168,28 @@ describe("cssVisibilityWindow integration", () => {
     });
 
     it("startup initialization applies CSS visibility markers immediately", async () => {
-        const { sections } = buildConversation();
+        vi.useRealTimers();
 
-        const stateModule = await import("../../src/content/core/state.js");
-        await import("../../src/content/core/index.js");
-        await flushAsyncWork();
+        try {
+            const { sections } = buildConversation();
 
-        const { OUT_OF_WINDOW_ATTR } = stateModule;
+            const stateModule = await import("../../src/content/core/state.js");
+            await import("../../src/content/core/index.js");
 
-        expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[2].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[3].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[4].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-        expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await Promise.resolve();
+
+            const { OUT_OF_WINDOW_ATTR } = stateModule;
+
+            expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
+            expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
+            expect(sections[2].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
+            expect(sections[3].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
+            expect(sections[4].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
+            expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
+        } finally {
+            vi.useFakeTimers();
+        }
     });
 
     it("marks the same old sections immediately that the delayed prune eventually targets", async () => {

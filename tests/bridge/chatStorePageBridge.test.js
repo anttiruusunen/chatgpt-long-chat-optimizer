@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const BRIDGE_PATH = path.resolve("src/page/chatStorePageBridge.js");
 const BRIDGE_GLOBAL = "__threadOptimizerChatStoreBridge";
@@ -26,6 +26,15 @@ function dispatchBridgeMessage(data, options = {}) {
             data,
         })
     );
+}
+
+function dispatchValidBridgeMessage(type, payload = {}) {
+    dispatchBridgeMessage({
+        source: "thread-optimizer",
+        token: TOKEN,
+        type,
+        ...payload,
+    });
 }
 
 function appendVisibleMessage(messageId = "msg-3") {
@@ -76,6 +85,7 @@ function createFakeStore(nodeCount = 4) {
     const store = {
         rootId: "root",
         currentLeafId: `node-${nodeCount - 1}`,
+        __nodeMap: nodeMap,
 
         get nodes() {
             return Array.from(nodeMap.values());
@@ -155,39 +165,57 @@ function createFakeStore(nodeCount = 4) {
             return branch.reverse();
         },
 
+        getParent(id) {
+            const node = this.getNodeByIdOrMessageId(id);
+            return this.getNodeByIdOrMessageId(node.parentId);
+        },
+
+        deleteNode(id) {
+            const node = this.getNodeByIdOrMessageId(id);
+            const parent = this.getNodeIfExists(node.parentId);
+
+            if (!parent) return;
+
+            for (const childId of node.children) {
+                const child = this.getNodeIfExists(childId);
+                if (child) {
+                    child.parentId = parent.id;
+                }
+            }
+
+            parent.children = parent.children.flatMap((childId) =>
+                childId === node.id ? node.children : [childId]
+            );
+
+            nodeMap.delete(node.id);
+        },
+
         addMessageNode() {},
         addOptimisticMessageNode() {},
         prependNode() {},
         prependOptismisticNode() {},
         processUpdate() {},
-        deleteNode() {},
         clearNodeMessageParts() {},
         updateNodeMetadata() {},
         updateNodeMessage() {},
         updateNodeMessageMetadata() {},
-        getParent(id) {
-            const node = this.getNodeByIdOrMessageId(id);
-            return this.getNodeByIdOrMessageId(node.parentId);
-        },
     };
 
     return store;
 }
 
-function dispatchValidBridgeMessage(type, payload = {}) {
-    dispatchBridgeMessage({
-        source: "thread-optimizer",
-        token: TOKEN,
-        type,
-        ...payload,
-    });
-}
-
 describe("chatStorePageBridge", () => {
     let script;
 
+    afterEach(() => {
+        vi.runOnlyPendingTimers();
+        vi.useRealTimers();
+    });
+
     beforeEach(() => {
+        vi.useFakeTimers();
         document.documentElement.innerHTML = "";
+        document.body.innerHTML = "";
         delete window[BRIDGE_GLOBAL];
 
         vi.restoreAllMocks();
@@ -398,71 +426,137 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__storeReadOptimizationDebug).toBe(true);
     });
 
-    it("records a pruned message id safely without a store", () => {
+    it("ignores invalid React prune message ids safely", () => {
         loadBridgeWithCurrentScript(script);
 
         const bridge = window[BRIDGE_GLOBAL];
+        const pruneSpy = vi.spyOn(bridge, "pruneReactMessageIds");
 
-        dispatchBridgeMessage({
-            source: "thread-optimizer",
-            token: TOKEN,
-            type: "thread-optimizer:record-pruned-message-id",
-            messageId: "abc123",
+        dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
+            messageIds: ["", "   ", "x".repeat(301)],
         });
 
-        expect(bridge.__prunedMessageIds).toContain("abc123");
+        expect(pruneSpy).not.toHaveBeenCalled();
     });
 
-    it("trims recorded pruned message ids", () => {
+    it("handles React prune safely without a store", () => {
         loadBridgeWithCurrentScript(script);
 
         const bridge = window[BRIDGE_GLOBAL];
 
-        dispatchBridgeMessage({
-            source: "thread-optimizer",
-            token: TOKEN,
-            type: "thread-optimizer:record-pruned-message-id",
-            messageId: "  abc123  ",
+        expect(() => {
+            dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
+                messageIds: ["msg-1", "msg-2"],
+                reason: "test",
+            });
+        }).not.toThrow();
+
+        expect(bridge.hasStore()).toBe(false);
+    });
+
+    it("React-prunes message ids through store.deleteNode and keeps wrappers installed", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-react-prune",
         });
 
-        expect(bridge.__prunedMessageIds).toContain("abc123");
-        expect(bridge.__prunedMessageIds).not.toContain("  abc123  ");
+        const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
+        const disableSpy = vi.spyOn(bridge, "disableStoreReadOptimization");
+        const resetSpy = vi.spyOn(bridge, "resetInstalledStoreEnhancements");
+
+        const epochBefore = bridge.__storeReadEpoch;
+
+        dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
+            messageIds: ["msg-2"],
+            reason: "test-react-prune",
+        });
+
+        expect(deleteSpy).toHaveBeenCalledWith("node-2");
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
+
+        expect(fakeStore.getNodeIfExists("node-3").parentId).toBe("node-1");
+        expect(fakeStore.getNodeIfExists("node-1").children).toEqual(["node-3"]);
+
+        expect(bridge.__storeReadEpoch).toBeGreaterThan(epochBefore);
+
+        expect(bridge.__messageIdIndexInstalled).toBe(true);
+        expect(bridge.__existingNodeStableCacheInstalled).toBe(true);
+        expect(bridge.__branchCacheInstalled).toBe(true);
+
+        expect(disableSpy).not.toHaveBeenCalled();
+        expect(resetSpy).not.toHaveBeenCalled();
     });
 
-    it("does not duplicate recorded pruned message ids", () => {
+    it("refuses to React-prune the current leaf", () => {
+        appendVisibleMessage("msg-4");
         loadBridgeWithCurrentScript(script);
 
         const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
 
-        for (let i = 0; i < 2; i += 1) {
-            dispatchBridgeMessage({
-                source: "thread-optimizer",
-                token: TOKEN,
-                type: "thread-optimizer:record-pruned-message-id",
-                messageId: "abc123",
-            });
-        }
+        bridge.registerStore(fakeStore, {
+            source: "test-react-prune-current-leaf",
+        });
 
-        expect(bridge.__prunedMessageIds.filter((id) => id === "abc123")).toHaveLength(1);
+        const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
+
+        const result = bridge.pruneReactMessageIds(["msg-4"], {
+            reason: "test-current-leaf",
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.failed).toEqual([
+            {
+                inputId: "msg-4",
+                nodeId: "node-4",
+                reason: "refusing to delete current leaf",
+            },
+        ]);
+        expect(deleteSpy).not.toHaveBeenCalled();
+        expect(fakeStore.getNodeIfExists("node-4")).toBeTruthy();
     });
 
-    it.each(["", "   ", "x".repeat(301)])(
-        "ignores invalid pruned message id: %s",
-        (messageId) => {
-            loadBridgeWithCurrentScript(script);
+    it("purges deleted node aliases from direct caches during React prune", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
 
-            const bridge = window[BRIDGE_GLOBAL];
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
 
-            dispatchBridgeMessage({
-                source: "thread-optimizer",
-                token: TOKEN,
-                type: "thread-optimizer:record-pruned-message-id",
-                messageId,
-            });
+        bridge.registerStore(fakeStore, {
+            source: "test-cache-purge",
+        });
 
-            expect(bridge.__prunedMessageIds).toHaveLength(0);
-        }
-    );
+        const node = fakeStore.getNodeIfExists("msg-2");
+
+        bridge.__nodeObjectCache?.set("node-2", node);
+        bridge.__nodeObjectCache?.set("msg-2", node);
+        bridge.__messageIdIndex?.set("msg-2", "node-2");
+        bridge.__messageIdIndex?.set("node-2", "node-2");
+        bridge.__nodeIdDirectIndex?.set("node-2", node);
+
+        const result = bridge.pruneReactMessageIds(["msg-2"], {
+            reason: "test-cache-purge",
+        });
+
+        expect(result.deleted).toHaveLength(1);
+        expect(result.deleted[0].purgedAliases).toContain("msg-2");
+        expect(result.deleted[0].purgedAliases).toContain("node-2");
+
+        expect(bridge.__nodeObjectCache?.has("node-2")).toBe(false);
+        expect(bridge.__nodeObjectCache?.has("msg-2")).toBe(false);
+        expect(bridge.__messageIdIndex?.has("msg-2")).toBe(false);
+        expect(bridge.__messageIdIndex?.has("node-2")).toBe(false);
+        expect(
+            bridge.__nodeIdDirectIndex == null ||
+            bridge.__nodeIdDirectIndex.has("node-2") === false
+        ).toBe(true);
+    });
 
     it("handles log-store-performance safely", () => {
         loadBridgeWithCurrentScript(script);
@@ -570,7 +664,7 @@ describe("chatStorePageBridge", () => {
         const discoverSpy = vi
             .spyOn(bridge, "discoverNow")
             .mockImplementation(function discoverNowForTest() {
-                this.__initTiming.discoveryRuns += 1;
+                this.__discoveryRuns += 1;
                 return this.registerStore(fakeStore, {
                     source: "test-visible-messages-ready",
                 });
@@ -708,5 +802,61 @@ describe("chatStorePageBridge", () => {
 
         expect(stats.calls).toBeUndefined();
         expect(stats.inputSamples).toBeUndefined();
+    });
+
+    it("repairs dangling child references after React prune", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        fakeStore.deleteNode = function buggyDeleteNode(id) {
+            const node = this.getNodeByIdOrMessageId(id);
+            const parent = this.getNodeIfExists(node.parentId);
+
+            // Simulate real-world bad intermediate/stale topology:
+            // node is removed, but parent.children still points at deleted id.
+            if (parent) {
+                parent.children = [...parent.children];
+            }
+
+            this.__nodeMap.delete(node.id);
+        };
+
+        bridge.registerStore(fakeStore, {
+            source: "test-dangling-child-repair",
+        });
+
+        const result = bridge.pruneReactMessageIds(["msg-2"], {
+            reason: "test-dangling-child-repair",
+        });
+
+        expect(result.deleted).toHaveLength(1);
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
+
+        expect(fakeStore.getNodeIfExists("node-1").children).not.toContain("node-2");
+        expect(result.repairResult.repairedParents).toBeGreaterThan(0);
+    });
+
+    it("repairDeletedNodeReferences removes deleted ids from remaining children arrays", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-direct-repair",
+        });
+
+        fakeStore.__nodeMap.delete("node-2");
+        fakeStore.getNodeIfExists("node-1").children.push("node-2");
+
+        const result = bridge.repairDeletedNodeReferences(["node-2"]);
+
+        expect(result.ok).toBe(true);
+        expect(result.repairedParents).toBeGreaterThan(0);
+        expect(fakeStore.getNodeIfExists("node-1").children).not.toContain("node-2");
     });
 });

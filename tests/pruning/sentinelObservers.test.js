@@ -312,6 +312,49 @@ describe("sentinelObservers", () => {
         expect(consumeTopRestoreIntentMock).toHaveBeenCalled();
     });
 
+    it("re-arms top restore when sentinel remains visible after a tiny restore", async () => {
+        buildConversation();
+
+        state.softPrunedSections = [
+            document.createElement("section"),
+            document.createElement("section"),
+            document.createElement("section"),
+            document.createElement("section"),
+        ];
+
+        state.topRestoreSentinel = makeSentinel();
+        document.body.appendChild(state.topRestoreSentinel);
+
+        consumeTopRestoreIntentMock.mockReturnValueOnce(true);
+
+        refreshTopRestoreSentinelObservation({
+            ensureObserverAttached: vi.fn(),
+            withDomMutationGuard: (fn) => fn(),
+            refreshObservedSections: vi.fn(),
+        });
+
+        intersectionObservers[0].trigger([
+            {
+                target: state.topRestoreSentinel,
+                isIntersecting: true,
+            },
+        ]);
+
+        expect(state.isTopRestoreArmed).toBe(false);
+
+        await flushTimersStepwise(6);
+
+        expect(restoreOneExchangeFromSoftPrunedMock).toHaveBeenCalledTimes(1);
+        expect(state.softPrunedSections).toHaveLength(2);
+        expect(state.isTopRestoreScheduled).toBe(false);
+        expect(state.isTopRestoreSentinelVisible).toBe(true);
+
+        // Regression: if the restored exchange is tiny, the sentinel can remain
+        // visible and never emit a leave/re-enter cycle. We still need to re-arm
+        // so the next explicit top-edge user intent can restore another exchange.
+        expect(state.isTopRestoreArmed).toBe(true);
+    });
+
     it("top sentinel does nothing when intersecting without top intent", async () => {
         buildConversation();
 

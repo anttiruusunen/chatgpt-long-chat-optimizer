@@ -213,7 +213,7 @@
 
     const MESSAGE_TYPES = new Set([
         "thread-optimizer:set-pruning-state",
-        "thread-optimizer:record-pruned-message-id",
+        "thread-optimizer:prune-react-message-ids",
         "thread-optimizer:log-store-performance",
         "thread-optimizer:set-store-read-optimization",
         "thread-optimizer:visible-messages-ready",
@@ -1625,6 +1625,250 @@
             }
 
             return true;
+        },
+
+        repairDeletedNodeReferences(deletedNodeIds) {
+            const store = this.__store;
+
+            if (!store || !Array.isArray(deletedNodeIds) || deletedNodeIds.length === 0) {
+                return {
+                    ok: true,
+                    repairedParents: 0,
+                    deletedNodeIds: [],
+                };
+            }
+
+            const deletedSet = new Set(deletedNodeIds.filter(Boolean));
+
+            let repairedParents = 0;
+
+            const nodes = store.nodes;
+            const allNodes =
+                nodes instanceof Map
+                    ? Array.from(nodes.values())
+                    : Array.isArray(nodes)
+                        ? nodes
+                        : nodes && typeof nodes === "object"
+                            ? Object.values(nodes)
+                            : [];
+
+            for (const node of allNodes) {
+                if (!node || !Array.isArray(node.children)) {
+                    continue;
+                }
+
+                const beforeLength = node.children.length;
+                const nextChildren = node.children.filter(
+                    (childId) => !deletedSet.has(childId)
+                );
+
+                if (nextChildren.length !== beforeLength) {
+                    node.children = nextChildren;
+                    repairedParents += 1;
+                }
+            }
+
+            const currentLeafId =
+                typeof store.currentLeafId === "function"
+                    ? store.currentLeafId()
+                    : store.currentLeafId;
+
+            if (deletedSet.has(currentLeafId)) {
+                const fallbackLeaf =
+                    typeof store.getLeafFromNode === "function" && store.rootId
+                        ? this.withOriginalTopologyMethods?.(() =>
+                            store.getLeafFromNode(store.rootId)
+                        )
+                        : null;
+
+                if (
+                    fallbackLeaf?.id &&
+                    typeof store.setCurrentLeafId === "function"
+                ) {
+                    store.setCurrentLeafId(fallbackLeaf.id);
+                }
+            }
+
+            this.clearFullTopologyCaches?.("repair-deleted-node-references");
+
+            return {
+                ok: true,
+                repairedParents,
+                deletedNodeIds: Array.from(deletedSet),
+            };
+        },
+
+        withOriginalTopologyMethods(fn) {
+            const store = this.__store;
+
+            if (!store || typeof fn !== "function") {
+                return fn?.();
+            }
+
+            const restore = [];
+
+            const temporarilyRestore = (methodName, originalSlot) => {
+                const originalEntry = this[originalSlot];
+                const original =
+                    typeof originalEntry === "function"
+                        ? originalEntry
+                        : originalEntry?.[methodName];
+
+                if (typeof original !== "function") {
+                    return;
+                }
+
+                const current = store[methodName];
+
+                if (current === original) {
+                    return;
+                }
+
+                restore.push([methodName, current]);
+                store[methodName] = original;
+            };
+
+            temporarilyRestore("messageIdToExistingNodeId", "__messageIdIndexOriginal");
+            temporarilyRestore("getNodeIfExists", "__existingNodeStableCacheOriginal");
+            temporarilyRestore("getNodeByIdOrMessageId", "__getNodeByIdOrMessageIdCacheOriginal");
+            temporarilyRestore("findNodeFromLeaf", "__findNodeFromLeafFrameCacheOriginal");
+            temporarilyRestore("findNode", "__findNodePredicateCacheOriginal");
+            temporarilyRestore("getLeafFromNode", "__getLeafFromNodeFrameCacheOriginal");
+
+            // Branch wrappers should not be involved while topology is changing.
+            const branchOriginals = this.__branchCacheOriginals;
+            if (branchOriginals) {
+                for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
+                    const original = branchOriginals[methodName];
+
+                    if (typeof original === "function" && store[methodName] !== original) {
+                        restore.push([methodName, store[methodName]]);
+                        store[methodName] = original;
+                    }
+                }
+            }
+
+            try {
+                return fn();
+            } finally {
+                for (let i = restore.length - 1; i >= 0; i -= 1) {
+                    const [methodName, wrapped] = restore[i];
+                    store[methodName] = wrapped;
+                }
+            }
+        },
+
+        pruneReactMessageIds(messageIds, {
+            reason = "react-prune",
+        } = {}) {
+            const store = this.__store;
+
+            if (!store || typeof store.deleteNode !== "function") {
+                return {
+                    ok: false,
+                    reason: "store/deleteNode unavailable",
+                    deleted: [],
+                    failed: [],
+                };
+            }
+
+            const uniqueIds = Array.from(new Set(
+                Array.isArray(messageIds) ? messageIds.filter(Boolean) : []
+            ));
+
+            const result = {
+                ok: true,
+                reason,
+                requested: uniqueIds,
+                deleted: [],
+                failed: [],
+            };
+
+            this.beginStoreTopologyMutation?.("react-prune");
+
+            for (let i = uniqueIds.length - 1; i >= 0; i -= 1) {
+                const inputId = uniqueIds[i];
+
+                try {
+                    const node =
+                        this.__resolveNodeFast?.(inputId) ??
+                        getNodeDirect(store, inputId) ??
+                        store.getNodeIfExists?.(inputId) ??
+                        null;
+
+                    if (!node?.id) {
+                        result.failed.push({
+                            inputId,
+                            reason: "node not found",
+                        });
+                        continue;
+                    }
+
+                    const currentLeafId =
+                        typeof store.currentLeafId === "function"
+                            ? store.currentLeafId()
+                            : store.currentLeafId;
+
+                    if (node.id === currentLeafId) {
+                        result.failed.push({
+                            inputId,
+                            nodeId: node.id,
+                            reason: "refusing to delete current leaf",
+                        });
+                        continue;
+                    }
+
+                    this.clearCachesForDeletedNode?.(node, inputId);
+
+                    this.withOriginalTopologyMethods?.(() => {
+                        store.deleteNode(node.id);
+                    });
+
+                    // Important: purge before verification.
+                    // Otherwise wrapped getNodeIfExists can return the deleted node from cache.
+                    const purgeResult = this.clearCachesForDeletedNode?.(node, inputId);
+
+                    const stillExists = getNodeDirect(store, node.id) ?? null;
+
+                    if (stillExists?.id) {
+                        result.failed.push({
+                            inputId,
+                            nodeId: node.id,
+                            reason: "node still exists after delete",
+                        });
+                        continue;
+                    }
+
+                    result.deleted.push({
+                        inputId,
+                        nodeId: node.id,
+                        purgedCacheEntries: purgeResult?.deletedEntries ?? 0,
+                        purgedAliases: purgeResult?.aliases ?? [],
+                    });
+                } catch (error) {
+                    result.failed.push({
+                        inputId,
+                        reason: String(error?.message || error),
+                    });
+                }
+            }
+
+            result.deletedCount = result.deleted.length;
+            result.failedCount = result.failed.length;
+            result.ok = result.failed.length === 0;
+
+            const deletedNodeIds = result.deleted
+                .map((entry) => entry.nodeId)
+                .filter(Boolean);
+
+            if (deletedNodeIds.length > 0) {
+                result.repairResult =
+                    this.repairDeletedNodeReferences?.(deletedNodeIds) ?? null;
+
+                this.beginStoreTopologyMutation?.("react-prune-complete");
+            }
+
+            return result;
         },
 
         resolveNodeIdFromMessageId(id) {
@@ -4372,77 +4616,6 @@
             };
         },
 
-        installUpdateNodeMessageRafBatcher() {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__updateNodeMessageRafBatcherInstalled) {
-                return { ok: true, alreadyInstalled: true };
-            }
-
-            const original = getStoreMethod(store, "updateNodeMessage");
-            if (!original) return unavailable("updateNodeMessage unavailable");
-
-            const pending = new Map();
-            let rafId = 0;
-
-            const bridgeRef = this;
-
-            function flush() {
-                rafId = 0;
-
-                for (const [, args] of pending) {
-                    original.apply(store, args);
-                }
-
-                pending.clear();
-
-                // Do not call clearStoreReadCache here.
-                // updateNodeMessage changes message payload/content, not node topology.
-            }
-
-            store.updateNodeMessage = function rafBatchedUpdateNodeMessage(nodeId, ...rest) {
-                pending.set(nodeId, [nodeId, ...rest]);
-
-                if (!rafId) {
-                    rafId = requestAnimationFrame(flush);
-                }
-
-                return undefined;
-            };
-
-            this.__updateNodeMessageRafBatcherInstalled = true;
-            this.__updateNodeMessageRafBatcherOriginal = {
-                updateNodeMessage: original,
-            };
-            this.__updateNodeMessageRafBatcherPending = pending;
-
-            return {
-                ok: true,
-                installed: true,
-                methods: ["updateNodeMessage"],
-                mode: "raf-latest-per-node",
-            };
-        },
-
-        uninstallUpdateNodeMessageRafBatcher() {
-            if (!this.__updateNodeMessageRafBatcherInstalled) {
-                return { ok: true, alreadyUninstalled: true };
-            }
-
-            const original = this.__updateNodeMessageRafBatcherOriginal?.updateNodeMessage;
-
-            if (this.__store && typeof original === "function") {
-                this.__store.updateNodeMessage = original;
-            }
-
-            this.__updateNodeMessageRafBatcherInstalled = false;
-            this.__updateNodeMessageRafBatcherOriginal = null;
-            this.__updateNodeMessageRafBatcherPending = null;
-
-            return { ok: true, uninstalled: true };
-        },
-
         getNodeByIdOrMessageIdCallSiteStats() {
             const stats = this.__getNodeByIdOrMessageIdCallSites;
 
@@ -4495,7 +4668,7 @@
                 discoveryResult,
                 statusBefore: this.status(),
 
-                updateNodeMessageRafBatcher: this.installUpdateNodeMessageRafBatcher(),
+                //updateNodeMessageRafBatcher: this.installUpdateNodeMessageRafBatcher(),
                 indexRefreshHooks: [
                     this.wrapMutationForIndexRefresh("addMessageNode"),
                     this.wrapMutationForIndexRefresh("addOptimisticMessageNode"),
@@ -4576,7 +4749,6 @@
                 ...runStoreEnhancementUninstalls(this),
 
                 indexRefreshHooks: this.uninstallIndexRefreshHooks?.(),
-                updateNodeMessageRafBatcher: this.uninstallUpdateNodeMessageRafBatcher?.(),
             };
 
             if (debug) {
@@ -4800,8 +4972,11 @@
                     const getBranchFromLeafSize =
                         this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
-                    this.__branchCache?.getBranch?.clear?.();
-                    this.__branchCache?.getBranchFromLeaf?.clear?.();
+                    if (this.__branchCache instanceof Map) {
+                        for (const cache of this.__branchCache.values()) {
+                            cache?.clear?.();
+                        }
+                    }
 
                     recordInvalidation("__branchCache.getBranch", "cleared", getBranchSize);
                     recordInvalidation(
@@ -4874,6 +5049,153 @@
                 getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
+            };
+        },
+
+        beginStoreTopologyMutation(reason = "topology-mutation") {
+            this.__storeReadEpoch = (this.__storeReadEpoch || 0) + 1;
+
+            this.__liveNodeCacheDirty = true;
+            this.__liveNodeCacheId = null;
+            this.__liveNodeCacheValue = null;
+
+            this.__lastLiveFindLeafId = null;
+            this.__lastLiveFindPredicateSource = null;
+            this.__lastLiveFindValue = null;
+
+            return {
+                ok: true,
+                reason,
+                epoch: this.__storeReadEpoch,
+            };
+        },
+
+        clearFullTopologyCaches(reason = "conversation-change") {
+            this.__storeReadEpoch = (this.__storeReadEpoch || 0) + 1;
+
+            this.__nodeObjectCacheApi?.clear?.(reason);
+            this.__existingNodeStableCacheApi?.clear?.(reason);
+
+            this.__messageIdIndex?.clear?.();
+            this.__getNodeByIdOrMessageIdCache?.clear?.();
+            this.__resolvedNodeFrameCache?.clear?.();
+
+            this.__findNodeFromLeafFrameCache?.clear?.();
+            this.__findNodeFromLeafAncestorChainCache?.clear?.();
+            this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
+            this.__findNodePredicateCache?.clear?.();
+
+            this.__getLeafFromNodeFrameCache?.clear?.();
+            this.__leafDescendantCache?.clear?.();
+            this.__leafDescendantMissCache?.clear?.();
+
+            this.clearBranchCache?.();
+
+            this.__nodeIdDirectIndex = null;
+            this.__nodeIdDirectIndexSource = null;
+            this.__confirmedExistingNodeIds = null;
+
+            this.__liveNodeCacheDirty = true;
+            this.__liveNodeCacheId = null;
+            this.__liveNodeCacheValue = null;
+
+            this.__lastLiveFindLeafId = null;
+            this.__lastLiveFindPredicateSource = null;
+            this.__lastLiveFindValue = null;
+
+            return {
+                ok: true,
+                reason,
+                epoch: this.__storeReadEpoch,
+            };
+        },
+
+        clearCachesForDeletedNode(node, inputId = null) {
+            if (!node?.id) {
+                return { ok: false, reason: "node missing" };
+            }
+
+            const nodeId = node.id;
+            const parentId = node.parentId ?? null;
+            const childIds = Array.isArray(node.children)
+                ? node.children.filter(Boolean)
+                : [];
+
+            const messageId =
+                node.message?.id ||
+                node.message?.message_id ||
+                node.message?.metadata?.message_id ||
+                null;
+
+            const aliases = Array.from(
+                new Set([inputId, nodeId, messageId].filter(Boolean))
+            );
+
+            let deletedEntries = 0;
+
+            const deleteAliasesFromMap = (map) => {
+                if (!(map instanceof Map)) return 0;
+
+                let count = 0;
+
+                for (const alias of aliases) {
+                    if (map.delete(alias)) count += 1;
+                }
+
+                return count;
+            };
+
+            deletedEntries += deleteAliasesFromMap(this.__nodeObjectCache);
+            deletedEntries += deleteAliasesFromMap(this.__nodeIdDirectIndex);
+            deletedEntries += deleteAliasesFromMap(this.__messageIdIndex);
+            deletedEntries += deleteAliasesFromMap(this.__existingNodeStableCache);
+            deletedEntries += deleteAliasesFromMap(this.__getNodeByIdOrMessageIdCache);
+            deletedEntries += deleteAliasesFromMap(this.__resolvedNodeFrameCache);
+
+            // Branch cache:
+            // getBranch is current-leaf derived, so any topology mutation invalidates it.
+            // getBranchFromLeaf(parent/children/descendants) can all change because
+            // deleteNode splices children into the parent. Targeted is possible, but
+            // cheap/safe option is clearing this branch-path cache.
+            this.clearBranchCache?.();
+
+            // Leaf caches are path/topology dependent. Clear whole.
+            this.__getLeafFromNodeFrameCache?.clear?.();
+            this.__leafDescendantCache?.clear?.();
+            this.__leafDescendantMissCache?.clear?.();
+
+            // findNodeFromLeaf caches predicate results along parent chains.
+            // A deleted node can invalidate any cached chain crossing that node.
+            this.__findNodeFromLeafFrameCache?.clear?.();
+            this.__findNodeFromLeafAncestorChainCache?.clear?.();
+            this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
+
+            // Predicate cache may hold the deleted node as a result.
+            this.__findNodePredicateCache?.delete?.(nodeId);
+            for (const alias of aliases) {
+                this.__findNodePredicateCache?.delete?.(alias);
+            }
+
+            this.__liveNodeCacheDirty = true;
+
+            if (this.__liveNodeCacheId === nodeId || aliases.includes(this.__liveNodeCacheId)) {
+                this.__liveNodeCacheId = null;
+                this.__liveNodeCacheValue = null;
+            }
+
+            if (this.__lastLiveFindValue?.id === nodeId) {
+                this.__lastLiveFindLeafId = null;
+                this.__lastLiveFindPredicateSource = null;
+                this.__lastLiveFindValue = null;
+            }
+
+            return {
+                ok: true,
+                nodeId,
+                parentId,
+                childIds,
+                aliases,
+                deletedEntries,
             };
         },
 
@@ -5001,20 +5323,32 @@
                 };
             }
 
-            case "thread-optimizer:record-pruned-message-id": {
-                const messageId = normalizeBridgeMessageId(data.messageId);
+            case "thread-optimizer:prune-react-message-ids": {
+                const rawIds = Array.isArray(data.messageIds) ? data.messageIds : [];
 
-                if (!messageId) {
+                const messageIds = Array.from(
+                    new Set(
+                        rawIds
+                            .map(normalizeBridgeMessageId)
+                            .filter(Boolean)
+                    )
+                );
+
+                if (messageIds.length === 0) {
                     return {
                         ok: false,
-                        reason: "invalid message id",
+                        reason: "no valid message ids",
                     };
                 }
 
                 return {
                     ok: true,
                     value: {
-                        messageId,
+                        messageIds,
+                        reason:
+                            typeof data.reason === "string"
+                                ? data.reason.slice(0, 100)
+                                : "react-prune",
                     },
                 };
             }
@@ -5080,8 +5414,15 @@
                 return;
             }
 
-            // No-op for now
-            if (data.type === "thread-optimizer:record-pruned-message-id") {
+            if (data.type === "thread-optimizer:prune-react-message-ids") {
+                const result = bridge.pruneReactMessageIds(payload.messageIds, {
+                    reason: payload.reason,
+                });
+
+                if (!result.ok) {
+                    console.debug("[thread-optimizer bridge] React prune had failures", result);
+                }
+
                 return;
             }
 

@@ -103,6 +103,13 @@ function tryScheduleTopRestore({
             debugLog("Sentinels: restored one exchange from top edge intent");
         } finally {
             state.isTopRestoreScheduled = false;
+
+            if (
+                state.isTopRestoreSentinelVisible &&
+                state.softPrunedSections.length > 0
+            ) {
+                state.isTopRestoreArmed = true;
+            }
         }
     }, 0);
 }
@@ -139,6 +146,13 @@ function tryScheduleBottomPrune({
             debugLog("Sentinels: repruned one exchange from bottom edge intent");
         } finally {
             state.isBottomPruneScheduled = false;
+
+            if (
+                state.isBottomPruneSentinelVisible &&
+                hasProtectedVisibleSections()
+            ) {
+                state.isBottomPruneArmed = true;
+            }
         }
     }, 0);
 }

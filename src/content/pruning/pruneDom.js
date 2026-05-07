@@ -76,35 +76,6 @@ function applySoftPrunePlan(plan) {
     return true;
 }
 
-function getHardEvictPlan(section) {
-    if (!(section instanceof HTMLElement)) {
-        return null;
-    }
-
-    return {
-        section,
-        turnRoot: getTurnRoot(section),
-        codeBlocks: getSectionCodeBlocks(section),
-    };
-}
-
-/**
- * Hard eviction permanently discards old sections beyond the recoverable
- * soft-prune buffer.
- */
-function applyHardEvictPlan(plan) {
-    if (!plan) {
-        return false;
-    }
-
-    const { section, turnRoot, codeBlocks } = plan;
-
-    detachTurnRoot(turnRoot);
-    destroySectionForGc(section, { codeBlocks });
-
-    return true;
-}
-
 /**
  * Clears references, observers, optimizer attributes, and child DOM so an
  * evicted section can be garbage-collected.
@@ -232,30 +203,4 @@ export function restoreSoftPrunedSections(
     }
 
     return restoredCount;
-}
-
-export function hardEvictSection(section) {
-    return applyHardEvictPlan(getHardEvictPlan(section));
-}
-
-export function hardEvictSections(sections) {
-    const plans = [];
-
-    for (let i = 0; i < sections.length; i += 1) {
-        const plan = getHardEvictPlan(sections[i]);
-
-        if (plan) {
-            plans.push(plan);
-        }
-    }
-
-    let evictedCount = 0;
-
-    for (let i = 0; i < plans.length; i += 1) {
-        if (applyHardEvictPlan(plans[i])) {
-            evictedCount += 1;
-        }
-    }
-
-    return evictedCount;
 }

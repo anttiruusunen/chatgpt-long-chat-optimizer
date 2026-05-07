@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { state, DEFAULT_SETTINGS } from "../../src/content/core/state.js";
-import { ext } from "../../src/shared/ext.js";
+import { silenceConsole } from "../utils/console.js";
+import {
+    createRuntimeMessageHandlers,
+    createFeatureFlagSyncMock,
+} from "../utils/runtimeMessages.js";
+import { resetCoreStateForTests } from "../utils/state.js";
 
 const mockRefs = vi.hoisted(() => ({
     runtimeListener: null,
@@ -35,6 +39,17 @@ async function importFreshModules() {
     };
 }
 
+function setupRuntimeHandlers(messagesModule, overrides = {}) {
+    const handlers = createRuntimeMessageHandlers(overrides);
+
+    messagesModule.registerRuntimeMessageHandlers(handlers);
+
+    return {
+        handlers,
+        listener: mockRefs.runtimeListener,
+    };
+}
+
 describe("core/messages", () => {
     beforeEach(async () => {
         mockRefs.runtimeListener = null;
@@ -43,48 +58,17 @@ describe("core/messages", () => {
         const { stateModule } = await importFreshModules();
         const { state, DEFAULT_SETTINGS } = stateModule;
 
-        state.hiddenCount = 0;
-        state.didInitialPrune = false;
-        state.debugLoggingEnabled = false;
-        state.replyTiming.pending = false;
-        state.replyTiming.lastDurationMs = 0;
-        state.featureFlags.pruning = DEFAULT_SETTINGS.enablePruning;
-        state.featureFlags.offscreenOptimization = DEFAULT_SETTINGS.enableOffscreenOptimization;
-        state.featureFlags.largeCodeBlockOptimization = DEFAULT_SETTINGS.enableLargeCodeBlockOptimization;
-
-        state.settings = {
-            ...DEFAULT_SETTINGS,
-        };
+        resetCoreStateForTests(state, DEFAULT_SETTINGS);
     });
 
     it("handles prune-now and updates historyKeptExchanges", async () => {
         const { stateModule, messagesModule } = await importFreshModules();
         const { state } = stateModule;
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
-        const pruneOldSections = vi.fn();
-        const restoreAllSections = vi.fn();
-        const scheduleAutoPrune = vi.fn();
-        const waitForContainerAndInitialPrune = vi.fn();
-        const refreshObservedSections = vi.fn();
-        const applySoftPrunedLimitToCurrentState = vi.fn();
-        const setOffscreenOptimizationEnabled = vi.fn();
-        const syncFeatureFlagsFromSettings = vi.fn();
-
-        registerRuntimeMessageHandlers({
-            pruneOldSections,
-            restoreAllSections,
-            scheduleAutoPrune,
-            waitForContainerAndInitialPrune,
-            refreshObservedSections,
-            applySoftPrunedLimitToCurrentState,
-            setOffscreenOptimizationEnabled,
-            syncFeatureFlagsFromSettings,
-        });
-
+        const { handlers, listener } = setupRuntimeHandlers(messagesModule);
         const sendResponse = vi.fn();
 
-        const returned = mockRefs.runtimeListener(
+        const returned = listener(
             {
                 action: "prune-now",
                 historyKeptExchanges: 4,
@@ -96,82 +80,45 @@ describe("core/messages", () => {
         expect(returned).toBe(true);
         expect(state.settings.historyKeptExchanges).toBe(4);
         expect(state.didInitialPrune).toBe(true);
-        expect(pruneOldSections).toHaveBeenCalledWith(4, { showPlaceholder: true });
+        expect(handlers.pruneOldSections).toHaveBeenCalledWith(4, {
+            showPlaceholder: true,
+        });
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
     it("handles restore-all", async () => {
         const { messagesModule } = await importFreshModules();
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
-        const pruneOldSections = vi.fn();
-        const restoreAllSections = vi.fn();
-        const scheduleAutoPrune = vi.fn();
-        const waitForContainerAndInitialPrune = vi.fn();
-        const refreshObservedSections = vi.fn();
-        const applySoftPrunedLimitToCurrentState = vi.fn();
-        const setOffscreenOptimizationEnabled = vi.fn();
-        const syncFeatureFlagsFromSettings = vi.fn();
-
-        registerRuntimeMessageHandlers({
-            pruneOldSections,
-            restoreAllSections,
-            scheduleAutoPrune,
-            waitForContainerAndInitialPrune,
-            refreshObservedSections,
-            applySoftPrunedLimitToCurrentState,
-            setOffscreenOptimizationEnabled,
-            syncFeatureFlagsFromSettings,
-        });
-
+        const { handlers, listener } = setupRuntimeHandlers(messagesModule);
         const sendResponse = vi.fn();
 
-        const returned = mockRefs.runtimeListener(
+        const returned = listener(
             { action: "restore-all" },
             {},
             sendResponse
         );
 
         expect(returned).toBe(true);
-        expect(restoreAllSections).toHaveBeenCalledTimes(1);
+        expect(handlers.restoreAllSections).toHaveBeenCalledTimes(1);
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
     it("handles settings-updated and refreshes the active feature paths", async () => {
         const { stateModule, messagesModule } = await importFreshModules();
         const { state } = stateModule;
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
         state.didInitialPrune = true;
         state.featureFlags.offscreenOptimization = false;
 
-        const pruneOldSections = vi.fn();
-        const restoreAllSections = vi.fn();
-        const scheduleAutoPrune = vi.fn();
-        const waitForContainerAndInitialPrune = vi.fn();
-        const refreshObservedSections = vi.fn();
-        const applySoftPrunedLimitToCurrentState = vi.fn();
-        const setOffscreenOptimizationEnabled = vi.fn();
-        const syncFeatureFlagsFromSettings = vi.fn(() => {
-            state.featureFlags.pruning = Boolean(state.settings.enablePruning);
-            state.featureFlags.offscreenOptimization = Boolean(state.settings.enableOffscreenOptimization);
-            state.featureFlags.largeCodeBlockOptimization = Boolean(state.settings.enableLargeCodeBlockOptimization);
-        });
+        const syncFeatureFlagsFromSettings = createFeatureFlagSyncMock(state);
 
-        registerRuntimeMessageHandlers({
-            pruneOldSections,
-            restoreAllSections,
-            scheduleAutoPrune,
-            waitForContainerAndInitialPrune,
-            refreshObservedSections,
-            applySoftPrunedLimitToCurrentState,
-            setOffscreenOptimizationEnabled,
+        const { handlers, listener } = setupRuntimeHandlers(messagesModule, {
             syncFeatureFlagsFromSettings,
         });
 
         const sendResponse = vi.fn();
 
-        const returned = mockRefs.runtimeListener(
+        const returned = listener(
             {
                 action: "settings-updated",
                 historyKeptExchanges: 6,
@@ -195,12 +142,12 @@ describe("core/messages", () => {
         expect(state.settings.enableDebugLogging).toBe(true);
         expect(state.debugLoggingEnabled).toBe(true);
 
-        expect(syncFeatureFlagsFromSettings).toHaveBeenCalledTimes(1);
-        expect(applySoftPrunedLimitToCurrentState).toHaveBeenCalledTimes(1);
-        expect(setOffscreenOptimizationEnabled).toHaveBeenCalledWith(true);
-        expect(scheduleAutoPrune).toHaveBeenCalledTimes(1);
-        expect(refreshObservedSections).not.toHaveBeenCalled();
-        expect(waitForContainerAndInitialPrune).not.toHaveBeenCalled();
+        expect(handlers.syncFeatureFlagsFromSettings).toHaveBeenCalledTimes(1);
+        expect(handlers.applySoftPrunedLimitToCurrentState).toHaveBeenCalledTimes(1);
+        expect(handlers.setOffscreenOptimizationEnabled).toHaveBeenCalledWith(true);
+        expect(handlers.scheduleAutoPrune).toHaveBeenCalledTimes(1);
+        expect(handlers.refreshObservedSections).not.toHaveBeenCalled();
+        expect(handlers.waitForContainerAndInitialPrune).not.toHaveBeenCalled();
 
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
@@ -208,27 +155,16 @@ describe("core/messages", () => {
     it("returns current popup state", async () => {
         const { stateModule, messagesModule } = await importFreshModules();
         const { state } = stateModule;
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
         state.hiddenCount = 7;
         state.replyTiming.pending = true;
         state.replyTiming.lastDurationMs = 987;
         state.debugLoggingEnabled = true;
 
-        registerRuntimeMessageHandlers({
-            pruneOldSections: vi.fn(),
-            restoreAllSections: vi.fn(),
-            scheduleAutoPrune: vi.fn(),
-            waitForContainerAndInitialPrune: vi.fn(),
-            refreshObservedSections: vi.fn(),
-            applySoftPrunedLimitToCurrentState: vi.fn(),
-            setOffscreenOptimizationEnabled: vi.fn(),
-            syncFeatureFlagsFromSettings: vi.fn(),
-        });
-
+        const { listener } = setupRuntimeHandlers(messagesModule);
         const sendResponse = vi.fn();
 
-        const returned = mockRefs.runtimeListener(
+        const returned = listener(
             { action: "get-popup-state" },
             {},
             sendResponse
@@ -247,22 +183,11 @@ describe("core/messages", () => {
 
     it("returns an unknown-action error for unsupported actions", async () => {
         const { messagesModule } = await importFreshModules();
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
-        registerRuntimeMessageHandlers({
-            pruneOldSections: vi.fn(),
-            restoreAllSections: vi.fn(),
-            scheduleAutoPrune: vi.fn(),
-            waitForContainerAndInitialPrune: vi.fn(),
-            refreshObservedSections: vi.fn(),
-            applySoftPrunedLimitToCurrentState: vi.fn(),
-            setOffscreenOptimizationEnabled: vi.fn(),
-            syncFeatureFlagsFromSettings: vi.fn(),
-        });
-
+        const { listener } = setupRuntimeHandlers(messagesModule);
         const sendResponse = vi.fn();
 
-        const returned = mockRefs.runtimeListener(
+        const returned = listener(
             { action: "not-a-real-action" },
             {},
             sendResponse
@@ -276,28 +201,21 @@ describe("core/messages", () => {
     });
 
     it("catches thrown errors and returns them in the response", async () => {
-        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const restoreConsole = silenceConsole(["error"]);
+        const errorSpy = console.error;
 
         try {
             const { messagesModule } = await importFreshModules();
-            const { registerRuntimeMessageHandlers } = messagesModule;
 
-            registerRuntimeMessageHandlers({
+            const { listener } = setupRuntimeHandlers(messagesModule, {
                 pruneOldSections: vi.fn(() => {
                     throw new Error("boom");
                 }),
-                restoreAllSections: vi.fn(),
-                scheduleAutoPrune: vi.fn(),
-                waitForContainerAndInitialPrune: vi.fn(),
-                refreshObservedSections: vi.fn(),
-                applySoftPrunedLimitToCurrentState: vi.fn(),
-                setOffscreenOptimizationEnabled: vi.fn(),
-                syncFeatureFlagsFromSettings: vi.fn(),
             });
 
             const sendResponse = vi.fn();
 
-            const returned = mockRefs.runtimeListener(
+            const returned = listener(
                 {
                     action: "prune-now",
                     historyKeptExchanges: 3,
@@ -313,14 +231,13 @@ describe("core/messages", () => {
             });
             expect(errorSpy).toHaveBeenCalled();
         } finally {
-            errorSpy.mockRestore();
+            restoreConsole();
         }
     });
 
     it("settings-updated preserves existing settings when optional keys are omitted", async () => {
         const { stateModule, messagesModule } = await importFreshModules();
         const { state, DEFAULT_SETTINGS } = stateModule;
-        const { registerRuntimeMessageHandlers } = messagesModule;
 
         state.settings = {
             ...DEFAULT_SETTINGS,
@@ -346,40 +263,10 @@ describe("core/messages", () => {
             codeBlockCollapse: true,
         };
 
-        const syncFeatureFlagsFromSettings = vi.fn(() => {
-            state.featureFlags.pruning = Boolean(state.settings.enablePruning);
-            state.featureFlags.offscreenOptimization = Boolean(
-                state.settings.enableOffscreenOptimization
-            );
-            state.featureFlags.largeCodeBlockOptimization = Boolean(
-                state.settings.enableLargeCodeBlockOptimization
-            );
-            state.featureFlags.storeReadOptimization = Boolean(
-                state.settings.enableStoreReadOptimization
-            );
-            state.featureFlags.codeBlockScrollbars = Boolean(
-                state.settings.enableCodeBlockScrollbars
-            );
-            state.featureFlags.userMessageClamp = Boolean(
-                state.settings.enableUserMessageClamp
-            );
-            state.featureFlags.codeBlockCollapse = Boolean(
-                state.settings.enableCodeBlockCollapse
-            );
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
         });
 
-        registerRuntimeMessageHandlers({
-            pruneOldSections: vi.fn(),
-            restoreAllSections: vi.fn(),
-            scheduleAutoPrune: vi.fn(),
-            waitForContainerAndInitialPrune: vi.fn(),
-            refreshObservedSections: vi.fn(),
-            applySoftPrunedLimitToCurrentState: vi.fn(),
-            setOffscreenOptimizationEnabled: vi.fn(),
-            syncFeatureFlagsFromSettings,
-        });
-
-        const listener = mockRefs.runtimeListener;
         expect(listener).toBeDefined();
 
         const sendResponse = vi.fn();

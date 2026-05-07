@@ -14,10 +14,13 @@ import {
     runInitialPrune,
 } from "../../src/content/pruning/prune.js";
 
+const BRIDGE_TOKEN = "0123456789abcdef0123456789abcdef";
+
 function makeSection({
     text = "",
     turn = null,
     testId = null,
+    messageId = null,
 } = {}) {
     const section = document.createElement("section");
     section.textContent = text;
@@ -28,6 +31,10 @@ function makeSection({
 
     if (testId != null) {
         section.setAttribute("data-testid", testId);
+    }
+
+    if (messageId != null) {
+        section.setAttribute("data-message-id", messageId);
     }
 
     return section;
@@ -49,15 +56,20 @@ function buildConversation(exchangeCount = 6) {
     const sections = [];
 
     for (let i = 0; i < exchangeCount; i += 1) {
+        const userIndex = i * 2 + 1;
+        const assistantIndex = i * 2 + 2;
+
         const user = makeSection({
             turn: "user",
-            testId: `conversation-turn-${i * 2 + 1}`,
+            testId: `conversation-turn-${userIndex}`,
+            messageId: `msg-${userIndex}`,
             text: `User ${i + 1}`,
         });
 
         const assistant = makeSection({
             turn: "assistant",
-            testId: `conversation-turn-${i * 2 + 2}`,
+            testId: `conversation-turn-${assistantIndex}`,
+            messageId: `msg-${assistantIndex}`,
             text: `Assistant ${i + 1}`,
         });
 
@@ -88,6 +100,34 @@ function resetState() {
     state.featureFlags.pruning = true;
 }
 
+function installReactPruneBridgeMock() {
+    window.THREAD_OPTIMIZER_BRIDGE_TOKEN = BRIDGE_TOKEN;
+
+    return vi.spyOn(window, "postMessage").mockImplementation((message) => {
+        if (
+            message?.source !== "thread-optimizer" ||
+            message?.token !== BRIDGE_TOKEN ||
+            message?.type !== "thread-optimizer:prune-react-message-ids"
+        ) {
+            return;
+        }
+
+        for (const messageId of message.messageIds || []) {
+            const sections = Array.from(
+                document.querySelectorAll("section[data-message-id]")
+            );
+
+            const section = sections.find(
+                (candidate) => candidate.getAttribute("data-message-id") === messageId
+            );
+
+            section?.remove();
+        }
+
+        invalidateConversationDomCache();
+    });
+}
+
 function guardedDomWrite(fn) {
     invalidateConversationDomCache();
 
@@ -107,12 +147,16 @@ function makeDeps() {
 }
 
 beforeEach(() => {
+    vi.restoreAllMocks();
     resetConversationDomCacheForTests();
     document.body.innerHTML = "";
     resetState();
+    installReactPruneBridgeMock();
 });
 
 afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
     resetConversationDomCacheForTests();
 });
@@ -129,8 +173,7 @@ describe("prune bookkeeping", () => {
         expect(state.softPrunedSections.length).toBe(2);
         expect(state.hardEvictedCount).toBe(8);
 
-        const visibleSections = document.querySelectorAll("section[data-turn]");
-        expect(visibleSections.length).toBe(2);
+        expect(document.querySelectorAll("section[data-turn]").length).toBe(2);
     });
 
     it("placeholder label matches hidden message count", () => {
@@ -160,8 +203,9 @@ describe("prune bookkeeping", () => {
         expect(state.softPrunedSections.length).toBe(beforeSoftPruned - 2);
         expect(state.hiddenCount).toBe(beforeHidden - 2);
 
-        const afterVisible = document.querySelectorAll("section[data-turn]").length;
-        expect(afterVisible).toBe(beforeVisible + 2);
+        expect(document.querySelectorAll("section[data-turn]").length).toBe(
+            beforeVisible + 2
+        );
     });
 
     it("reprune one restored protected exchange moves it back into soft-pruned", () => {
@@ -189,8 +233,7 @@ describe("prune bookkeeping", () => {
         expect(state.softPrunedSections.length).toBe(afterRestoreSoftPruned + 2);
         expect(state.hiddenCount).toBe(afterRestoreHidden + 2);
 
-        const remainingVisible = document.querySelectorAll("section[data-turn]").length;
-        expect(remainingVisible).toBe(2);
+        expect(document.querySelectorAll("section[data-turn]").length).toBe(2);
     });
 
     it("keeps cached conversation sections accurate across prune, restore, and reprune", () => {
@@ -213,7 +256,7 @@ describe("prune bookkeeping", () => {
         expect(getConversationSections().length).toBe(2);
     });
 
-    it("enforces soft-pruned limit by hard-evicting overflow", () => {
+    it("enforces soft-pruned limit by React-pruning overflow", () => {
         buildConversation(8);
 
         pruneOldSections(4, { showPlaceholder: true }, makeDeps());
@@ -225,12 +268,12 @@ describe("prune bookkeeping", () => {
 
         expect(state.softPrunedSections.length).toBeLessThan(beforeSoftPruned);
         expect(state.hardEvictedCount).toBeGreaterThan(0);
-        expect(
-            state.totalHiddenCount
-        ).toBe(state.softPrunedSections.length + state.hardEvictedCount);
+        expect(state.totalHiddenCount).toBe(
+            state.softPrunedSections.length + state.hardEvictedCount
+        );
     });
 
-    it("restoreAllSections restores recoverable sections and preserves hard-evicted count", () => {
+    it("restoreAllSections restores recoverable sections and preserves React-pruned count", () => {
         buildConversation(8);
 
         pruneOldSections(4, { showPlaceholder: true }, makeDeps());
@@ -245,11 +288,6 @@ describe("prune bookkeeping", () => {
         expect(state.softPrunedSections.length).toBe(0);
         expect(state.hardEvictedCount).toBe(hardEvictedBeforeRestore);
         expect(state.hiddenCount).toBe(hardEvictedBeforeRestore);
-
-        const placeholder = getPlaceholder();
-        if (hardEvictedBeforeRestore === 0) {
-            expect(placeholder).toBeNull();
-        }
     });
 
     it("does not reprune when there is no restored protected exchange", () => {
@@ -300,9 +338,7 @@ describe("prune bookkeeping", () => {
         expect(conversation.contains(placeholder)).toBe(true);
         expect(placeholder.hidden).toBe(false);
 
-        expect(
-            Array.from(conversation.children).indexOf(placeholder)
-        ).toBeLessThan(
+        expect(Array.from(conversation.children).indexOf(placeholder)).toBeLessThan(
             Array.from(conversation.children).indexOf(firstVisibleAfterRestore)
         );
     });
@@ -329,9 +365,7 @@ describe("prune bookkeeping", () => {
         expect(conversation.contains(placeholder)).toBe(true);
         expect(placeholder.hidden).toBe(false);
 
-        expect(
-            Array.from(conversation.children).indexOf(placeholder)
-        ).toBeLessThan(
+        expect(Array.from(conversation.children).indexOf(placeholder)).toBeLessThan(
             Array.from(conversation.children).indexOf(firstVisibleSection)
         );
     });
@@ -353,10 +387,15 @@ describe("prune bookkeeping", () => {
     it("does not prune the latest incomplete assistant section during initial/reload pruning", () => {
         const { conversation } = buildConversation(6);
 
-        const incomplete = document.createElement("section");
-        incomplete.setAttribute("data-turn", "assistant");
-        incomplete.textContent = "partial streamed reply";
+        const incomplete = makeSection({
+            turn: "assistant",
+            testId: "conversation-turn-streaming",
+            messageId: "msg-streaming",
+            text: "partial streamed reply",
+        });
+
         conversation.appendChild(incomplete);
+        resetConversationDomCacheForTests();
 
         pruneOldSections(1, { showPlaceholder: true }, makeDeps());
 
@@ -380,6 +419,7 @@ describe("prune bookkeeping", () => {
             const incomplete = makeSection({
                 turn: "assistant",
                 testId: "conversation-turn-streaming",
+                messageId: "msg-streaming",
                 text: "partial streamed reply",
             });
 
@@ -389,8 +429,8 @@ describe("prune bookkeeping", () => {
             runInitialPrune(
                 conversation,
                 {
-                    pruneOldSections: (sectionsToKeep, options) =>
-                        pruneOldSections(sectionsToKeep, options, makeDeps()),
+                    pruneOldSections: (historyKeptExchanges, options) =>
+                        pruneOldSections(historyKeptExchanges, options, makeDeps()),
                     refreshObservedSections: vi.fn(),
                     installStartupPruneMask: vi.fn(),
                     removeStartupPruneMask: vi.fn(),
@@ -416,6 +456,7 @@ describe("prune bookkeeping", () => {
         const olderIncomplete = makeSection({
             turn: "assistant",
             testId: "conversation-turn-older-incomplete",
+            messageId: "msg-older-incomplete",
             text: "older partial-looking assistant",
         });
 
@@ -458,6 +499,7 @@ describe("prune bookkeeping", () => {
             const pendingUser = makeSection({
                 turn: "user",
                 testId: "conversation-turn-pending-user",
+                messageId: "msg-pending-user",
                 text: "latest user message without assistant yet",
             });
 
@@ -492,5 +534,55 @@ describe("prune bookkeeping", () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it("preserves the latest real exchange when an input-too-large error section appears before it", () => {
+        const { conversation } = buildConversation(6);
+
+        const inputTooLargeUser = makeSection({
+            turn: "user",
+            testId: "conversation-turn-input-too-large-user",
+            messageId: "msg-input-too-large-user",
+            text: "huge prompt that failed",
+        });
+
+        const inputTooLargeError = makeSection({
+            turn: "assistant",
+            testId: "conversation-turn-input-too-large-error",
+            messageId: "msg-input-too-large-error",
+            text: "Input too large",
+        });
+
+        inputTooLargeError.setAttribute("role", "alert");
+
+        const latestUser = makeSection({
+            turn: "user",
+            testId: "conversation-turn-latest-user",
+            messageId: "msg-latest-user",
+            text: "next valid message",
+        });
+
+        const latestAssistant = makeSection({
+            turn: "assistant",
+            testId: "conversation-turn-latest-assistant",
+            messageId: "msg-latest-assistant",
+            text: "next valid assistant response",
+        });
+
+        conversation.append(
+            inputTooLargeUser,
+            inputTooLargeError,
+            latestUser,
+            latestAssistant
+        );
+
+        resetConversationDomCacheForTests();
+
+        pruneOldSections(1, { showPlaceholder: true }, makeDeps());
+
+        expect(latestUser.isConnected).toBe(true);
+        expect(latestAssistant.isConnected).toBe(true);
+        expect(getConversationSections()).toContain(latestUser);
+        expect(getConversationSections()).toContain(latestAssistant);
     });
 });

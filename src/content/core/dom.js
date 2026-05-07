@@ -7,6 +7,7 @@ import {
 const STRUCTURAL_STOP_TAGS = new Set(["MAIN", "BODY", "HTML"]);
 
 let domCacheVersion = 0;
+let scrollContainerCacheVersion = 0;
 
 let cachedContainer = null;
 let cachedContainerVersion = -1;
@@ -19,6 +20,16 @@ let cachedScrollContainerVersion = -1;
 
 const mountNodeCache = new WeakMap();
 
+/**
+ * Invalidates structural DOM caches related to:
+ * - conversation container
+ * - conversation sections
+ *
+ * NOTE:
+ * This intentionally does NOT invalidate the scroll container cache.
+ * Scroll container discovery is expensive (getComputedStyle walk),
+ * so it has its own lifecycle and should only be invalidated when needed.
+ */
 export function invalidateConversationDomCache() {
     domCacheVersion += 1;
 
@@ -27,6 +38,16 @@ export function invalidateConversationDomCache() {
 
     cachedSections = null;
     cachedSectionsVersion = -1;
+}
+
+/**
+ * Explicitly invalidates the scroll container cache.
+ *
+ * This should only be called when layout structure changes in a way that
+ * could affect scrollability (e.g. major layout swaps, navigation).
+ */
+export function invalidateConversationScrollContainerCache() {
+    scrollContainerCacheVersion += 1;
 
     cachedScrollContainer = null;
     cachedScrollContainerVersion = -1;
@@ -135,9 +156,7 @@ export function getConversationSectionMountNode(section) {
     while (current.parentElement instanceof HTMLElement) {
         const parent = current.parentElement;
 
-        if (STRUCTURAL_STOP_TAGS.has(parent.tagName)) {
-            break;
-        }
+        if (STRUCTURAL_STOP_TAGS.has(parent.tagName)) break;
 
         if (
             parent.hasAttribute(PLACEHOLDER_ATTR) ||
@@ -147,13 +166,8 @@ export function getConversationSectionMountNode(section) {
             break;
         }
 
-        if (!hasOnlyCurrentAsElementChild(parent, current)) {
-            break;
-        }
-
-        if (countConversationSectionsWithin(parent) !== 1) {
-            break;
-        }
+        if (!hasOnlyCurrentAsElementChild(parent, current)) break;
+        if (countConversationSectionsWithin(parent) !== 1) break;
 
         const grandparent = parent.parentElement;
         if (grandparent && STRUCTURAL_STOP_TAGS.has(grandparent.tagName)) {
@@ -269,10 +283,15 @@ export function getLatestAssistantSection() {
  *
  * Falls back to the document scroller because ChatGPT's scroll container can
  * change between layouts, logged-out states, and test fixtures.
+ *
+ * IMPORTANT:
+ * This cache is independent from DOM mutation invalidation.
+ * We avoid clearing it during normal DOM writes to prevent repeated
+ * getComputedStyle() walks causing layout thrash.
  */
 export function getConversationScrollContainer() {
     if (
-        cachedScrollContainerVersion === domCacheVersion &&
+        cachedScrollContainerVersion === scrollContainerCacheVersion &&
         cachedScrollContainer instanceof Element &&
         cachedScrollContainer.isConnected
     ) {
@@ -285,7 +304,7 @@ export function getConversationScrollContainer() {
     const container = getConversationContainer();
     if (!container) {
         cachedScrollContainer = fallbackScrollContainer;
-        cachedScrollContainerVersion = domCacheVersion;
+        cachedScrollContainerVersion = scrollContainerCacheVersion;
         return cachedScrollContainer;
     }
 
@@ -296,15 +315,14 @@ export function getConversationScrollContainer() {
         const overflowY = style.overflowY;
         const overflow = style.overflow;
 
-        const isScrollable =
+        if (
             overflowY === "auto" ||
             overflowY === "scroll" ||
             overflow === "auto" ||
-            overflow === "scroll";
-
-        if (isScrollable) {
+            overflow === "scroll"
+        ) {
             cachedScrollContainer = current;
-            cachedScrollContainerVersion = domCacheVersion;
+            cachedScrollContainerVersion = scrollContainerCacheVersion;
             return cachedScrollContainer;
         }
 
@@ -312,11 +330,12 @@ export function getConversationScrollContainer() {
     }
 
     cachedScrollContainer = fallbackScrollContainer;
-    cachedScrollContainerVersion = domCacheVersion;
+    cachedScrollContainerVersion = scrollContainerCacheVersion;
 
     return cachedScrollContainer;
 }
 
 export function resetConversationDomCacheForTests() {
     invalidateConversationDomCache();
+    invalidateConversationScrollContainerCache();
 }

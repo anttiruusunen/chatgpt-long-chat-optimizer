@@ -2,7 +2,7 @@ import { debugLog } from "../core/logger";
 import { getChatStorePageBridgeToken } from "./bridgeBootstrap.js";
 
 const RECORD_SOURCE = "thread-optimizer";
-const RECORD_TYPE = "thread-optimizer:record-pruned-message-id";
+const RECORD_BATCH_TYPE = "thread-optimizer:prune-react-message-ids";
 const VISIBLE_MESSAGES_READY_TYPE = "thread-optimizer:visible-messages-ready";
 
 const MAX_MESSAGE_ID_LENGTH = 300;
@@ -98,38 +98,39 @@ export function postThreadOptimizerBridgeMessage(message) {
     return true;
 }
 
-/**
- * Notify the page bridge that a pruned message should be deleted
- * from the internal ChatGPT store.
- */
-export function recordPrunedSectionMessageForManualBridgeDelete(section) {
-    const messageId = normalizeMessageId(extractMessageId(section));
+export function pruneSectionsWithReactStoreBridge(sections, {
+    reason = "content-prune",
+} = {}) {
+    const messageIds = [];
 
-    if (!messageId) {
-        debugLog("[Thread Optimizer] no message id found on pruned section", {
-            section,
-            testId: section instanceof HTMLElement
-                ? section.getAttribute("data-testid")
-                : null,
-            dataset: section instanceof HTMLElement
-                ? { ...section.dataset }
-                : null,
-        });
+    for (const section of sections) {
+        const messageId = normalizeMessageId(extractMessageId(section));
 
+        if (messageId) {
+            messageIds.push(messageId);
+        }
+    }
+
+    const uniqueMessageIds = Array.from(new Set(messageIds));
+
+    if (uniqueMessageIds.length === 0) {
         return {
-            recorded: false,
-            reason: "no valid message id found on section",
+            posted: false,
+            messageIds: [],
+            reason: "no valid message ids found",
         };
     }
 
     const posted = postThreadOptimizerBridgeMessage({
-        type: RECORD_TYPE,
-        messageId,
+        type: RECORD_BATCH_TYPE,
+        messageIds: uniqueMessageIds,
+        reason,
     });
 
     return {
-        recorded: posted,
-        messageId,
+        posted,
+        messageIds: uniqueMessageIds,
+        count: uniqueMessageIds.length,
         reason: posted ? null : "failed to post bridge message",
     };
 }

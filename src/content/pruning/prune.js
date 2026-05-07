@@ -1,6 +1,5 @@
 import {
     state,
-    PRUNED_ATTR,
 } from "../core/state.js";
 import {
     getConversationContainer,
@@ -26,7 +25,6 @@ import {
     removeBottomPruneSentinel,
 } from "./pruneSentinels.js";
 import {
-    hardEvictSection,
     softPruneSections,
     restoreSoftPrunedSections,
 } from "./pruneDom.js";
@@ -34,9 +32,10 @@ import {
     preserveScrollAfterRestore,
     preserveScrollAfterReprune,
 } from "./pruneScroll.js";
-import { recordPrunedSectionMessageForManualBridgeDelete } from "../bridge/chatStoreBridgeClient.js";
+import {
+    pruneSectionsWithReactStoreBridge,
+} from "../bridge/chatStoreBridgeClient.js";
 import { isIncompleteAssistantSection } from "../streaming/assistantSignals.js";
-import { cleanupCodeBlockDomReferencesForSection } from "../offscreen/offscreenCodeBlocks.js";
 
 const VISIBLE_EXCHANGES = 1;
 const SECTIONS_PER_EXCHANGE = 2;
@@ -116,44 +115,52 @@ function getLatestIncompleteAssistantSection(sections) {
 }
 
 /**
- * Permanently removes sections that exceed the recoverable soft-prune buffer.
+ * Permanently prunes sections that exceed the recoverable soft-prune buffer.
  *
- * Before removal, we record message ids for the page bridge so the matching
- * ChatGPT store nodes can be deleted manually when available.
+ * Important:
+ * This no longer hard-removes DOM nodes. It sends message ids to the page
+ * bridge, which deletes the matching ChatGPT store nodes via deleteNode().
+ * React then owns DOM reconciliation.
  */
-function hardEvictSectionsWithManualBridgeRecords(sections) {
-    let evictedCount = 0;
-    let recordedCount = 0;
-    let cleanedDetachedCodeBlocks = 0;
+function reactPruneSectionsWithBridge(
+    sections,
+    {
+        reason = "react-prune-overflow",
+    } = {}
+) {
+    const candidates = sections.filter(
+        (section) => section instanceof HTMLElement
+    );
 
-    for (const section of sections) {
-        const cleanupResult = cleanupCodeBlockDomReferencesForSection(section);
-
-        cleanedDetachedCodeBlocks +=
-            cleanupResult.cleanedDetachedCodeBlocks || 0;
-
-        const recordResult = recordPrunedSectionMessageForManualBridgeDelete(section);
-
-        if (recordResult?.recorded) {
-            recordedCount += 1;
-        }
-
-        if (hardEvictSection(section)) {
-            evictedCount += 1;
-        }
+    if (candidates.length === 0) {
+        return {
+            prunedCount: 0,
+            posted: false,
+            messageIds: [],
+            reason: "no candidate sections",
+        };
     }
 
-    debugLog("Prune: hard-evicted sections with bridge records", {
+    const result = pruneSectionsWithReactStoreBridge(candidates, {
+        reason,
+    });
+
+    const prunedCount = result?.posted
+        ? result.messageIds?.length || 0
+        : 0;
+
+    debugLog("Prune: sent sections to React store prune", {
         sections: sections.length,
-        evictedCount,
-        recordedCount,
-        cleanedDetachedCodeBlocks,
+        candidates: candidates.length,
+        prunedCount,
+        posted: Boolean(result?.posted),
+        messageIds: result?.messageIds || [],
+        reason: result?.reason || reason,
     });
 
     return {
-        evictedCount,
-        recordedCount,
-        cleanedDetachedCodeBlocks,
+        ...result,
+        prunedCount,
     };
 }
 
@@ -163,19 +170,21 @@ export function enforceSoftPrunedLimit() {
     if (state.softPrunedSections.length > maxSoftPrunedSections) {
         const overflowCount =
             state.softPrunedSections.length - maxSoftPrunedSections;
-        const evicted = state.softPrunedSections.splice(0, overflowCount);
-        const { evictedCount, recordedCount } =
-            hardEvictSectionsWithManualBridgeRecords(evicted);
+        const overflowSections = state.softPrunedSections.splice(0, overflowCount);
+        const pruneResult = reactPruneSectionsWithBridge(overflowSections, {
+            reason: "soft-pruned-overflow",
+        });
 
-        state.hardEvictedCount += evictedCount;
+        state.hardEvictedCount += pruneResult.prunedCount || 0;
 
-        debugLog("Prune: evicted soft-pruned sections from memory", {
+        debugLog("Prune: React-pruned soft-pruned overflow sections", {
             overflowCount,
             softPrunedRemaining: state.softPrunedSections.length,
             maxSoftPrunedSections,
+            reactPrunedCount: pruneResult.prunedCount || 0,
             hardEvictedCount: state.hardEvictedCount,
             totalHiddenCount: state.totalHiddenCount,
-            recordedCount,
+            posted: Boolean(pruneResult.posted),
         });
     }
 
@@ -400,7 +409,7 @@ export function restoreAllSections({
  *
  * Keeps the latest exchange visible, keeps restored/protected sections visible,
  * preserves the latest incomplete assistant during reload/startup, soft-prunes
- * recoverable older sections, and hard-evicts overflow beyond the configured
+ * recoverable older sections, and React-prunes overflow beyond the configured
  * history buffer.
  */
 export function pruneOldSections(
@@ -467,7 +476,7 @@ export function pruneOldSections(
         pruneableLogicalSections.length - softPrunedSectionsLimit
     );
 
-    const sectionsToEvictNow = pruneableLogicalSections.slice(0, evictCutoff);
+    const sectionsToReactPruneNow = pruneableLogicalSections.slice(0, evictCutoff);
     const sectionsToSoftPrune = pruneableLogicalSections.slice(evictCutoff);
     const sectionsToKeepVisible = logicalSections.filter((section) =>
         targetVisibleSet.has(section)
@@ -486,8 +495,12 @@ export function pruneOldSections(
         removeTopRestoreSentinel();
         removeBottomPruneSentinel();
 
-        const { evictedCount, recordedCount } =
-            hardEvictSectionsWithManualBridgeRecords(sectionsToEvictNow);
+        const reactPruneResult = reactPruneSectionsWithBridge(
+            sectionsToReactPruneNow,
+            {
+                reason: "prune-old-sections",
+            }
+        );
 
         const softPrunedCount = softPruneSections(sectionsToSoftPrune);
 
@@ -504,7 +517,7 @@ export function pruneOldSections(
         invalidateConversationDomCache();
 
         state.softPrunedSections = [...sectionsToSoftPrune];
-        state.hardEvictedCount += evictedCount;
+        state.hardEvictedCount += reactPruneResult.prunedCount || 0;
 
         updateHiddenCounts();
 
@@ -518,7 +531,9 @@ export function pruneOldSections(
             );
 
         visibleSectionsChanged =
-            evictedCount > 0 || softPrunedCount > 0 || restoredCount > 0;
+            (reactPruneResult.prunedCount || 0) > 0 ||
+            softPrunedCount > 0 ||
+            restoredCount > 0;
 
         placeholderChanged = refreshPruneChrome({
             showPlaceholder,
@@ -544,8 +559,8 @@ export function pruneOldSections(
             visibleSections: currentVisibleSections.length,
             protectedVisibleSections: protectedVisibleSections.length,
             latestVisibleSections: latestVisibleSections.length,
-            evictedSections: evictedCount,
-            recordedSections: recordedCount,
+            reactPrunedSections: reactPruneResult.prunedCount || 0,
+            reactPrunePosted: Boolean(reactPruneResult.posted),
             newlySoftPrunedSections: softPrunedCount,
             restoredSections: restoredCount,
             totalHiddenCount: state.totalHiddenCount,
