@@ -1,6 +1,24 @@
 (() => {
     const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
 
+    const CONFIG = {
+        bridgeVersion: 8,
+
+        discovery: {
+            maxFibers: 4000,
+            maxObjects: 15000,
+        },
+
+        flags: {
+            debug: false,
+            cacheProfiling: false,
+            storeProfiler: false,
+            branchCallSites: false,
+            nodeCallSites: false,
+            findNodeCallSites: false,
+        },
+    };
+
     const STORE_ENHANCEMENTS = [
         {
             key: "messageIdIndex",
@@ -14,16 +32,26 @@
             ],
         },
         {
-            key: "nodeFrameCache",
-            install: "installExistingNodeFrameCache",
-            uninstall: "uninstallExistingNodeFrameCache",
-            installedFlag: "__existingNodeFrameCacheInstalled",
+            key: "nodeStableCache",
+            install: "installExistingNodeStableCache",
+            uninstall: "uninstallExistingNodeStableCache",
+            installedFlag: "__existingnodeStableCacheInstalled",
             slots: [
-                "__existingNodeFrameCacheOriginal",
-                "__existingNodeFrameCache",
-                "__existingNodeFrameCacheStats",
-                "__existingNodeFrameCacheMode",
-                "__existingNodeFrameCacheApi",
+                "__existingnodeStableCacheOriginal",
+                "__existingnodeStableCache",
+                "__existingnodeStableCacheStats",
+                "__existingnodeStableCacheApi",
+            ],
+        },
+        {
+            key: "getNodeByIdOrMessageIdCache",
+            install: "installGetNodeByIdOrMessageIdCache",
+            uninstall: "uninstallGetNodeByIdOrMessageIdCache",
+            installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
+            slots: [
+                "__getNodeByIdOrMessageIdCacheOriginal",
+                "__getNodeByIdOrMessageIdCache",
+                "__getNodeByIdOrMessageIdCacheStats",
             ],
         },
         {
@@ -86,17 +114,6 @@
                 "__resolvedNodeFrameCache",
                 "__resolvedNodeFrameCacheStats",
                 "__resolveNodeFast",
-            ],
-        },
-        {
-            key: "getDisplayTurnsCache",
-            install: "installGetDisplayTurnsCache",
-            uninstall: "uninstallGetDisplayTurnsCache",
-            installedFlag: "__getDisplayTurnsCacheInstalled",
-            slots: [
-                "__getDisplayTurnsCache",
-                "__getDisplayTurnsCacheStats",
-                "__getDisplayTurnsCacheOriginal",
             ],
         },
     ];
@@ -189,24 +206,6 @@
 
     installBridgeSafely();
 
-    const CONFIG = {
-        bridgeVersion: 8,
-
-        discovery: {
-            maxFibers: 4000,
-            maxObjects: 15000,
-        },
-
-        flags: {
-            debug: false,
-            cacheProfiling: true,
-            storeProfiler: true,
-            branchCallSites: false,
-            nodeCallSites: false,
-            findNodeCallSites: false,
-        },
-    };
-
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
     const PAGE_SCRIPT_TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
@@ -262,6 +261,65 @@
 
     const CACHE_MISS = Symbol("threadOptimizerCacheMiss");
 
+    function createNodeObjectCache({ store, stats, profiled = false }) {
+        const cache = new Map();
+
+        function get(id) {
+            if (!id) return undefined;
+
+            const cached = cache.get(id);
+
+            if (cached !== undefined) {
+                if (profiled) stats.hits += 1;
+                return cached === CACHE_MISS ? null : cached;
+            }
+
+            if (profiled) stats.misses += 1;
+            return undefined;
+        }
+
+        function set(id, node) {
+            if (!id) return;
+
+            cache.set(id, node === null ? CACHE_MISS : node);
+
+            stats.cached = cache.size;
+
+            if (profiled) {
+                stats.writes += 1;
+                if (node === null) stats.nullWrites += 1;
+            }
+        }
+
+        function resolve(id) {
+            const cached = get(id);
+
+            if (cached !== undefined) {
+                return cached;
+            }
+
+            const node = getNodeDirect(store, id) ?? null;
+
+            set(id, node);
+
+            return node;
+        }
+
+        function clear(reason) {
+            cache.clear();
+            stats.cached = 0;
+            stats.lastClearReason = reason;
+        }
+
+        return {
+            cache,
+            get,
+            set,
+            resolve,
+            clear,
+        };
+    }
+
     function createPersistentCache({ stats, profiled = false }) {
         const cache = new Map();
 
@@ -269,11 +327,6 @@
             if (cache.size !== 0) {
                 cache.clear();
                 if (profiled && stats && "cached" in stats) stats.cached = 0;
-            }
-
-            if (profiled && stats) {
-                stats.frameClears += 1;
-                stats.lastClearReason = reason;
             }
         }
 
@@ -314,11 +367,9 @@
         return profiled
             ? {
                 ...profileStats,
-                lastClearReason: null,
             }
             : {
                 ...productionStats,
-                lastClearReason: null,
             };
     }
 
@@ -419,7 +470,11 @@
                 };
             }
 
-            const node = getNodeDirect(store, nodeId);
+            const nodeCache = window[GLOBAL_KEY]?.__nodeObjectCacheApi;
+
+            const node = nodeCache
+                ? nodeCache.resolve(nodeId)
+                : getNodeDirect(store, nodeId);
 
             if (!node) {
                 return {
@@ -489,13 +544,21 @@
         return typeof method === "function" ? method : null;
     }
 
-    const FRAME_CACHE_SLOTS = [
-        ["__existingNodeFrameCache", "__existingNodeFrameCacheStats"],
+    const PERSIST_ACROSS_TOPOLOGY_CACHE_SLOTS = new Set([
+        "__existingNodeStableCache",
+        "__getNodeByIdOrMessageIdCache",
+        "__messageIdIndex",
+        "__resolvedNodeFrameCache",
+        "__findNodeFromLeafFrameCache",
+    ]);
+
+    const STABLE_CACHE_SLOTS = [
+        ["__existingNodeStableCache", "__existingNodeStableCacheStats"],
         ["__findNodeFromLeafFrameCache", "__findNodeFromLeafFrameCacheStats"],
+        ["__getNodeByIdOrMessageIdCache", "__getNodeByIdOrMessageIdCacheStats"],
         ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
         ["__branchCache", "__branchCacheStats"],
         ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
-        ["__getDisplayTurnsCache", "__getDisplayTurnsCacheStats"],
     ];
 
     function getCacheSnapshot(bridge, installedFlag, cacheSlot, statsSlot) {
@@ -513,10 +576,6 @@
         if ("misses" in stats) stats.misses = 0;
 
         stats.cached = cache?.size ?? 0;
-
-        if ("frameClears" in stats) stats.frameClears = 0;
-
-        stats.lastClearReason = null;
     }
 
     function smokeTestStoreWrappers(store) {
@@ -1178,6 +1237,7 @@
 
         const index = bridge.__messageIdIndex;
         const directIndex = bridge.__nodeIdDirectIndex;
+        const nodeCache = bridge.__nodeObjectCacheApi;
 
         try {
             if (index) {
@@ -1193,7 +1253,9 @@
                         return indexedNode ?? null;
                     }
 
-                    const node = getNodeDirect(store, indexedNodeId);
+                    const node = nodeCache
+                        ? nodeCache.resolve(indexedNodeId)
+                        : getNodeDirect(store, indexedNodeId);
 
                     if (node && directIndex instanceof Map) {
                         directIndex.set(indexedNodeId, node);
@@ -1209,7 +1271,9 @@
             const nodeId = resolver.call(store, id);
             if (!nodeId) return null;
 
-            const node = getNodeDirect(store, nodeId);
+            const node = nodeCache
+                ? nodeCache.resolve(nodeId)
+                : getNodeDirect(store, nodeId);
 
             if (node) {
                 if (index) {
@@ -1277,15 +1341,19 @@
         __messageIdIndex: null,
         __messageIdIndexStats: null,
 
-        __existingNodeFrameCacheInstalled: false,
-        __existingNodeFrameCacheOriginal: null,
-        __existingNodeFrameCache: null,
-        __existingNodeFrameCacheStats: null,
-        __existingNodeFrameCacheMode: null,
-        __existingNodeFrameCacheApi: null,
+        __existingNodeStableCacheInstalled: false,
+        __existingNodeStableCacheOriginal: null,
+        __existingNodeStableCache: null,
+        __existingNodeStableCacheStats: null,
+        __existingNodeStableCacheApi: null,
         __liveNodeCacheId: null,
         __liveNodeCacheValue: null,
         __liveNodeCacheDirty: true,
+
+        __getNodeByIdOrMessageIdCacheInstalled: false,
+        __getNodeByIdOrMessageIdCacheOriginal: null,
+        __getNodeByIdOrMessageIdCache: null,
+        __getNodeByIdOrMessageIdCacheStats: null,
 
         __findNodeFromLeafFrameCacheInstalled: false,
         __findNodeFromLeafFrameCacheOriginal: null,
@@ -1328,12 +1396,10 @@
 
         __prunedMessageIdSet: new Set(),
         __prunedLeafIdSet: new Set(),
-        __liveNodeReadFrame: 0,
         __liveNodeCacheFrame: -1,
 
         __storeReadEpoch: 0,
 
-        __lastLiveFindFrame: -1,
         __lastLiveFindLeafId: null,
         __lastLiveFindPredicateSource: null,
         __lastLiveFindValue: null,
@@ -1350,6 +1416,10 @@
         __findNodeCallSiteProfilerInstalled: false,
         __findNodeCallSiteProfilerOriginal: null,
         __findNodeCallSiteProfilerStats: null,
+
+        __nodeObjectCache: null,
+        __nodeObjectCacheStats: null,
+        __nodeObjectCacheApi: null,
 
         status() {
             return {
@@ -1380,6 +1450,45 @@
             };
         },
 
+        ensureNodeObjectCache({
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
+            const store = requireStore(this);
+            if (!store) return null;
+
+            if (this.__nodeObjectCacheApi) {
+                return this.__nodeObjectCacheApi;
+            }
+
+            const stats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    writes: 0,
+                    nullWrites: 0,
+                    cached: 0,
+                    lastClearReason: null,
+                    mode: "profiled:shared-node-object-cache",
+                }
+                : {
+                    cached: 0,
+                    lastClearReason: null,
+                    mode: "production:shared-node-object-cache",
+                };
+
+            const api = createNodeObjectCache({
+                store,
+                stats,
+                profiled,
+            });
+
+            this.__nodeObjectCacheApi = api;
+            this.__nodeObjectCache = api.cache;
+            this.__nodeObjectCacheStats = stats;
+
+            return api;
+        },
+
         hasStore() {
             return Boolean(this.__store);
         },
@@ -1407,6 +1516,12 @@
 
             resetStoreEnhancementSlots(this);
 
+            clearBridgeSlots(this, [
+                "__nodeObjectCache",
+                "__nodeObjectCacheStats",
+                "__nodeObjectCacheApi",
+            ]);
+
             this.__branchCacheClearScheduled = false;
             this.__resolvedNodeFrameCacheClearScheduled = false;
 
@@ -1427,7 +1542,6 @@
                 "__liveNodeCacheValue",
             ]);
 
-            this.__lastLiveFindFrame = -1;
             clearBridgeSlots(this, [
                 "__lastLiveFindLeafId",
                 "__lastLiveFindPredicateSource",
@@ -1608,7 +1722,11 @@
                 };
             }
 
-            const node = getNodeDirect(this.__store, normalizedMessageId);
+            const nodeCache = window[GLOBAL_KEY]?.__nodeObjectCacheApi;
+
+            const node = nodeCache
+                ? nodeCache.resolve(normalizedMessageId)
+                : getNodeDirect(store, normalizedMessageId);
 
             if (node?.id) {
                 this.__prunedMessageIdSet.add(node.id);
@@ -1854,8 +1972,46 @@
                 "constructor",
             ]);
 
+            const EXPLICIT_PROFILE_METHODS = [
+                "setCurrentLeafId",
+                "messageIdToNodeId",
+                "messageIdToExistingNodeId",
+                "containsNodeOrMessageId",
+                "getAlderItemForMessageId",
+                "getNodeByIdOrMessageId",
+                "getNodeIfExists",
+                "findNode",
+                "findNodeFromLeaf",
+                "findFirst",
+                "findFirstFromLeaf",
+                "findFirstFromLeafToParent",
+                "hasMessageWithPredicate",
+                "getLeafFromNode",
+                "getDescendants",
+                "getParent",
+                "getBranch",
+                "getBranchFromLeaf",
+                "selectParagenVariant",
+                "getDisplayItems",
+                "getDisplayTurns",
+                "addMessageNode",
+                "addOptimisticMessageNode",
+                "prependNode",
+                "prependOptismisticNode",
+                "deleteNode",
+                "moveNode",
+                "clearNodeMessageParts",
+                "updateNodeMetadata",
+                "updateNodeMessage",
+                "updateNodeMessageMetadata",
+                "processUpdate",
+                "optimisticDiscardAfter",
+                "prettyPrint",
+            ];
+
             const methodNames = Array.from(
                 new Set([
+                    ...EXPLICIT_PROFILE_METHODS,
                     ...Object.keys(store),
                     ...Object.getOwnPropertyNames(Object.getPrototypeOf(store) || {}),
                 ])
@@ -1882,6 +2038,7 @@
 
                 const bridgeRef = this;
                 const shouldCaptureCallSite =
+                    ENABLE_NODE_CALLSITE_STATS &&
                     methodName === "getNodeByIdOrMessageId";
 
                 store[methodName] = function profiledStoreMethod(...args) {
@@ -2232,296 +2389,19 @@
                 size: this.__messageIdIndex?.size ?? 0,
                 stats: this.__messageIdIndexStats,
             };
-        },
+        },    
 
-        __nodeReadProfile: null,
-
-        startNodeReadProfile() {
-            this.__nodeReadProfile = {
-                startedAt: Date.now(),
-                total: 0,
-                currentLeaf: 0,
-                inProgress: 0,
-                pruned: 0,
-                other: 0,
-                byId: new Map(),
-            };
-
-            return { ok: true };
-        },
-
-        recordNodeReadProfile(id, result) {
-            const profile = this.__nodeReadProfile;
-            if (!profile) return;
-
-            profile.total += 1;
-
-            const store = requireStore(this);
-            if (!store) return;
-            const leafId =
-                typeof store?.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store?.currentLeafId;
-
-            const isCurrentLeaf = id === leafId;
-            const isInProgress = result?.message?.status === "in_progress";
-            const isPruned = this.__prunedMessageIdSet?.has(id);
-
-            if (isCurrentLeaf) profile.currentLeaf += 1;
-            else if (isInProgress) profile.inProgress += 1;
-            else if (isPruned) profile.pruned += 1;
-            else profile.other += 1;
-
-            const entry = profile.byId.get(id) || {
-                id,
-                calls: 0,
-                currentLeaf: false,
-                inProgress: false,
-                pruned: false,
-                role: null,
-                status: null,
-            };
-
-            entry.calls += 1;
-            entry.currentLeaf ||= isCurrentLeaf;
-            entry.inProgress ||= isInProgress;
-            entry.pruned ||= isPruned;
-            entry.role ||= result?.message?.author?.role ?? null;
-            entry.status ||= result?.message?.status ?? null;
-
-            profile.byId.set(id, entry);
-        },
-
-        getNodeReadProfile() {
-            const profile = this.__nodeReadProfile;
-            if (!profile) return { ok: false, reason: "profile not started" };
-
-            const topIds = Array.from(profile.byId.values())
-                .sort((a, b) => b.calls - a.calls)
-                .slice(0, 30);
-
-            return {
-                ok: true,
-                elapsedMs: Date.now() - profile.startedAt,
-                total: profile.total,
-                currentLeaf: profile.currentLeaf,
-                inProgress: profile.inProgress,
-                pruned: profile.pruned,
-                other: profile.other,
-                topIds,
-            };
-        },
-
-        stopNodeReadProfile() {
-            const result = this.getNodeReadProfile();
-            this.__nodeReadProfile = null;
-            return result;
-        },
-
-        installLiveGetNodeIfExistsWrapper(original, cacheApi) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            const bridgeRef = this;
-            const get = cacheApi.get;
-            const set = cacheApi.set;
-            const getCurrentLeafId = createCurrentLeafIdReader(store);
-
-            let activeEpoch = -1;
-            let activeId = null;
-            let activeValue = null;
-
-            store.getNodeIfExists = function cachedGetNodeIfExistsLive(id) {
-                const currentLeafId = getCurrentLeafId();
-
-                if (id === currentLeafId) {
-                    const epoch = bridgeRef.__storeReadEpoch;
-
-                    if (
-                        activeEpoch === epoch &&
-                        activeId === id
-                    ) {
-                        return activeValue;
-                    }
-
-                    const result = original.call(store, id) ?? null;
-
-                    activeEpoch = epoch;
-                    activeId = id;
-                    activeValue = result;
-
-                    return result;
-                }
-
-                const cached = get(id);
-                if (cached !== undefined) return cached;
-
-                const result = original.call(store, id);
-
-                if (result && result.message?.status !== "in_progress") {
-                    set(id, result);
-                }
-
-                return result ?? null;
-            };
-
-            this.__existingNodeFrameCacheMode = "live-epoch";
-        },
-
-        installLiveGetNodeIfExistsWrapperProfiled(original, cacheApi) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            const bridgeRef = this;
-            const stats = this.__existingNodeFrameCacheStats;
-            const getCurrentLeafId = createCurrentLeafIdReader(store);
-            const get = cacheApi.get;
-            const set = cacheApi.set;
-
-            let activeEpoch = -1;
-            let activeId = null;
-            let activeValue = null;
-
-            store.getNodeIfExists = function cachedGetNodeIfExistsLiveProfiled(id) {
-                if (ENABLE_NODE_CALLSITE_STATS) {
-                    bridgeRef.__nodeCallSiteStats ??= {
-                        total: 0,
-                        callSites: {},
-                        max: 50,
-                    };
-
-                    const stats = bridgeRef.__nodeCallSiteStats;
-
-                    stats.total += 1;
-
-                    const stack = normalizeStack(new Error().stack);
-                    const existing = stats.callSites[stack];
-
-                    if (existing) {
-                        existing.calls += 1;
-                        existing.lastId = id;
-                    } else {
-                        const keys = Object.keys(stats.callSites);
-
-                        if (keys.length >= stats.max) {
-                            const lowest = keys.reduce((a, b) =>
-                                stats.callSites[a].calls < stats.callSites[b].calls ? a : b
-                            );
-                            delete stats.callSites[lowest];
-                        }
-
-                        stats.callSites[stack] = {
-                            calls: 1,
-                            firstId: id,
-                            lastId: id,
-                        };
-                    }
-                }
-
-                const leafId = getCurrentLeafId();
-
-                if (id === leafId) {
-                    const epoch = bridgeRef.__storeReadEpoch;
-
-                    if (
-                        activeEpoch === epoch &&
-                        activeId === id
-                    ) {
-                        stats.activeCached += 1;
-                        return activeValue;
-                    }
-
-                    stats.activeOriginal += 1;
-
-                    const result = original.call(store, id) ?? null;
-
-                    activeEpoch = epoch;
-                    activeId = id;
-                    activeValue = result;
-
-                    return result;
-                }
-
-                const cached = get(id);
-
-                if (cached !== undefined) {
-                    stats.normalCached += 1;
-                    return cached;
-                }
-
-                stats.normalOriginal += 1;
-
-                const result = original.call(store, id) ?? null;
-
-                if (result?.message?.status !== "in_progress" && result != null) {
-                    set(id, result);
-                }
-
-                return result;
-            };
-
-            this.__existingNodeFrameCacheMode = "live-epoch";
-        },
-
-        enableLiveNodeCachePolicy() {
-            if (this.__existingNodeFrameCacheMode === "live") {
-                return { ok: true, alreadyLive: true };
-            }
-
-            const original = this.__existingNodeFrameCacheOriginal?.getNodeIfExists;
-            const cacheApi = this.__existingNodeFrameCacheApi;
-
-            if (!this.__store || typeof original !== "function" || !cacheApi) {
-                return { ok: false, reason: "node cache not installed" };
-            }
-
-            if (ENABLE_CACHE_PROFILING) {
-                this.installLiveGetNodeIfExistsWrapperProfiled(original, cacheApi);
-            } else {
-                this.installLiveGetNodeIfExistsWrapper(original, cacheApi);
-            }
-
-            return { ok: true, mode: "live" };
-        },
-
-        prewarmExistingNodeFrameCache(cacheApi) {
-            const nodes = this.__store?.nodes;
-            if (!nodes) return { ok: false, reason: "nodes unavailable" };
-
-            const add = (node) => {
-                if (
-                    node?.id &&
-                    node.message?.status !== "in_progress"
-                ) {
-                    cacheApi.set(node.id, node);
-                }
-            };
-
-            if (nodes instanceof Map) {
-                for (const node of nodes.values()) add(node);
-            } else if (Array.isArray(nodes)) {
-                for (const node of nodes) add(node);
-            } else if (typeof nodes === "object") {
-                for (const node of Object.values(nodes)) add(node);
-            }
-
-            return {
-                ok: true,
-                size: cacheApi.cache?.size ?? null,
-            };
-        },
-
-        installExistingNodeFrameCache({
+        installExistingNodeStableCache({
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
 
-            if (this.__existingNodeFrameCacheInstalled) {
+            if (this.__existingNodeStableCacheInstalled) {
                 return {
                     ok: true,
                     alreadyInstalled: true,
-                    stats: this.__existingNodeFrameCacheStats,
+                    stats: this.__existingNodeStableCacheStats,
                 };
             }
 
@@ -2529,23 +2409,15 @@
                 ? {
                     hits: 0,
                     misses: 0,
-                    hintHits: 0,
-                    hintConfirmed: 0,
-                    confirmedFastHits: 0,
-                    fallbackHits: 0,
                     cached: 0,
-                    frameClears: 0,
-                    activeOriginal: 0,
                     activeCached: 0,
                     normalOriginal: 0,
                     normalCached: 0,
-                    mode: "profiled:persistent+confirmed-direct-index",
-                    lastClearReason: null,
+                    mode: "profiled:persistent+confirmed-direct-index+live-epoch",
                 }
                 : {
                     cached: 0,
-                    mode: "production:persistent+confirmed-direct-index",
-                    lastClearReason: null,
+                    mode: "production:persistent+confirmed-direct-index+live-epoch",
                 };
 
             const frameCache = createPersistentCache({
@@ -2554,64 +2426,102 @@
             });
 
             this.__confirmedExistingNodeIds ??= new Set();
-            this.__existingNodeFrameCacheApi = frameCache;
-            this.__existingNodeFrameCache = frameCache.cache;
-            this.__existingNodeFrameCacheStats = stats;
+            this.__existingNodeStableCacheApi = frameCache;
+            this.__existingNodeStableCache = frameCache.cache;
+            this.__existingNodeStableCacheStats = stats;
 
             const result = installStoreMethodWrapper({
                 bridge: this,
                 methodName: "getNodeIfExists",
-                originalSlot: "__existingNodeFrameCacheOriginal",
-                installedFlag: "__existingNodeFrameCacheInstalled",
-                createWrapper: ({ store, original }) => {
-                    if (!profiled) {
-                        this.prewarmExistingNodeFrameCache?.(frameCache);
-                        this.installLiveGetNodeIfExistsWrapper(original, frameCache);
-                        return store.getNodeIfExists;
+                originalSlot: "__existingNodeStableCacheOriginal",
+                installedFlag: "__existingNodeStableCacheInstalled",
+                createWrapper: ({ store, original, bridge }) => {
+                    const get = frameCache.get;
+                    const set = frameCache.set;
+
+                    let activeEpoch = -1;
+                    let activeId = null;
+                    let activeValue = null;
+
+                    if (profiled) {
+                        return function cachedGetNodeIfExistsLiveProfiled(id) {
+                            const epoch = bridge.__storeReadEpoch;
+
+                            if (
+                                activeEpoch === epoch &&
+                                activeId === id
+                            ) {
+                                stats.activeCached += 1;
+                                return activeValue;
+                            }
+
+                            const cached = get(id);
+
+                            if (cached !== undefined) {
+                                stats.normalCached += 1;
+
+                                activeEpoch = epoch;
+                                activeId = id;
+                                activeValue = cached;
+
+                                return cached;
+                            }
+
+                            stats.normalOriginal += 1;
+
+                            const result =
+                                original.call(store, id) ?? null;
+
+                            if (
+                                result !== null &&
+                                result.message?.status !== "in_progress"
+                            ) {
+                                set(id, result);
+                            }
+
+                            activeEpoch = epoch;
+                            activeId = id;
+                            activeValue = result;
+
+                            return result;
+                        };
                     }
 
-                    const directIndex = this.__nodeIdDirectIndex;
-                    const confirmedExistingNodeIds = this.__confirmedExistingNodeIds;
-
-                    return function cachedGetNodeIfExistsProfiled(id) {
-                        const cached = frameCache.get(id);
-                        if (cached !== undefined) return cached;
-
-                        const hinted =
-                            directIndex instanceof Map
-                                ? directIndex.get(id)
-                                : undefined;
+                    return function cachedGetNodeIfExistsLive(id) {
+                        const epoch = bridge.__storeReadEpoch;
 
                         if (
-                            hinted !== undefined &&
-                            confirmedExistingNodeIds.has(id)
+                            activeEpoch === epoch &&
+                            activeId === id
                         ) {
-                            stats.confirmedFastHits += 1;
-                            frameCache.set(id, hinted);
-                            return hinted;
+                            return activeValue;
                         }
 
-                        const result = original.call(store, id);
+                        const cached = get(id);
 
-                        if (hinted !== undefined) {
-                            stats.hintHits += 1;
+                        if (cached !== undefined) {
+                            activeEpoch = epoch;
+                            activeId = id;
+                            activeValue = cached;
 
-                            if (result === hinted) {
-                                stats.hintConfirmed += 1;
-                                confirmedExistingNodeIds.add(id);
-                            }
+                            return cached;
                         }
 
-                        if (result != null) {
-                            stats.fallbackHits += 1;
-                            frameCache.set(id, result);
+                        const result =
+                            original.call(store, id) ?? null;
 
-                            if (result.id && directIndex instanceof Map) {
-                                directIndex.set(result.id, result);
-                            }
+                        if (
+                            result !== null &&
+                            result.message?.status !== "in_progress"
+                        ) {
+                            set(id, result);
                         }
 
-                        return result ?? null;
+                        activeEpoch = epoch;
+                        activeId = id;
+                        activeValue = result;
+
+                        return result;
                     };
                 },
             });
@@ -2622,20 +2532,211 @@
             };
         },
 
-        uninstallExistingNodeFrameCache() {
+        uninstallExistingNodeStableCache() {
             return uninstallMethodFrameCache({
                 bridge: this,
-                originalSlot: "__existingNodeFrameCacheOriginal",
-                installedFlag: "__existingNodeFrameCacheInstalled",
+                originalSlot: "__existingNodeStableCacheOriginal",
+                installedFlag: "__existingNodeStableCacheInstalled",
             });
         },
 
-        getExistingNodeFrameCacheStats() {
+        getExistingNodeStableCacheStats() {
             return getCacheSnapshot(
                 this,
-                "__existingNodeFrameCacheInstalled",
-                "__existingNodeFrameCache",
-                "__existingNodeFrameCacheStats"
+                "__existingNodeStableCacheInstalled",
+                "__existingNodeStableCache",
+                "__existingNodeStableCacheStats"
+            );
+        },
+
+        installGetNodeByIdOrMessageIdCache({
+            profiled = ENABLE_CACHE_PROFILING,
+        } = {}) {
+            const store = requireStore(this);
+            if (!store) return unavailable("store not registered");
+
+            if (this.__getNodeByIdOrMessageIdCacheInstalled) {
+                return {
+                    ok: true,
+                    alreadyInstalled: true,
+                    stats: this.__getNodeByIdOrMessageIdCacheStats,
+                };
+            }
+
+            const original = getStoreMethod(store, "getNodeByIdOrMessageId");
+
+            if (!original) {
+                return unavailable("getNodeByIdOrMessageId unavailable");
+            }
+
+            const nodeCache = this.ensureNodeObjectCache({ profiled });
+
+            const stats = profiled
+                ? {
+                    hits: 0,
+                    misses: 0,
+                    writes: 0,
+                    nullWrites: 0,
+                    liveBypasses: 0,
+                    inProgressBypasses: 0,
+                    cached: 0,
+                    mode: "profiled:id-alias-cache+shared-node-cache:stable-only",
+                }
+                : {
+                    cached: 0,
+                    mode: "production:id-alias-cache+shared-node-cache:stable-only",
+                };
+
+            const aliasCache = createPersistentCache({
+                stats,
+                profiled,
+            });
+
+            this.__getNodeByIdOrMessageIdCache = aliasCache.cache;
+            this.__getNodeByIdOrMessageIdCacheStats = stats;
+
+            function readCurrentLeafId() {
+                return typeof store.currentLeafId === "function"
+                    ? store.currentLeafId()
+                    : store.currentLeafId;
+            }
+
+            function getCachedNode(id) {
+                const cachedNodeId = aliasCache.get(id);
+
+                if (cachedNodeId === undefined) {
+                    return undefined;
+                }
+
+                if (cachedNodeId === null) {
+                    return null;
+                }
+
+                return nodeCache
+                    ? nodeCache.resolve(cachedNodeId)
+                    : getNodeDirect(store, cachedNodeId);
+            }
+
+            function remember(id, node) {
+                if (!id) return node ?? null;
+
+                if (!node?.id) {
+                    aliasCache.set(id, null);
+
+                    if (profiled) {
+                        stats.writes += 1;
+                        stats.nullWrites += 1;
+                        stats.cached = aliasCache.cache.size;
+                    }
+
+                    return null;
+                }
+
+                if (nodeCache) {
+                    nodeCache.set(node.id, node);
+                }
+
+                aliasCache.set(id, node.id);
+
+                if (node.id !== id) {
+                    aliasCache.set(node.id, node.id);
+                }
+
+                if (profiled) {
+                    stats.writes += 1;
+                    stats.cached = aliasCache.cache.size;
+                }
+
+                return node;
+            }
+
+            const result = installStoreMethodWrapper({
+                bridge: this,
+                methodName: "getNodeByIdOrMessageId",
+                originalSlot: "__getNodeByIdOrMessageIdCacheOriginal",
+                installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
+                createWrapper: ({ store, original }) => {
+                    if (profiled) {
+                        return function cachedGetNodeByIdOrMessageIdProfiled(id) {
+                            if (!id) {
+                                return original.call(store, id) ?? null;
+                            }
+
+                            const currentLeafId = readCurrentLeafId();
+
+                            if (id === currentLeafId) {
+                                stats.liveBypasses += 1;
+                                return original.call(store, id) ?? null;
+                            }
+
+                            const cached = getCachedNode(id);
+
+                            if (cached !== undefined) {
+                                stats.hits += 1;
+                                return cached;
+                            }
+
+                            stats.misses += 1;
+
+                            const result =
+                                original.call(store, id) ?? null;
+
+                            if (result?.message?.status === "in_progress") {
+                                stats.inProgressBypasses += 1;
+                                return result;
+                            }
+
+                            return remember(id, result);
+                        };
+                    }
+
+                    return function cachedGetNodeByIdOrMessageIdProduction(id) {
+                        if (!id) {
+                            return original.call(store, id) ?? null;
+                        }
+
+                        if (id === readCurrentLeafId()) {
+                            return original.call(store, id) ?? null;
+                        }
+
+                        const cached = getCachedNode(id);
+
+                        if (cached !== undefined) {
+                            return cached;
+                        }
+
+                        const result =
+                            original.call(store, id) ?? null;
+
+                        if (result?.message?.status === "in_progress") {
+                            return result;
+                        }
+
+                        return remember(id, result);
+                    };
+                },
+            });
+
+            return {
+                ...result,
+                profiled,
+            };
+        },
+
+        uninstallGetNodeByIdOrMessageIdCache() {
+            return uninstallMethodFrameCache({
+                bridge: this,
+                originalSlot: "__getNodeByIdOrMessageIdCacheOriginal",
+                installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
+            });
+        },
+
+        getGetNodeByIdOrMessageIdCacheStats() {
+            return getCacheSnapshot(
+                this,
+                "__getNodeByIdOrMessageIdCacheInstalled",
+                "__getNodeByIdOrMessageIdCache",
+                "__getNodeByIdOrMessageIdCacheStats"
             );
         },
 
@@ -2643,7 +2744,9 @@
             profiled = ENABLE_CACHE_PROFILING,
         } = {}) {
             const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
+            if (!store) {
+                return unavailable("store not registered");
+            }
 
             if (this.__findNodeFromLeafFrameCacheInstalled) {
                 return {
@@ -2654,592 +2757,181 @@
             }
 
             const original = getStoreMethod(store, "findNodeFromLeaf");
-            if (!original) return unavailable("findNodeFromLeaf unavailable");
+
+            if (!original) {
+                return unavailable("findNodeFromLeaf unavailable");
+            }
+
+            const resultCache = new Map();
+            const nodeCache = this.ensureNodeObjectCache({ profiled });
 
             const stats = profiled
                 ? {
-                    calls: 0,
-                    misses: 0,
-                    fallbackCalls: 0,
-                    sourceKeyMisses: 0,
-                    sourceKeyFastHits: 0,
-                    liveHits: 0,
-                    liveMisses: 0,
-                    normalHits: 0,
-                    normalMisses: 0,
-
-                    activeLeafOriginalTests: 0,
-                    ancestorNodeTests: 0,
-                    ancestorChainHits: 0,
-                    ancestorChainMisses: 0,
-
-                    dormantAncestorHits: 0,
-                    dormantAncestorMisses: 0,
-                    dormantAncestorWrites: 0,
-                    dormantAncestorReturnsNode: 0,
-                    dormantAncestorReturnsNull: 0,
-
-                    liveCacheCreates: 0,
-                    liveCacheReturnsNode: 0,
-                    liveCacheReturnsNull: 0,
-                    normalCacheReturnsNode: 0,
-                    normalCacheReturnsNull: 0,
-                    normalOriginalReturnsNode: 0,
-                    normalOriginalReturnsNull: 0,
-
-                    predicateSameFunctionHits: 0,
-                    predicateNewFunctionInstances: 0,
-                    predicateSameSourceHits: 0,
-                    predicateNewSource: 0,
-
-                    lastResultHits: 0,
-                    lastResultWrites: 0,
-
-                    hotSetSamples: 0,
-                    hotSetSize: 0,
-                    hotSetLocked: false,
-                    hotSetKnownFunctionHits: 0,
-                    hotSetKnownFunctionMisses: 0,
-
+                    hits: 0,
+                    rejected: 0,
+                    writes: 0,
+                    ancestorFastHits: 0,
+                    ancestorFastMisses: 0,
+                    originalCalls: 0,
+                    nullResults: 0,
+                    invalidCalls: 0,
                     cached: 0,
-                    mode: "profiled:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
-                    lastClearReason: null,
+                    mode: "profiled:name-result-cache+validated+ancestor-fast-path-depth-2",
                 }
                 : {
                     cached: 0,
-                    mode: "production:hot-split+hot-predicate-set+last-result-tuple+fn-source-hybrid+nested-leaf-cache+dormant-ancestor-result",
-                    lastClearReason: null,
+                    mode: "production:name-result-cache+validated+ancestor-fast-path-depth-2",
                 };
 
-            const sourceCache = new Map();
-            const insertionOrder = [];
-
-            const predicateSourceIdByFn = new WeakMap();
-            const predicateSourceIdBySource = new Map();
-            let nextPredicateSourceId = 1;
-
-            let lastPredicateFn = null;
-            let lastPredicateId = 0;
-
-            let lastSourceText = null;
-            let lastSourceKey = null;
-            let lastSourceId = 0;
-
-            let lastResultPredicateSourceId = 0;
-            let lastResultLeafId = null;
-            let lastResultValue = undefined;
-
-            const SOURCE_KEY_LEN = 128;
-            const fnToString = Function.prototype.toString;
-
-            const HOT_SET_LEARN_LIMIT = 96;
-            const HOT_SET_MAX = 12;
-
-            const hotCounts = new Map();
-            const hotPredicateIds = new Set();
-            let hotSamples = 0;
-            let hotSetLocked = false;
-
-            const ancestorChainCache = new Map();
-            const dormantAncestorResultCache = new Map();
-
-            const bridgeRef = this;
-            const currentLeafIdValue = store.currentLeafId;
-            const currentLeafIdIsFn = typeof currentLeafIdValue === "function";
-            const getNode = getNodeDirect;
-
-            const rootIdValue = store.rootId;
-            const rootIdIsFn = typeof rootIdValue === "function";
-
-            bridgeRef.__findNodeFromLeafAncestorChainCache = ancestorChainCache;
-            bridgeRef.__findNodeFromLeafDormantAncestorResultCache = dormantAncestorResultCache;
-            bridgeRef.__findNodeFromLeafHotPredicateIds = hotPredicateIds;
-
-            function getRootId() {
-                return rootIdIsFn ? rootIdValue.call(store) : rootIdValue;
-            }
-
-            function readCurrentLeafId() {
-                return currentLeafIdIsFn
-                    ? currentLeafIdValue.call(store)
-                    : currentLeafIdValue;
-            }
-
-            function rememberLastResult(predicateSourceId, leafId, value) {
-                lastResultPredicateSourceId = predicateSourceId;
-                lastResultLeafId = leafId;
-                lastResultValue = value ?? CACHE_MISS;
-                return value ?? null;
-            }
-
-            function lockHotSetProduction() {
-                const sorted = Array.from(hotCounts.entries())
-                    .sort((a, b) => b[1] - a[1])
-                    .slice(0, HOT_SET_MAX);
-
-                for (let i = 0, len = sorted.length; i < len; i += 1) {
-                    hotPredicateIds.add(sorted[i][0]);
-                }
-
-                hotSetLocked = true;
-            }
-
-            function lockHotSetProfiled() {
-                const sorted = Array.from(hotCounts.entries())
-                    .sort((a, b) => b[1] - a[1])
-                    .slice(0, HOT_SET_MAX);
-
-                for (let i = 0, len = sorted.length; i < len; i += 1) {
-                    hotPredicateIds.add(sorted[i][0]);
-                }
-
-                hotSetLocked = true;
-                stats.hotSetLocked = true;
-                stats.hotSetSize = hotPredicateIds.size;
-            }
-
-            function learnHotPredicateProduction(id) {
-                if (hotSetLocked) return;
-
-                hotSamples += 1;
-                hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
-
-                if (hotSamples >= HOT_SET_LEARN_LIMIT) {
-                    lockHotSetProduction();
-                }
-            }
-
-            function learnHotPredicateProfiled(id) {
-                if (hotSetLocked) return;
-
-                hotSamples += 1;
-                stats.hotSetSamples = hotSamples;
-
-                hotCounts.set(id, (hotCounts.get(id) || 0) + 1);
-
-                if (hotSamples >= HOT_SET_LEARN_LIMIT) {
-                    lockHotSetProfiled();
-                }
-            }
-
-            function getSourceKeyAndId(predicateFn) {
-                const source = fnToString.call(predicateFn);
-
-                let sourceKey;
-                let id;
-
-                if (source === lastSourceText) {
-                    sourceKey = lastSourceKey;
-                    id = lastSourceId;
-                    if (id !== 0) return id;
-                } else {
-                    sourceKey =
-                        source.length <= SOURCE_KEY_LEN
-                            ? source
-                            : (" " + source.slice(0, SOURCE_KEY_LEN)).slice(1);
-
-                    lastSourceText = source;
-                    lastSourceKey = sourceKey;
-                }
-
-                id = predicateSourceIdBySource.get(sourceKey);
-
-                if (id === undefined) {
-                    id = nextPredicateSourceId++;
-                    predicateSourceIdBySource.set(sourceKey, id);
-                }
-
-                lastSourceId = id;
-                return id;
-            }
-
-            function getPredicateSourceIdProduction(predicateFn) {
-                if (predicateFn === lastPredicateFn) {
-                    return lastPredicateId;
-                }
-
-                let id = predicateSourceIdByFn.get(predicateFn);
-
-                if (id !== undefined) {
-                    lastPredicateFn = predicateFn;
-                    lastPredicateId = id;
-                    return id;
-                }
-
-                id = getSourceKeyAndId(predicateFn);
-
-                predicateSourceIdByFn.set(predicateFn, id);
-                lastPredicateFn = predicateFn;
-                lastPredicateId = id;
-
-                learnHotPredicateProduction(id);
-
-                return id;
-            }
-
-            function getPredicateSourceIdProfiled(predicateFn) {
-                if (predicateFn === lastPredicateFn) {
-                    stats.predicateSameFunctionHits += 1;
-                    return lastPredicateId;
-                }
-
-                let id = predicateSourceIdByFn.get(predicateFn);
-
-                if (id !== undefined) {
-                    stats.predicateSameFunctionHits += 1;
-
-                    if (hotSetLocked) {
-                        if (hotPredicateIds.has(id)) {
-                            stats.hotSetKnownFunctionHits += 1;
-                        } else {
-                            stats.hotSetKnownFunctionMisses += 1;
-                        }
-                    }
-
-                    lastPredicateFn = predicateFn;
-                    lastPredicateId = id;
-                    return id;
-                }
-
-                stats.predicateNewFunctionInstances += 1;
-
-                const beforeSourceCount = predicateSourceIdBySource.size;
-
-                id = getSourceKeyAndId(predicateFn);
-
-                if (predicateSourceIdBySource.size === beforeSourceCount) {
-                    stats.predicateSameSourceHits += 1;
-                } else {
-                    stats.predicateNewSource += 1;
-                }
-
-                predicateSourceIdByFn.set(predicateFn, id);
-                lastPredicateFn = predicateFn;
-                lastPredicateId = id;
-
-                learnHotPredicateProfiled(id);
-
-                return id;
-            }
-
-            function getAncestorChainWithoutLeafProduction(leafId, rootId) {
-                const cached = ancestorChainCache.get(leafId);
-                if (cached !== undefined) return cached;
-
-                const chain = [];
-                let node = getNode(store, leafId);
-                let guard = 0;
-
-                while (node && node.parentId && node.id !== rootId && guard < 2000) {
-                    node = getNode(store, node.parentId);
-                    if (!node || node.id === leafId) break;
-
-                    chain.push(node);
-                    if (node.id === rootId) break;
-
-                    guard += 1;
-                }
-
-                ancestorChainCache.set(leafId, chain);
-                return chain;
-            }
-
-            function getAncestorChainWithoutLeafProfiled(leafId, rootId) {
-                const cached = ancestorChainCache.get(leafId);
-
-                if (cached !== undefined) {
-                    stats.ancestorChainHits += 1;
-                    return cached;
-                }
-
-                stats.ancestorChainMisses += 1;
-
-                const chain = [];
-                let node = getNode(store, leafId);
-                let guard = 0;
-
-                while (node && node.parentId && node.id !== rootId && guard < 2000) {
-                    node = getNode(store, node.parentId);
-                    if (!node || node.id === leafId) break;
-
-                    chain.push(node);
-                    if (node.id === rootId) break;
-
-                    guard += 1;
-                }
-
-                ancestorChainCache.set(leafId, chain);
-                return chain;
-            }
-
-            this.__findNodeFromLeafFrameCache = sourceCache;
-            this.__findNodeFromLeafFrameCacheStats = stats;
             this.__findNodeFromLeafFrameCacheOriginal = {
                 findNodeFromLeaf: original,
             };
+            this.__findNodeFromLeafFrameCache = resultCache;
+            this.__findNodeFromLeafFrameCacheStats = stats;
+
+            function getPredicateNameKey(predicateFn) {
+                return predicateFn.name || "<anon>";
+            }
+
+            function getCachedResult(predicateFn, key) {
+                if (!resultCache.has(key)) {
+                    return undefined;
+                }
+
+                const cached = resultCache.get(key);
+
+                if (cached === null) {
+                    return null;
+                }
+
+                return predicateFn(cached)
+                    ? cached
+                    : CACHE_MISS;
+            }
+
+            function findNearLeaf(predicateFn, leafId) {
+                let node = nodeCache ? nodeCache.resolve(leafId) : getNodeDirect(store, leafId);
+
+                for (let depth = 0; node && depth <= 2; depth += 1) {
+                    if (predicateFn(node)) {
+                        return node;
+                    }
+
+                    node = nodeCache
+                        ? nodeCache.resolve(node.parentId)
+                        : getNodeDirect(store, node.parentId);
+                }
+
+                return undefined;
+            }
 
             if (profiled) {
-                store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(predicateFn, leafId, ...rest) {
-                    stats.calls += 1;
-
-                    if (typeof predicateFn !== "function" || !leafId) {
-                        stats.fallbackCalls += 1;
-                        return original.call(store, predicateFn, leafId, ...rest);
-                    }
-
-                    const predicateSourceId = getPredicateSourceIdProfiled(predicateFn);
-
+                store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(
+                    predicateFn,
+                    leafId,
+                    ...rest
+                ) {
                     if (
-                        predicateSourceId === lastResultPredicateSourceId &&
-                        leafId === lastResultLeafId
+                        typeof predicateFn !== "function" ||
+                        !leafId
                     ) {
-                        stats.lastResultHits += 1;
-                        return lastResultValue === CACHE_MISS ? null : lastResultValue;
+                        stats.invalidCalls += 1;
+                        stats.originalCalls += 1;
+
+                        return original.call(
+                            store,
+                            predicateFn,
+                            leafId,
+                            ...rest
+                        );
                     }
 
-                    let leafCache = sourceCache.get(leafId);
+                    const key = getPredicateNameKey(predicateFn);
+                    const cached = getCachedResult(predicateFn, key);
 
-                    if (leafCache !== undefined) {
-                        const cached = leafCache.get(predicateSourceId);
-
-                        if (cached !== undefined) {
-                            stats.sourceKeyFastHits += 1;
-                            stats.normalHits += 1;
-
-                            if (cached === CACHE_MISS) {
-                                stats.normalCacheReturnsNull += 1;
-                                stats.lastResultWrites += 1;
-                                return rememberLastResult(predicateSourceId, leafId, null);
-                            }
-
-                            stats.normalCacheReturnsNode += 1;
-                            stats.lastResultWrites += 1;
-                            return rememberLastResult(predicateSourceId, leafId, cached);
-                        }
-                    } else {
-                        leafCache = new Map();
-                        sourceCache.set(leafId, leafCache);
-                        insertionOrder.push(leafId);
-                        stats.cached += 1;
-                    }
-
-                    if (leafId === readCurrentLeafId()) {
-                        const frame = bridgeRef.__liveNodeReadFrame || 0;
-
-                        if (
-                            bridgeRef.__liveFindFrame !== frame ||
-                            bridgeRef.__liveFindLeafId !== leafId
-                        ) {
-                            bridgeRef.__liveFindFrame = frame;
-                            bridgeRef.__liveFindLeafId = leafId;
-                            bridgeRef.__liveFindCache = new Map();
-                            stats.liveCacheCreates += 1;
-                        }
-
-                        const liveCache = bridgeRef.__liveFindCache;
-                        const liveCached = liveCache.get(predicateSourceId);
-
-                        if (liveCached !== undefined) {
-                            stats.sourceKeyFastHits += 1;
-                            stats.liveHits += 1;
-
-                            if (liveCached === CACHE_MISS) {
-                                stats.liveCacheReturnsNull += 1;
-                                stats.lastResultWrites += 1;
-                                return rememberLastResult(predicateSourceId, leafId, null);
-                            }
-
-                            stats.liveCacheReturnsNode += 1;
-                            stats.lastResultWrites += 1;
-                            return rememberLastResult(predicateSourceId, leafId, liveCached);
-                        }
-
-                        stats.sourceKeyMisses += 1;
-                        stats.misses += 1;
-                        stats.liveMisses += 1;
-
-                        const activeNode = getNode(store, leafId);
-
-                        stats.activeLeafOriginalTests += 1;
-
-                        if (activeNode && predicateFn.call(store, activeNode)) {
-                            liveCache.set(predicateSourceId, activeNode);
-                            stats.lastResultWrites += 1;
-                            return rememberLastResult(predicateSourceId, leafId, activeNode);
-                        }
-
-                        let dormantLeafCache = dormantAncestorResultCache.get(leafId);
-
-                        if (dormantLeafCache !== undefined) {
-                            const dormantCached = dormantLeafCache.get(predicateSourceId);
-
-                            if (dormantCached !== undefined) {
-                                stats.dormantAncestorHits += 1;
-                                stats.sourceKeyFastHits += 1;
-
-                                liveCache.set(predicateSourceId, dormantCached);
-
-                                if (dormantCached === CACHE_MISS) {
-                                    stats.dormantAncestorReturnsNull += 1;
-                                    stats.lastResultWrites += 1;
-                                    return rememberLastResult(predicateSourceId, leafId, null);
-                                }
-
-                                stats.dormantAncestorReturnsNode += 1;
-                                stats.lastResultWrites += 1;
-                                return rememberLastResult(predicateSourceId, leafId, dormantCached);
-                            }
+                    if (cached !== undefined) {
+                        if (cached === CACHE_MISS) {
+                            stats.rejected += 1;
                         } else {
-                            dormantLeafCache = new Map();
-                            dormantAncestorResultCache.set(leafId, dormantLeafCache);
+                            stats.hits += 1;
+                            return cached;
                         }
-
-                        stats.dormantAncestorMisses += 1;
-
-                        const chain = getAncestorChainWithoutLeafProfiled(leafId, getRootId());
-
-                        for (let i = 0, len = chain.length; i < len; i += 1) {
-                            const node = chain[i];
-
-                            stats.ancestorNodeTests += 1;
-
-                            if (node && predicateFn.call(store, node)) {
-                                dormantLeafCache.set(predicateSourceId, node);
-                                stats.dormantAncestorWrites += 1;
-                                liveCache.set(predicateSourceId, node);
-                                stats.lastResultWrites += 1;
-                                return rememberLastResult(predicateSourceId, leafId, node);
-                            }
-                        }
-
-                        dormantLeafCache.set(predicateSourceId, CACHE_MISS);
-                        stats.dormantAncestorWrites += 1;
-                        liveCache.set(predicateSourceId, CACHE_MISS);
-                        stats.lastResultWrites += 1;
-                        return rememberLastResult(predicateSourceId, leafId, null);
                     }
 
-                    stats.sourceKeyMisses += 1;
-                    stats.misses += 1;
-                    stats.normalMisses += 1;
+                    const nearLeaf = findNearLeaf(predicateFn, leafId);
 
-                    const result = original.call(store, predicateFn, leafId, ...rest);
-
-                    if (result == null) {
-                        stats.normalOriginalReturnsNull += 1;
-                    } else {
-                        stats.normalOriginalReturnsNode += 1;
+                    if (nearLeaf !== undefined) {
+                        stats.ancestorFastHits += 1;
+                        resultCache.set(key, nearLeaf);
+                        stats.writes += 1;
+                        stats.cached = resultCache.size;
+                        return nearLeaf;
                     }
 
-                    leafCache.set(predicateSourceId, result ?? CACHE_MISS);
+                    stats.ancestorFastMisses += 1;
+                    stats.originalCalls += 1;
 
-                    stats.lastResultWrites += 1;
-                    return rememberLastResult(predicateSourceId, leafId, result);
+                    const result =
+                        original.call(
+                            store,
+                            predicateFn,
+                            leafId,
+                            ...rest
+                        ) ?? null;
+
+                    if (result === null) {
+                        stats.nullResults += 1;
+                    }
+
+                    resultCache.set(key, result);
+                    stats.writes += 1;
+                    stats.cached = resultCache.size;
+
+                    return result;
                 };
             } else {
-                store.findNodeFromLeaf = function cachedFindNodeFromLeaf(predicateFn, leafId, ...rest) {
-                    if (typeof predicateFn !== "function" || !leafId) {
-                        return original.call(store, predicateFn, leafId, ...rest) ?? null;
-                    }
-
-                    const predicateSourceId = getPredicateSourceIdProduction(predicateFn);
-
+                store.findNodeFromLeaf = function cachedFindNodeFromLeafProduction(
+                    predicateFn,
+                    leafId,
+                    ...rest
+                ) {
                     if (
-                        predicateSourceId === lastResultPredicateSourceId &&
-                        leafId === lastResultLeafId
+                        typeof predicateFn !== "function" ||
+                        !leafId
                     ) {
-                        return lastResultValue === CACHE_MISS ? null : lastResultValue;
+                        return original.call(
+                            store,
+                            predicateFn,
+                            leafId,
+                            ...rest
+                        );
                     }
 
-                    let leafCache = sourceCache.get(leafId);
+                    const key = getPredicateNameKey(predicateFn);
+                    const cached = getCachedResult(predicateFn, key);
 
-                    if (leafCache !== undefined) {
-                        const cached = leafCache.get(predicateSourceId);
-
-                        if (cached !== undefined) {
-                            return rememberLastResult(
-                                predicateSourceId,
-                                leafId,
-                                cached === CACHE_MISS ? null : cached
-                            );
-                        }
-                    } else {
-                        leafCache = new Map();
-                        sourceCache.set(leafId, leafCache);
-                        insertionOrder.push(leafId);
+                    if (cached !== undefined && cached !== CACHE_MISS) {
+                        return cached;
                     }
 
-                    if (leafId === readCurrentLeafId()) {
-                        const frame = bridgeRef.__liveNodeReadFrame || 0;
+                    const nearLeaf = findNearLeaf(predicateFn, leafId);
 
-                        if (
-                            bridgeRef.__liveFindFrame !== frame ||
-                            bridgeRef.__liveFindLeafId !== leafId
-                        ) {
-                            bridgeRef.__liveFindFrame = frame;
-                            bridgeRef.__liveFindLeafId = leafId;
-                            bridgeRef.__liveFindCache = new Map();
-                        }
-
-                        const liveCache = bridgeRef.__liveFindCache;
-                        const liveCached = liveCache.get(predicateSourceId);
-
-                        if (liveCached !== undefined) {
-                            return rememberLastResult(
-                                predicateSourceId,
-                                leafId,
-                                liveCached === CACHE_MISS ? null : liveCached
-                            );
-                        }
-
-                        const activeNode = getNode(store, leafId);
-
-                        if (activeNode && predicateFn.call(store, activeNode)) {
-                            liveCache.set(predicateSourceId, activeNode);
-                            return rememberLastResult(predicateSourceId, leafId, activeNode);
-                        }
-
-                        let dormantLeafCache = dormantAncestorResultCache.get(leafId);
-
-                        if (dormantLeafCache !== undefined) {
-                            const dormantCached = dormantLeafCache.get(predicateSourceId);
-
-                            if (dormantCached !== undefined) {
-                                liveCache.set(predicateSourceId, dormantCached);
-
-                                return rememberLastResult(
-                                    predicateSourceId,
-                                    leafId,
-                                    dormantCached === CACHE_MISS ? null : dormantCached
-                                );
-                            }
-                        } else {
-                            dormantLeafCache = new Map();
-                            dormantAncestorResultCache.set(leafId, dormantLeafCache);
-                        }
-
-                        const chain = getAncestorChainWithoutLeafProduction(leafId, getRootId());
-
-                        for (let i = 0, len = chain.length; i < len; i += 1) {
-                            const node = chain[i];
-
-                            if (node && predicateFn.call(store, node)) {
-                                dormantLeafCache.set(predicateSourceId, node);
-                                liveCache.set(predicateSourceId, node);
-                                return rememberLastResult(predicateSourceId, leafId, node);
-                            }
-                        }
-
-                        dormantLeafCache.set(predicateSourceId, CACHE_MISS);
-                        liveCache.set(predicateSourceId, CACHE_MISS);
-                        return rememberLastResult(predicateSourceId, leafId, null);
+                    if (nearLeaf !== undefined) {
+                        resultCache.set(key, nearLeaf);
+                        return nearLeaf;
                     }
 
-                    const result = original.call(store, predicateFn, leafId, ...rest);
+                    const result =
+                        original.call(
+                            store,
+                            predicateFn,
+                            leafId,
+                            ...rest
+                        ) ?? null;
 
-                    leafCache.set(predicateSourceId, result ?? CACHE_MISS);
+                    resultCache.set(key, result);
 
-                    return rememberLastResult(predicateSourceId, leafId, result);
+                    return result;
                 };
             }
 
@@ -3248,8 +2940,8 @@
             return {
                 ok: true,
                 installed: true,
-                methods: ["findNodeFromLeaf"],
                 profiled,
+                stats,
             };
         },
 
@@ -3289,10 +2981,8 @@
                     hits: 0,
                     misses: 0,
                     cached: 0,
-                    frameClears: 0,
-                    skippedClears: 0,
-                    activeLeafRafHits: 0,
-                    activeLeafRafMisses: 0,
+                    activeLeafEpochHits: 0,
+                    activeLeafEpochMisses: 0,
                     descendantHits: 0,
                     descendantWrites: 0,
                     descendantMissHits: 0,
@@ -3300,12 +2990,12 @@
                     directWalks: 0,
                     directWalkReturns: 0,
                     originalCalls: 0,
-                    mode: "profiled:persistent+active-leaf-raf-node+descendant-direct",
-                    lastClearReason: null,
+                    nullResults: 0,
+                    mode: "profiled:persistent+active-leaf-epoch+descendant-direct+shared-node-cache",
                 }
                 : {
-                    mode: "production:persistent+active-leaf-raf-node+descendant-direct",
-                    lastClearReason: null,
+                    cached: 0,
+                    mode: "production:persistent+active-leaf-epoch+descendant-direct+shared-node-cache",
                 };
 
             const frameCache = createPersistentCache({
@@ -3313,20 +3003,21 @@
                 profiled,
             });
 
+            const nodeCache = this.ensureNodeObjectCache({ profiled });
+
             this.__getLeafFromNodeFrameCache = frameCache.cache;
             this.__getLeafFromNodeFrameCacheStats = stats;
 
-            const bridgeRef = this;
-
             const leafDescendantCache = new Map();
             this.__leafDescendantCache = leafDescendantCache;
+
             const leafDescendantMissCache = new Set();
             this.__leafDescendantMissCache = leafDescendantMissCache;
 
             const get = frameCache.get;
             const set = frameCache.set;
 
-            let activeLeafFrame = -1;
+            let activeLeafEpoch = -1;
             let activeLeafKey = null;
             let activeLeafValue = null;
 
@@ -3345,8 +3036,14 @@
                     : store.currentLeafId;
             }
 
+            function resolveNode(id) {
+                return nodeCache
+                    ? nodeCache.resolve(id)
+                    : getNodeDirect(store, id);
+            }
+
             function tryDirectLeafWalk(key) {
-                let node = getNodeDirect(store, key);
+                let node = resolveNode(key);
 
                 if (!node || node.message?.status === "in_progress") {
                     return null;
@@ -3362,7 +3059,7 @@
                     guard < 2000
                 ) {
                     const childId = leaf.children[0];
-                    const next = getNodeDirect(store, childId);
+                    const next = resolveNode(childId);
 
                     if (!next || next === leaf) break;
 
@@ -3384,6 +3081,10 @@
                     set(leaf.id, leaf);
                 }
 
+                if (nodeCache && leaf?.id) {
+                    nodeCache.set(leaf.id, leaf);
+                }
+
                 return leaf;
             }
 
@@ -3392,46 +3093,39 @@
                 methodName: "getLeafFromNode",
                 originalSlot: "__getLeafFromNodeFrameCacheOriginal",
                 installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-                createWrapper: ({ store, original }) => {
+                createWrapper: ({ store, original, bridge }) => {
                     if (profiled) {
                         return function cachedGetLeafFromNodeProfiled(id) {
                             const key = normalizeLeafInputKey(id);
 
+                            if (!key) {
+                                stats.originalCalls += 1;
+                                return original.call(store, id) ?? null;
+                            }
+
                             if (key === readCurrentLeafId()) {
-                                const frame =
-                                    bridgeRef.__displayTurnsRafFrame ||
-                                    bridgeRef.__liveNodeReadFrame ||
-                                    0;
+                                const epoch = bridge.__storeReadEpoch;
 
                                 if (
-                                    activeLeafFrame === frame &&
+                                    activeLeafEpoch === epoch &&
                                     activeLeafKey === key &&
                                     activeLeafValue !== null
                                 ) {
-                                    stats.activeLeafRafHits += 1;
+                                    stats.activeLeafEpochHits += 1;
                                     return activeLeafValue;
                                 }
 
-                                stats.activeLeafRafMisses += 1;
-                                stats.originalCalls += 1;
-
-                                const result = original.call(store, id) ?? null;
-
-                                activeLeafFrame = frame;
-                                activeLeafKey = key;
-                                activeLeafValue = result;
-
-                                return result;
+                                stats.activeLeafEpochMisses += 1;
                             }
 
                             const cached = get(key);
                             if (cached !== undefined) return cached;
 
                             const descendantCached = leafDescendantCache.get(key);
+
                             if (descendantCached !== undefined) {
                                 stats.descendantHits += 1;
-                                set(key, descendantCached);
-                                return descendantCached;
+                                return rememberLeaf(key, descendantCached);
                             }
 
                             if (leafDescendantMissCache.has(key)) {
@@ -3439,17 +3133,20 @@
                                 stats.originalCalls += 1;
 
                                 const result = original.call(store, id) ?? null;
-                                set(key, result);
+
+                                if (result === null) {
+                                    stats.nullResults += 1;
+                                }
 
                                 const leafId = result?.id ?? null;
+
                                 if (leafId && leafId !== key) {
-                                    set(leafId, result);
                                     leafDescendantCache.set(key, result);
                                     leafDescendantMissCache.delete(key);
                                     stats.descendantWrites += 1;
                                 }
 
-                                return result;
+                                return rememberLeaf(key, result);
                             }
 
                             stats.directWalks += 1;
@@ -3461,6 +3158,13 @@
                                 stats.descendantWrites += 1;
 
                                 leafDescendantCache.set(key, directLeaf);
+
+                                if (key === readCurrentLeafId()) {
+                                    activeLeafEpoch = bridge.__storeReadEpoch;
+                                    activeLeafKey = key;
+                                    activeLeafValue = directLeaf;
+                                }
+
                                 return rememberLeaf(key, directLeaf);
                             }
 
@@ -3470,53 +3174,54 @@
 
                             const result = original.call(store, id) ?? null;
 
-                            set(key, result);
+                            if (result === null) {
+                                stats.nullResults += 1;
+                            }
 
                             const leafId = result?.id ?? null;
+
                             if (leafId && leafId !== key) {
-                                set(leafId, result);
                                 leafDescendantCache.set(key, result);
                                 leafDescendantMissCache.delete(key);
                                 stats.descendantWrites += 1;
                             }
 
-                            return result;
+                            if (key === readCurrentLeafId()) {
+                                activeLeafEpoch = bridge.__storeReadEpoch;
+                                activeLeafKey = key;
+                                activeLeafValue = result;
+                            }
+
+                            return rememberLeaf(key, result);
                         };
                     }
 
                     return function cachedGetLeafFromNodeProduction(id) {
                         const key = normalizeLeafInputKey(id);
 
+                        if (!key) {
+                            return original.call(store, id) ?? null;
+                        }
+
                         if (key === readCurrentLeafId()) {
-                            const frame =
-                                bridgeRef.__displayTurnsRafFrame ||
-                                bridgeRef.__liveNodeReadFrame ||
-                                0;
+                            const epoch = bridge.__storeReadEpoch;
 
                             if (
-                                activeLeafFrame === frame &&
+                                activeLeafEpoch === epoch &&
                                 activeLeafKey === key &&
                                 activeLeafValue !== null
                             ) {
                                 return activeLeafValue;
                             }
-
-                            const result = original.call(store, id) ?? null;
-
-                            activeLeafFrame = frame;
-                            activeLeafKey = key;
-                            activeLeafValue = result;
-
-                            return result;
                         }
 
                         const cached = get(key);
                         if (cached !== undefined) return cached;
 
                         const descendantCached = leafDescendantCache.get(key);
+
                         if (descendantCached !== undefined) {
-                            set(key, descendantCached);
-                            return descendantCached;
+                            return rememberLeaf(key, descendantCached);
                         }
 
                         if (!leafDescendantMissCache.has(key)) {
@@ -3524,6 +3229,13 @@
 
                             if (directLeaf) {
                                 leafDescendantCache.set(key, directLeaf);
+
+                                if (key === readCurrentLeafId()) {
+                                    activeLeafEpoch = bridge.__storeReadEpoch;
+                                    activeLeafKey = key;
+                                    activeLeafValue = directLeaf;
+                                }
+
                                 return rememberLeaf(key, directLeaf);
                             }
 
@@ -3532,16 +3244,20 @@
 
                         const result = original.call(store, id) ?? null;
 
-                        set(key, result);
-
                         const leafId = result?.id ?? null;
+
                         if (leafId && leafId !== key) {
-                            set(leafId, result);
                             leafDescendantCache.set(key, result);
                             leafDescendantMissCache.delete(key);
                         }
 
-                        return result;
+                        if (key === readCurrentLeafId()) {
+                            activeLeafEpoch = bridge.__storeReadEpoch;
+                            activeLeafKey = key;
+                            activeLeafValue = result;
+                        }
+
+                        return rememberLeaf(key, result);
                     };
                 },
             });
@@ -3549,6 +3265,7 @@
             return {
                 ...result,
                 profiled,
+                stats,
             };
         },
 
@@ -3714,13 +3431,10 @@
                     hits: 0,
                     misses: 0,
                     cached: 0,
-                    frameClears: 0,
                     mode: "profiled:persistent:getBranch",
-                    lastClearReason: null,
                 }
                 : {
                     mode: "production:persistent:getBranch",
-                    lastClearReason: null,
                 };
 
             const getBranchFromLeafStats = profiled
@@ -3734,13 +3448,10 @@
                     prefixRejected: 0,
                     originalCalls: 0,
                     cached: 0,
-                    frameClears: 0,
                     mode: "profiled:persistent:getBranchFromLeaf",
-                    lastClearReason: null,
                 }
                 : {
                     mode: "production:persistent:getBranchFromLeaf",
-                    lastClearReason: null,
                 };
 
             const getBranchCache = createPersistentCache({
@@ -3971,44 +3682,109 @@
                     unknownInputs: 0,
 
                     cached: 0,
-                    frameClears: 0,
-                    mode: "profiled:persistent",
+                    mode: "profiled:persistent-id-alias+shared-node-cache",
 
                     inputSamples: [],
                     resultSamples: [],
                 },
                 {
-                    mode: "production:persistent",
+                    cached: 0,
+                    mode: "production:persistent-id-alias+shared-node-cache",
                 }
             );
 
-            const frameCache = createPersistentCache({
+            const aliasCache = createPersistentCache({
                 stats,
                 profiled,
             });
 
-            this.__resolvedNodeFrameCache = frameCache.cache;
+            const nodeCache = this.ensureNodeObjectCache({ profiled });
+
+            this.__resolvedNodeFrameCache = aliasCache.cache;
             this.__resolvedNodeFrameCacheStats = stats;
 
             const bridgeRef = this;
+
+            function classifyInput(id) {
+                if (typeof id === "string") {
+                    if (id.startsWith("client-") || /^[0-9a-f-]{20,}$/i.test(id)) {
+                        return "node";
+                    }
+
+                    return "message";
+                }
+
+                return "unknown";
+            }
+
+            function remember(inputId, node) {
+                if (node?.id) {
+                    if (nodeCache) {
+                        nodeCache.set(node.id, node);
+                    }
+
+                    aliasCache.set(inputId, node.id);
+
+                    if (node.id !== inputId) {
+                        aliasCache.set(node.id, node.id);
+
+                        if (profiled) {
+                            stats.dualKeyWrites += 1;
+                        }
+                    }
+
+                    if (profiled) {
+                        stats.nodeWrites += 1;
+                        stats.resolvedNodeIds += 1;
+                    }
+
+                    return node;
+                }
+
+                aliasCache.set(inputId, null);
+
+                if (profiled) {
+                    stats.nullWrites += 1;
+                }
+
+                return null;
+            }
+
+            function getCachedResolvedNode(id) {
+                const cachedNodeId = aliasCache.get(id);
+
+                if (cachedNodeId === undefined) {
+                    return undefined;
+                }
+
+                if (cachedNodeId === null) {
+                    return null;
+                }
+
+                return nodeCache
+                    ? nodeCache.resolve(cachedNodeId)
+                    : getNodeDirect(store, cachedNodeId);
+            }
 
             if (profiled) {
                 this.__resolveNodeFast = function resolveNodeFastProfiled(id) {
                     stats.calls += 1;
 
-                    if (typeof id === "string") {
-                        if (id.startsWith("client-") || /^[0-9a-f-]{20,}$/i.test(id)) {
-                            stats.nodeIdInputs += 1;
-                        } else {
-                            stats.messageIdInputs += 1;
-                        }
+                    const inputType = classifyInput(id);
+
+                    if (inputType === "node") {
+                        stats.nodeIdInputs += 1;
+                    } else if (inputType === "message") {
+                        stats.messageIdInputs += 1;
                     } else {
                         stats.unknownInputs += 1;
                     }
 
-                    const cached = frameCache.get(id);
+                    const cached = getCachedResolvedNode(id);
 
                     if (cached !== undefined) {
+                        stats.hits += 1;
+
                         if (cached === null) {
                             stats.nullHits += 1;
                         } else {
@@ -4018,80 +3794,41 @@
                         return cached;
                     }
 
+                    stats.misses += 1;
+
                     const node = resolveNodeCore(bridgeRef, id);
 
                     if (stats.inputSamples.length < 20) {
                         stats.inputSamples.push({
                             id,
-                            idType: typeof id,
-                            idString: String(id).slice(0, 120),
-                            nodeExists: Boolean(node),
-                            nodeId: node?.id ?? null,
-                            messageId:
-                                node?.message?.id ||
-                                node?.message?.message_id ||
-                                node?.message?.metadata?.message_id ||
-                                null,
+                            inputType,
                         });
                     }
 
-                    if (node) {
-                        const nodeId = node.id;
-
-                        stats.nodeWrites += 1;
-
-                        if (nodeId) {
-                            stats.resolvedNodeIds += 1;
-                        }
-
-                        frameCache.set(id, node);
-
-                        if (nodeId && nodeId !== id) {
-                            frameCache.set(nodeId, node);
-                            stats.dualKeyWrites += 1;
-                        }
-
-                        if (stats.resultSamples.length < 20) {
-                            stats.resultSamples.push({
-                                inputId: String(id).slice(0, 120),
-                                nodeId,
-                                hasMessage: Boolean(node.message),
-                                messageId:
-                                    node.message?.id ||
-                                    node.message?.message_id ||
-                                    node.message?.metadata?.message_id ||
-                                    null,
-                                nodeKeys:
-                                    node && typeof node === "object"
-                                        ? Object.keys(node).slice(0, 20)
-                                        : null,
-                            });
-                        }
-                    } else {
-                        stats.nullWrites += 1;
-                        frameCache.set(id, null);
+                    if (stats.resultSamples.length < 20) {
+                        stats.resultSamples.push({
+                            input: id,
+                            resultId: node?.id ?? null,
+                            resultType: node ? typeof node : null,
+                            keys: node && typeof node === "object"
+                                ? Object.keys(node).slice(0, 20)
+                                : null,
+                        });
                     }
 
-                    return node;
+                    return remember(id, node);
                 };
             } else {
-                const get = frameCache.get;
-                const set = frameCache.set;
-                const resolve = resolveNodeCore;
-
                 this.__resolveNodeFast = function resolveNodeFastProduction(id) {
-                    const cached = get(id);
-                    if (cached !== undefined) return cached;
+                    const cached = getCachedResolvedNode(id);
 
-                    const node = resolve(bridgeRef, id);
-
-                    set(id, node ?? null);
-
-                    if (node?.id && node.id !== id) {
-                        set(node.id, node);
+                    if (cached !== undefined) {
+                        return cached;
                     }
 
-                    return node;
+                    const node = resolveNodeCore(bridgeRef, id);
+
+                    return remember(id, node);
                 };
             }
 
@@ -4454,12 +4191,10 @@
                     activeEpochMisses: 0,
                     cached: 0,
                     mode: "profiled:findNode-predicate-positive-result-cache+epoch-throttle",
-                    lastClearReason: null,
                 }
                 : {
                     cached: 0,
                     mode: "production:findNode-predicate-positive-result-cache+epoch-throttle",
-                    lastClearReason: null,
                 };
 
             const bridgeRef = this;
@@ -4721,362 +4456,6 @@
             };
         },
 
-        installGetDisplayTurnsCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-            if (this.__getDisplayTurnsCacheInstalled) return { ok: true, alreadyInstalled: true };
-
-            const original = getStoreMethod(store, "getDisplayTurns");
-            if (!original) return unavailable("getDisplayTurns unavailable");
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    bypassed: 0,
-                    cached: 0,
-                    frameClears: 0,
-                    lastClearReason: null,
-
-                    liveHits: 0,
-                    liveMisses: 0,
-                    prefixHits: 0,
-                    prefixMisses: 0,
-
-                    tailPatchHits: 0,
-                    tailPatchMisses: 0,
-                    tailPatchRejected: 0,
-
-                    rafStarts: 0,
-                    rafStops: 0,
-                    rafTicks: 0,
-                }
-                : null;
-
-            const cacheApi = createPersistentCache({ stats, profiled });
-            const bridgeRef = this;
-            const get = cacheApi.get;
-            const set = cacheApi.set;
-
-            const activePrefixCache = new Map();
-            bridgeRef.__getDisplayTurnsActivePrefixCache = activePrefixCache;
-
-            let liveFrame = -1;
-            let liveLeafId = null;
-            let liveValue = undefined;
-
-            bridgeRef.__displayTurnsRafFrame = 0;
-            bridgeRef.__displayTurnsRafRunning = false;
-            bridgeRef.__displayTurnsRafId = null;
-            bridgeRef.__displayTurnsRafIdleTimer = null;
-            bridgeRef.__displayTurnsRafLastActivityAt = 0;
-
-            function bumpDisplayTurnsRafFrameProduction() {
-                if (!bridgeRef.__displayTurnsRafRunning) {
-                    bridgeRef.__displayTurnsRafId = null;
-                    return;
-                }
-
-                bridgeRef.__displayTurnsRafFrame =
-                    (bridgeRef.__displayTurnsRafFrame + 1) | 0;
-
-                bridgeRef.__displayTurnsRafId =
-                    requestAnimationFrame(bumpDisplayTurnsRafFrameProduction);
-            }
-
-            function bumpDisplayTurnsRafFrameProfiled() {
-                if (!bridgeRef.__displayTurnsRafRunning) {
-                    bridgeRef.__displayTurnsRafId = null;
-                    return;
-                }
-
-                bridgeRef.__displayTurnsRafFrame =
-                    (bridgeRef.__displayTurnsRafFrame + 1) | 0;
-
-                stats.rafTicks = (stats.rafTicks + 1) | 0;
-
-                bridgeRef.__displayTurnsRafId =
-                    requestAnimationFrame(bumpDisplayTurnsRafFrameProfiled);
-            }
-
-            const bumpDisplayTurnsRafFrame = profiled
-                ? bumpDisplayTurnsRafFrameProfiled
-                : bumpDisplayTurnsRafFrameProduction;
-
-            function startDisplayTurnsRafFrameClockProduction() {
-                if (bridgeRef.__displayTurnsRafRunning) return;
-
-                bridgeRef.__displayTurnsRafRunning = true;
-                bridgeRef.__displayTurnsRafId =
-                    requestAnimationFrame(bumpDisplayTurnsRafFrame);
-            }
-
-            function startDisplayTurnsRafFrameClockProfiled() {
-                if (bridgeRef.__displayTurnsRafRunning) return;
-
-                bridgeRef.__displayTurnsRafRunning = true;
-                stats.rafStarts += 1;
-
-                bridgeRef.__displayTurnsRafId =
-                    requestAnimationFrame(bumpDisplayTurnsRafFrame);
-            }
-
-            function stopDisplayTurnsRafFrameClockProduction() {
-                if (!bridgeRef.__displayTurnsRafRunning) return;
-
-                bridgeRef.__displayTurnsRafRunning = false;
-
-                const rafId = bridgeRef.__displayTurnsRafId;
-                if (rafId != null) {
-                    cancelAnimationFrame(rafId);
-                    bridgeRef.__displayTurnsRafId = null;
-                }
-            }
-
-            function stopDisplayTurnsRafFrameClockProfiled() {
-                if (!bridgeRef.__displayTurnsRafRunning) return;
-
-                bridgeRef.__displayTurnsRafRunning = false;
-                stats.rafStops += 1;
-
-                const rafId = bridgeRef.__displayTurnsRafId;
-                if (rafId != null) {
-                    cancelAnimationFrame(rafId);
-                    bridgeRef.__displayTurnsRafId = null;
-                }
-            }
-
-            const startDisplayTurnsRafFrameClock = profiled
-                ? startDisplayTurnsRafFrameClockProfiled
-                : startDisplayTurnsRafFrameClockProduction;
-
-            const stopDisplayTurnsRafFrameClock = profiled
-                ? stopDisplayTurnsRafFrameClockProfiled
-                : stopDisplayTurnsRafFrameClockProduction;
-
-            function keepDisplayTurnsRafAlive() {
-                startDisplayTurnsRafFrameClock();
-
-                const now = performance.now();
-                bridgeRef.__displayTurnsRafLastActivityAt = now;
-
-                if (bridgeRef.__displayTurnsRafIdleTimer != null) {
-                    return;
-                }
-
-                bridgeRef.__displayTurnsRafIdleTimer = window.setTimeout(function checkDisplayTurnsRafIdle() {
-                    const elapsed =
-                        performance.now() - (bridgeRef.__displayTurnsRafLastActivityAt || 0);
-
-                    if (elapsed < 250) {
-                        bridgeRef.__displayTurnsRafIdleTimer =
-                            window.setTimeout(checkDisplayTurnsRafIdle, 250);
-                        return;
-                    }
-
-                    bridgeRef.__displayTurnsRafIdleTimer = null;
-                    stopDisplayTurnsRafFrameClock();
-                }, 250);
-            }
-
-            bridgeRef.__stopDisplayTurnsRafFrameClock = stopDisplayTurnsRafFrameClock;
-
-            function patchLastTurnWithMessage(templateTurn, freshMessage, leafId) {
-                if (!templateTurn || !freshMessage) return null;
-
-                const messages = templateTurn.messages;
-                const messageGroups = templateTurn.messageGroups;
-
-                if (!Array.isArray(messages) || messages.length === 0) return null;
-                if (!Array.isArray(messageGroups) || messageGroups.length === 0) return null;
-
-                const lastMessageIndex = messages.length - 1;
-                const oldLastMessage = messages[lastMessageIndex];
-
-                if (oldLastMessage?.id !== leafId) return null;
-
-                const lastGroupIndex = messageGroups.length - 1;
-                const oldLastGroup = messageGroups[lastGroupIndex];
-                const groupMessages = oldLastGroup?.messages;
-
-                if (!Array.isArray(groupMessages) || groupMessages.length === 0) return null;
-
-                const lastGroupMessageIndex = groupMessages.length - 1;
-                const oldLastGroupMessage = groupMessages[lastGroupMessageIndex];
-
-                if (oldLastGroupMessage?.id !== leafId) return null;
-
-                const patchedMessages = messages.slice();
-                patchedMessages[lastMessageIndex] = freshMessage;
-
-                const patchedGroupMessages = groupMessages.slice();
-                patchedGroupMessages[lastGroupMessageIndex] = freshMessage;
-
-                const patchedGroups = messageGroups.slice();
-                patchedGroups[lastGroupIndex] = {
-                    ...oldLastGroup,
-                    messages: patchedGroupMessages,
-                };
-
-                return {
-                    ...templateTurn,
-                    messages: patchedMessages,
-                    messageGroups: patchedGroups,
-                };
-            }
-
-            this.__getDisplayTurnsCache = cacheApi.cache;
-            this.__getDisplayTurnsCacheStats = stats;
-            this.__getDisplayTurnsCacheOriginal = { getDisplayTurns: original };
-
-            store.getDisplayTurns = function cachedGetDisplayTurns(leafId, ...rest) {
-                const currentLeafId =
-                    typeof store.currentLeafId === "function"
-                        ? store.currentLeafId()
-                        : store.currentLeafId;
-
-                const isCurrentLeaf = leafId === currentLeafId;
-
-                if (isCurrentLeaf) {
-                    keepDisplayTurnsRafAlive();
-
-                    const frame = bridgeRef.__displayTurnsRafFrame || 0;
-
-                    if (
-                        liveFrame === frame &&
-                        liveLeafId === leafId &&
-                        liveValue !== undefined
-                    ) {
-                        if (stats) stats.liveHits += 1;
-                        return liveValue;
-                    }
-
-                    const prefixEntry = activePrefixCache.get(leafId);
-
-                    if (prefixEntry) {
-                        const freshNode = store.getNodeIfExists?.(leafId) ?? null;
-                        const freshMessage = freshNode?.message ?? null;
-
-                        const patchedLastTurn = patchLastTurnWithMessage(
-                            prefixEntry.lastTurnTemplate,
-                            freshMessage,
-                            leafId
-                        );
-
-                        if (patchedLastTurn) {
-                            const patched = prefixEntry.prefix.concat(patchedLastTurn);
-
-                            liveFrame = frame;
-                            liveLeafId = leafId;
-                            liveValue = patched;
-
-                            if (stats) {
-                                stats.prefixHits += 1;
-                                stats.tailPatchHits += 1;
-                                stats.liveHits += 1;
-                            }
-
-                            return patched;
-                        }
-
-                        if (stats) {
-                            stats.tailPatchMisses += 1;
-                            stats.tailPatchRejected += 1;
-                        }
-                    }
-
-                    if (stats) stats.liveMisses += 1;
-
-                    const result = original.call(store, leafId, ...rest) ?? null;
-
-                    if (Array.isArray(result) && result.length > 1) {
-                        const lastTurn = result[result.length - 1];
-                        const lastMessage = lastTurn?.messages?.[lastTurn.messages.length - 1];
-                        const lastGroup = lastTurn?.messageGroups?.[lastTurn.messageGroups.length - 1];
-                        const lastGroupMessage =
-                            lastGroup?.messages?.[lastGroup.messages.length - 1];
-
-                        if (
-                            lastMessage?.id === leafId &&
-                            lastGroupMessage?.id === leafId
-                        ) {
-                            activePrefixCache.set(leafId, {
-                                prefix: result.slice(0, -1),
-                                lastTurnTemplate: lastTurn,
-                            });
-                        }
-
-                        if (stats) stats.prefixMisses += 1;
-                    }
-
-                    liveFrame = frame;
-                    liveLeafId = leafId;
-                    liveValue = result;
-
-                    return result;
-                }
-
-                const cached = get(leafId);
-                if (cached !== undefined) return cached;
-
-                const result = original.call(store, leafId, ...rest);
-                set(leafId, result ?? null);
-
-                return result ?? null;
-            };
-
-            this.__getDisplayTurnsCacheInstalled = true;
-
-            return { ok: true, installed: true, profiled };
-        },
-
-        getDisplayTurnsCacheStats() {
-            const stats = this.__getDisplayTurnsCacheStats;
-            const hits = stats?.hits ?? 0;
-            const misses = stats?.misses ?? 0;
-            const total = hits + misses;
-            const size = this.__getDisplayTurnsCache?.size ?? 0;
-
-            return {
-                installed: Boolean(this.__getDisplayTurnsCacheInstalled),
-                hits,
-                misses,
-                bypassed: stats?.bypassed ?? 0,
-                hitRate: total > 0 ? hits / total : 0,
-                size,
-                cached: stats?.cached ?? size,
-                liveHits: stats?.liveHits ?? 0,
-                liveMisses: stats?.liveMisses ?? 0,
-                prefixHits: stats?.prefixHits ?? 0,
-                prefixMisses: stats?.prefixMisses ?? 0,
-                tailPatchHits: stats?.tailPatchHits ?? 0,
-                tailPatchMisses: stats?.tailPatchMisses ?? 0,
-                tailPatchRejected: stats?.tailPatchRejected ?? 0,
-                lastClearReason: stats?.lastClearReason ?? null,
-                rafStarts: stats?.rafStarts ?? 0,
-                rafStops: stats?.rafStops ?? 0,
-                rafTicks: stats?.rafTicks ?? 0,
-                rafRunning: Boolean(this.__displayTurnsRafRunning),
-            };
-        },
-
-        uninstallGetDisplayTurnsCache() {
-            this.__stopDisplayTurnsRafFrameClock?.();
-
-            if (this.__displayTurnsRafIdleTimer != null) {
-                clearTimeout(this.__displayTurnsRafIdleTimer);
-                this.__displayTurnsRafIdleTimer = null;
-            }
-
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__getDisplayTurnsCacheOriginal",
-                installedFlag: "__getDisplayTurnsCacheInstalled",
-            });
-        },
-
         installUpdateNodeMessageRafBatcher() {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
@@ -5306,7 +4685,7 @@
                 this.__messageIdIndexStats.cached = this.__messageIdIndex?.size ?? 0;
             }
 
-            for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+            for (const [cacheSlot, statsSlot] of STABLE_CACHE_SLOTS) {
                 if (cacheSlot === "__branchCache") {
                     resetFrameCacheStats(
                         this.__branchCacheStats?.getBranch,
@@ -5337,7 +4716,6 @@
                 if ("activeRafMisses" in stats) stats.activeRafMisses = 0;
 
                 stats.cached = this.__findNodePredicateCache?.size ?? 0;
-                stats.lastClearReason = null;
             }
 
             if (ENABLE_BRANCH_CALLSITE_STATS) {
@@ -5364,18 +4742,24 @@
             return {
                 status: this.status?.(),
                 messageIdIndex: this.getMessageIdIndexStats?.(),
-                existingNodeFrameCache: this.getExistingNodeFrameCacheStats?.(),
+                existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
+                getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
                 findNodeFromLeafFrameCache: this.getFindNodeFromLeafFrameCacheStats?.(),
                 getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
-                getDisplayTurnsCache: this.getDisplayTurnsCacheStats?.(),
+
                 branchCallSites: this.getBranchCallSiteStats?.(),
                 getNodeByIdOrMessageIdCallSites: this.getNodeByIdOrMessageIdCallSiteStats?.(),
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
                 findNodeCallSites: this.getFindNodeCallSiteProfilerStats?.(),
                 findNodePredicateCache: this.getFindNodePredicateCacheStats?.(),
+                nodeObjectCache: {
+                    installed: Boolean(this.__nodeObjectCacheApi),
+                    size: this.__nodeObjectCache?.size ?? 0,
+                    stats: this.__nodeObjectCacheStats,
+                },
             };
         },
 
@@ -5400,7 +4784,8 @@
             };
 
             invalidationStats.totalCalls += 1;
-            invalidationStats.byReason[reason] = (invalidationStats.byReason[reason] || 0) + 1;
+            invalidationStats.byReason[reason] =
+                (invalidationStats.byReason[reason] || 0) + 1;
 
             const recordInvalidation = (cacheName, action, sizeBefore = 0, extra = null) => {
                 const cacheStats = invalidationStats.byCache[cacheName] ??= {
@@ -5411,8 +4796,10 @@
                     byAction: {},
                 };
 
-                cacheStats.byReason[reason] = (cacheStats.byReason[reason] || 0) + 1;
-                cacheStats.byAction[action] = (cacheStats.byAction[action] || 0) + 1;
+                cacheStats.byReason[reason] =
+                    (cacheStats.byReason[reason] || 0) + 1;
+                cacheStats.byAction[action] =
+                    (cacheStats.byAction[action] || 0) + 1;
 
                 if (action === "cleared") {
                     cacheStats.clears += 1;
@@ -5435,92 +4822,86 @@
                 }
             };
 
-            const isNonTopologyMutation =
-                reason === "store-mutation" ||
-                reason === "raf-updateNodeMessage" ||
-                reason === "streaming-mutation";
-
-            const isFullClear =
+            const shouldHardClear =
                 reason === "manual" ||
                 reason === "conversation-change" ||
-                reason === "topology-mutation";
+                reason === "store-replaced" ||
+                reason === "bridge-reset";
 
-            for (const [cacheSlot, statsSlot] of FRAME_CACHE_SLOTS) {
+            const recordBranchSkip = (why) => {
+                const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
+                const getBranchFromLeafSize =
+                    this.__branchCache?.getBranchFromLeaf?.size ?? 0;
+
+                recordInvalidation("__branchCache.getBranch", "skipped", getBranchSize, {
+                    why,
+                });
+
+                recordInvalidation(
+                    "__branchCache.getBranchFromLeaf",
+                    "skipped",
+                    getBranchFromLeafSize,
+                    { why }
+                );
+            };
+
+            const recordCacheSkip = (cacheSlot, stats, why) => {
+                const cache = this[cacheSlot];
+
+                recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
+                    why,
+                });
+            };
+
+            if (!shouldHardClear) {
+                for (const [cacheSlot, statsSlot] of STABLE_CACHE_SLOTS) {
+                    if (cacheSlot === "__branchCache") {
+                        recordBranchSkip("cache preserved until conversation/store reset");
+                        continue;
+                    }
+
+                    recordCacheSkip(
+                        cacheSlot,
+                        this[statsSlot],
+                        "cache preserved until conversation/store reset"
+                    );
+                }
+
+                return {
+                    ok: true,
+                    reason,
+                    skipped: true,
+                    stats: invalidationStats,
+                };
+            }
+
+            for (const [cacheSlot, statsSlot] of STABLE_CACHE_SLOTS) {
                 const cache = this[cacheSlot];
                 const stats = this[statsSlot];
 
                 if (cacheSlot === "__branchCache") {
                     const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
-                    const getBranchFromLeafSize = this.__branchCache?.getBranchFromLeaf?.size ?? 0;
-
-                    if (isNonTopologyMutation) {
-                        recordInvalidation("__branchCache.getBranch", "skipped", getBranchSize, {
-                            why: "branch cache is safe across message-only mutation",
-                        });
-
-                        recordInvalidation("__branchCache.getBranchFromLeaf", "skipped", getBranchFromLeafSize, {
-                            why: "branch-from-leaf topology unchanged",
-                        });
-
-                        if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
-                            for (const branchStats of [
-                                this.__branchCacheStats.getBranch,
-                                this.__branchCacheStats.getBranchFromLeaf,
-                            ]) {
-                                if (branchStats) {
-                                    branchStats.skippedClears = (branchStats.skippedClears || 0) + 1;
-                                    branchStats.lastClearReason = "skipped-" + reason;
-                                }
-                            }
-                        }
-
-                        continue;
-                    }
+                    const getBranchFromLeafSize =
+                        this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
                     this.__branchCache?.getBranch?.clear?.();
                     this.__branchCache?.getBranchFromLeaf?.clear?.();
 
                     recordInvalidation("__branchCache.getBranch", "cleared", getBranchSize);
-                    recordInvalidation("__branchCache.getBranchFromLeaf", "cleared", getBranchFromLeafSize);
+                    recordInvalidation(
+                        "__branchCache.getBranchFromLeaf",
+                        "cleared",
+                        getBranchFromLeafSize
+                    );
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
                         if (this.__branchCacheStats.getBranch) {
                             this.__branchCacheStats.getBranch.cached = 0;
-                            this.__branchCacheStats.getBranch.frameClears += 1;
-                            this.__branchCacheStats.getBranch.lastClearReason = reason;
                         }
 
                         if (this.__branchCacheStats.getBranchFromLeaf) {
                             this.__branchCacheStats.getBranchFromLeaf.cached = 0;
-                            this.__branchCacheStats.getBranchFromLeaf.frameClears += 1;
-                            this.__branchCacheStats.getBranchFromLeaf.lastClearReason = reason;
                         }
-                    }
-
-                    continue;
-                }
-
-                if (isNonTopologyMutation) {
-                    recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
-                        why: "message-only mutation does not change node topology",
-                    });
-
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-" + reason;
-                    }
-
-                    continue;
-                }
-
-                if (!isFullClear) {
-                    recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
-                        why: "unknown/non-structural reason defaults to preserving long-lived cache",
-                    });
-
-                    if (stats && ENABLE_CACHE_PROFILING) {
-                        stats.skippedClears = (stats.skippedClears || 0) + 1;
-                        stats.lastClearReason = "skipped-" + reason;
                     }
 
                     continue;
@@ -5545,15 +4926,17 @@
 
                 if (stats && ENABLE_CACHE_PROFILING) {
                     stats.cached = 0;
-                    if ("clears" in stats) stats.clears += 1;
-                    else if ("frameClears" in stats) stats.frameClears += 1;
-                    stats.lastClearReason = reason;
+
+                    if ("clears" in stats) {
+                        stats.clears += 1;
+                    }
                 }
             }
 
             return {
                 ok: true,
                 reason,
+                skipped: false,
                 stats: invalidationStats,
             };
         },
@@ -5562,20 +4945,19 @@
             return {
                 installed: Boolean(
                     this.__messageIdIndexInstalled ||
-                    this.__existingNodeFrameCacheInstalled ||
+                    this.__existingNodeStableCacheInstalled ||
                     this.__findNodeFromLeafFrameCacheInstalled ||
                     this.__getLeafFromNodeFrameCacheInstalled ||
                     this.__branchCacheInstalled ||
-                    this.__resolvedNodeFrameCacheInstalled ||
-                    this.__getDisplayTurnsCacheInstalled
+                    this.__resolvedNodeFrameCacheInstalled
                 ),
                 messageIdIndex: this.getMessageIdIndexStats?.(),
-                existingNodeFrameCache: this.getExistingNodeFrameCacheStats?.(),
+                existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
+                getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
                 findNodeFromLeafFrameCache: this.getFindNodeFromLeafFrameCacheStats?.(),
                 getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
-                getDisplayTurnsCache: this.getDisplayTurnsCacheStats?.(),
             };
         },
 
@@ -5822,13 +5204,11 @@
     function resetToStartupCachePolicy(reason = "conversation-change") {
         bridge.clearStoreReadCache?.(reason);
 
-        const original = bridge.__existingNodeFrameCacheOriginal?.getNodeIfExists;
-        const cacheApi = bridge.__existingNodeFrameCacheApi;
+        const original = bridge.__existingNodeStableCacheOriginal?.getNodeIfExists;
+        const cacheApi = bridge.__existingNodeStableCacheApi;
 
         if (bridge.__store && typeof original === "function" && cacheApi) {
             cacheApi.clear?.("conversation-change");
-            bridge.prewarmExistingNodeFrameCache?.(cacheApi);
-            bridge.installLiveGetNodeIfExistsWrapper?.(original, cacheApi);
         }
     }
 
@@ -5912,57 +5292,4 @@
         queueMicrotask(checkConversationChanged);
         return result;
     };
-
-    function enableLivePolicyOnUserIntent() {
-        bumpLiveNodeReadFrame();
-
-        bridge.__displayTurnsRafFrame = (bridge.__displayTurnsRafFrame + 1) | 0;
-
-        bridge.__liveFindCache = null;
-        bridge.__liveFindFrame = -1;
-        bridge.__liveFindLeafId = null;
-
-        bridge.__getDisplayTurnsActivePrefixCache?.clear?.();
-
-        bridge.__getDisplayTurnsCache?.clear?.();
-        if (bridge.__getDisplayTurnsCacheStats) {
-            bridge.__getDisplayTurnsCacheStats.cached = 0;
-            bridge.__getDisplayTurnsCacheStats.lastClearReason = "user-intent";
-        }
-
-        bridge.__findNodeFromLeafAncestorChainCache?.clear?.();
-
-        bridge.enableLiveNodeCachePolicy?.();
-    }
-
-    document.addEventListener(
-        "keydown",
-        (event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-                enableLivePolicyOnUserIntent();
-            }
-        },
-        true
-    );
-
-    document.addEventListener(
-        "click",
-        (event) => {
-            const target = event.target?.closest?.(
-                'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="send"]'
-            );
-
-            if (target) {
-                enableLivePolicyOnUserIntent();
-            }
-        },
-        true
-    );
-
-    function bumpLiveNodeReadFrame() {
-        bridge.__liveNodeReadFrame = (bridge.__liveNodeReadFrame + 1) | 0;
-    }
-
-    document.addEventListener("input", bumpLiveNodeReadFrame, true);
-    document.addEventListener("compositionend", bumpLiveNodeReadFrame, true);
 })();

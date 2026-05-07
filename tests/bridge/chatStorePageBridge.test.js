@@ -155,10 +155,6 @@ function createFakeStore(nodeCount = 4) {
             return branch.reverse();
         },
 
-        getDisplayTurns() {
-            return [];
-        },
-
         addMessageNode() {},
         addOptimisticMessageNode() {},
         prependNode() {},
@@ -554,13 +550,12 @@ describe("chatStorePageBridge", () => {
         expect(bridge.getStore()).toBe(fakeStore);
 
         expect(bridge.__messageIdIndexInstalled).toBe(true);
-        expect(bridge.__existingNodeFrameCacheInstalled).toBe(true);
+        expect(bridge.__existingNodeStableCacheInstalled).toBe(true);
         expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(true);
         expect(bridge.__findNodePredicateCacheInstalled).toBe(true);
         expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(true);
         expect(bridge.__branchCacheInstalled).toBe(true);
         expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(true);
-        expect(bridge.__getDisplayTurnsCacheInstalled).toBe(true);
 
         expect(bridge.__initTiming.lastApplyOptimizationMs).toBeGreaterThanOrEqual(0);
     });
@@ -611,13 +606,12 @@ describe("chatStorePageBridge", () => {
 
         expect(result.ok).toBe(true);
         expect(bridge.__messageIdIndexInstalled).toBe(false);
-        expect(bridge.__existingNodeFrameCacheInstalled).toBe(false);
+        expect(bridge.__existingNodeStableCacheInstalled).toBe(false);
         expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(false);
         expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
         expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(false);
         expect(bridge.__branchCacheInstalled).toBe(false);
         expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(false);
-        expect(bridge.__getDisplayTurnsCacheInstalled).toBe(false);
     });
 
     it("resetInstalledStoreEnhancements clears registry-owned cache slots", () => {
