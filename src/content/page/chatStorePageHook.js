@@ -1,11 +1,23 @@
 (() => {
     const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
 
-    const METHOD_NAMES = [
-        "messageIdToExistingNodeId",
-        "getNodeIfExists",
-        "deleteNode",
-    ];
+    const CONFIG = {
+        bridgeVersion: 3,
+
+        storeMethodNames: [
+            "messageIdToExistingNodeId",
+            "getNodeIfExists",
+            "deleteNode",
+        ],
+
+        discovery: {
+            maxExportInspectionDepth: 2,
+            maxPollingAttempts: 120,
+            pollingIntervalMs: 250,
+        },
+
+        logPrefix: "[thread-optimizer bridge]",
+    };
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -22,16 +34,42 @@
         );
     }
 
+    function safeRead(fn, fallback = null) {
+        try {
+            return fn();
+        } catch {
+            return fallback;
+        }
+    }
+
     function looksLikeChatStore(value) {
         if (!isObjectLike(value)) {
             return false;
         }
 
         try {
-            return METHOD_NAMES.every((name) => typeof value[name] === "function");
+            return CONFIG.storeMethodNames.every(
+                (name) => typeof value[name] === "function"
+            );
         } catch {
             return false;
         }
+    }
+
+    function getStoreNodeCount(store) {
+        return safeRead(() => {
+            const nodes = store?.nodes;
+
+            if (Array.isArray(nodes)) {
+                return nodes.length;
+            }
+
+            if (nodes && typeof nodes === "object") {
+                return Object.keys(nodes).length;
+            }
+
+            return null;
+        });
     }
 
     function getStoreInfo(store) {
@@ -39,60 +77,53 @@
             return { found: false };
         }
 
-        let nodeCount = null;
-        let currentLeafId = null;
-        let rootId = null;
-
-        try {
-            const nodes = store.nodes;
-
-            if (Array.isArray(nodes)) {
-                nodeCount = nodes.length;
-            } else if (nodes && typeof nodes === "object") {
-                nodeCount = Object.keys(nodes).length;
-            }
-        } catch {}
-
-        try {
-            currentLeafId = store.currentLeafId ?? null;
-        } catch {}
-
-        try {
-            rootId = store.rootId ?? null;
-        } catch {}
-
         return {
             found: true,
-            nodeCount,
-            currentLeafId,
-            rootId,
+            nodeCount: getStoreNodeCount(store),
+            currentLeafId: safeRead(() => store.currentLeafId ?? null),
+            rootId: safeRead(() => store.rootId ?? null),
         };
     }
 
-    /**
-     * Page-context bridge exposed to the content script.
-     *
-     * The content script cannot directly access ChatGPT's internal JS objects,
-     * so this hook runs in page context and discovers the chat store through
-     * Webpack module/factory inspection.
-     */
+    function defineHiddenValue(target, name, value) {
+        Object.defineProperty(target, name, {
+            value,
+            configurable: false,
+            enumerable: false,
+            writable: false,
+        });
+    }
+
+    function copyFunctionName(target, source) {
+        try {
+            Object.defineProperty(target, "name", {
+                value: source.name,
+                configurable: true,
+            });
+        } catch {}
+    }
+
     const bridge = {
         __installed: true,
-        __version: 3,
+        __version: CONFIG.bridgeVersion,
+
         __store: null,
         __registeredAt: null,
         __lastError: null,
         __meta: null,
+
         __hookRuns: 0,
         __hookedChunks: 0,
         __wrappedFactories: 0,
         __seenChunkArrays: 0,
 
         status() {
+            const store = this.__store;
+
             return {
                 installed: true,
                 version: this.__version,
-                hasStore: Boolean(this.__store),
+                hasStore: Boolean(store),
                 registeredAt: this.__registeredAt,
                 lastError: this.__lastError,
                 meta: this.__meta,
@@ -101,13 +132,13 @@
                 wrappedFactories: this.__wrappedFactories,
                 seenChunkArrays: this.__seenChunkArrays,
                 methods: {
-                    deleteNode: Boolean(this.__store?.deleteNode),
-                    getNodeIfExists: Boolean(this.__store?.getNodeIfExists),
+                    deleteNode: Boolean(store?.deleteNode),
+                    getNodeIfExists: Boolean(store?.getNodeIfExists),
                     messageIdToExistingNodeId: Boolean(
-                        this.__store?.messageIdToExistingNodeId
+                        store?.messageIdToExistingNodeId
                     ),
                 },
-                ...getStoreInfo(this.__store),
+                ...getStoreInfo(store),
             };
         },
 
@@ -144,7 +175,7 @@
             this.__lastError = null;
             this.__meta = meta;
 
-            console.log("[thread-optimizer bridge] store registered", this.status());
+            console.log(`${CONFIG.logPrefix} store registered`, this.status());
 
             return true;
         },
@@ -158,12 +189,14 @@
             }
 
             try {
-                return store.messageIdToExistingNodeId(messageId) ?? null;
+                const nodeId = store.messageIdToExistingNodeId(messageId) ?? null;
+                this.__lastError = null;
+                return nodeId;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
 
                 console.warn(
-                    "[thread-optimizer bridge] messageIdToExistingNodeId failed",
+                    `${CONFIG.logPrefix} messageIdToExistingNodeId failed`,
                     error
                 );
 
@@ -185,11 +218,13 @@
             }
 
             try {
-                return store.getNodeIfExists(nodeId) ?? null;
+                const node = store.getNodeIfExists(nodeId) ?? null;
+                this.__lastError = null;
+                return node;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
 
-                console.warn("[thread-optimizer bridge] getNodeIfExists failed", error);
+                console.warn(`${CONFIG.logPrefix} getNodeIfExists failed`, error);
 
                 return null;
             }
@@ -216,7 +251,7 @@
             } catch (error) {
                 this.__lastError = String(error?.message || error);
 
-                console.warn("[thread-optimizer bridge] deleteNode failed", error);
+                console.warn(`${CONFIG.logPrefix} deleteNode failed`, error);
 
                 return false;
             }
@@ -231,16 +266,12 @@
         return bridge.registerStore(store, { source });
     }
 
-    /**
-     * Patches a discovered store prototype so the first real method call
-     * registers the live store instance.
-     */
     function patchPrototype(proto, source) {
         if (!proto || patchedPrototypes.has(proto)) {
             return false;
         }
 
-        const hasTargetMethods = METHOD_NAMES.every(
+        const hasTargetMethods = CONFIG.storeMethodNames.every(
             (name) => typeof proto[name] === "function"
         );
 
@@ -250,7 +281,7 @@
 
         patchedPrototypes.add(proto);
 
-        for (const name of METHOD_NAMES) {
+        for (const name of CONFIG.storeMethodNames) {
             const original = proto[name];
 
             if (
@@ -260,31 +291,14 @@
                 continue;
             }
 
-            const wrapped = function (...args) {
+            const wrapped = function threadOptimizerStoreMethodWrapper(...args) {
                 maybeRegisterStore(this, `${source}:${name}`);
                 return original.apply(this, args);
             };
 
-            Object.defineProperty(wrapped, "__threadOptimizerWrapped", {
-                value: true,
-                configurable: false,
-                enumerable: false,
-                writable: false,
-            });
-
-            Object.defineProperty(wrapped, "__threadOptimizerOriginal", {
-                value: original,
-                configurable: false,
-                enumerable: false,
-                writable: false,
-            });
-
-            try {
-                Object.defineProperty(wrapped, "name", {
-                    value: original.name,
-                    configurable: true,
-                });
-            } catch {}
+            defineHiddenValue(wrapped, "__threadOptimizerWrapped", true);
+            defineHiddenValue(wrapped, "__threadOptimizerOriginal", original);
+            copyFunctionName(wrapped, original);
 
             proto[name] = wrapped;
         }
@@ -292,14 +306,23 @@
         return true;
     }
 
-    /**
-     * Recursively inspects Webpack exports for either a store instance or a
-     * prototype that contains the methods needed by the bridge.
-     */
-    function inspectExportValue(value, source, depth = 0, seen = new WeakSet()) {
-        if (!isObjectLike(value)) return false;
-        if (seen.has(value)) return false;
-        if (depth > 2) return false;
+    function inspectExportValue(
+        value,
+        source,
+        depth = 0,
+        seen = new WeakSet()
+    ) {
+        if (!isObjectLike(value)) {
+            return false;
+        }
+
+        if (seen.has(value)) {
+            return false;
+        }
+
+        if (depth > CONFIG.discovery.maxExportInspectionDepth) {
+            return false;
+        }
 
         seen.add(value);
 
@@ -326,6 +349,7 @@
 
         for (let i = 0; i < keys.length; i += 1) {
             const key = keys[i];
+
             let child;
 
             try {
@@ -345,10 +369,27 @@
         return false;
     }
 
-    /**
-     * Wraps Webpack module factories so exports can be inspected after each
-     * module initializes.
-     */
+    function inspectWebpackFactoryResult(args, moduleId, chunkLabel) {
+        try {
+            const module = args[0];
+            const exportsObject = args[1];
+
+            inspectExportValue(
+                module?.exports,
+                `webpack:${chunkLabel}:${String(moduleId)}:module.exports`
+            );
+
+            inspectExportValue(
+                exportsObject,
+                `webpack:${chunkLabel}:${String(moduleId)}:exports`
+            );
+        } catch (error) {
+            bridge.__lastError = String(error?.message || error);
+
+            console.warn(`${CONFIG.logPrefix} export inspection failed`, error);
+        }
+    }
+
     function wrapFactory(factory, moduleId, chunkLabel) {
         if (typeof factory !== "function") {
             return factory;
@@ -359,33 +400,17 @@
             return existing;
         }
 
-        const wrapped = function (...args) {
+        const wrapped = function threadOptimizerWebpackFactoryWrapper(...args) {
             const result = factory.apply(this, args);
 
-            try {
-                const module = args[0];
-                const exportsObject = args[1];
-
-                inspectExportValue(
-                    module?.exports,
-                    `webpack:${chunkLabel}:${String(moduleId)}:module.exports`
-                );
-
-                inspectExportValue(
-                    exportsObject,
-                    `webpack:${chunkLabel}:${String(moduleId)}:exports`
-                );
-            } catch (error) {
-                bridge.__lastError = String(error?.message || error);
-
-                console.warn("[thread-optimizer bridge] export inspection failed", error);
-            }
+            inspectWebpackFactoryResult(args, moduleId, chunkLabel);
 
             return result;
         };
 
         wrappedFactories.set(factory, wrapped);
         wrappedFactories.set(wrapped, wrapped);
+
         bridge.__wrappedFactories += 1;
 
         return wrapped;
@@ -420,30 +445,20 @@
         }
     }
 
-    /**
-     * Patches Webpack chunk arrays, including future `.push()` calls.
-     *
-     * This catches both chunks that already loaded before our hook and chunks
-     * that load later during navigation/lazy loading.
-     */
-    function patchChunkArray(chunkArray, label) {
-        if (!Array.isArray(chunkArray) || patchedChunkArrays.has(chunkArray)) {
-            return;
-        }
-
-        patchedChunkArrays.add(chunkArray);
-        bridge.__seenChunkArrays += 1;
-
+    function patchExistingChunkRecords(chunkArray, label) {
         for (let i = 0; i < chunkArray.length; i += 1) {
             patchChunkRegistrationRecord(chunkArray[i], label);
         }
+    }
 
+    function patchChunkArrayPush(chunkArray, label) {
         const originalPush = chunkArray.push;
+
         if (typeof originalPush !== "function") {
             return;
         }
 
-        chunkArray.push = function (...items) {
+        chunkArray.push = function threadOptimizerWebpackChunkPush(...items) {
             bridge.__hookRuns += 1;
 
             for (let i = 0; i < items.length; i += 1) {
@@ -454,16 +469,30 @@
         };
     }
 
+    function patchChunkArray(chunkArray, label) {
+        if (!Array.isArray(chunkArray) || patchedChunkArrays.has(chunkArray)) {
+            return;
+        }
+
+        patchedChunkArrays.add(chunkArray);
+        bridge.__seenChunkArrays += 1;
+
+        patchExistingChunkRecords(chunkArray, label);
+        patchChunkArrayPush(chunkArray, label);
+    }
+
+    function getWindowPropertyNames() {
+        try {
+            return Object.getOwnPropertyNames(window);
+        } catch {
+            return [];
+        }
+    }
+
     function patchWebpackChunkGlobals() {
         bridge.__hookRuns += 1;
 
-        let keys;
-
-        try {
-            keys = Object.getOwnPropertyNames(window);
-        } catch {
-            return;
-        }
+        const keys = getWindowPropertyNames();
 
         for (let i = 0; i < keys.length; i += 1) {
             const key = keys[i];
@@ -484,29 +513,40 @@
         }
     }
 
-    window[GLOBAL_KEY] = bridge;
+    function installPollingDiscovery() {
+        let attempts = 0;
 
-    patchWebpackChunkGlobals();
-
-    let attempts = 0;
-    const maxAttempts = 120;
-    const intervalMs = 250;
-
-    const timer = window.setInterval(() => {
-        patchWebpackChunkGlobals();
-
-        attempts += 1;
-
-        if (bridge.hasStore() || attempts >= maxAttempts) {
-            window.clearInterval(timer);
-        }
-    }, intervalMs);
-
-    window.addEventListener(
-        "load",
-        () => {
+        const timer = window.setInterval(() => {
             patchWebpackChunkGlobals();
-        },
-        { once: true }
-    );
+
+            attempts += 1;
+
+            if (
+                bridge.hasStore() ||
+                attempts >= CONFIG.discovery.maxPollingAttempts
+            ) {
+                window.clearInterval(timer);
+            }
+        }, CONFIG.discovery.pollingIntervalMs);
+    }
+
+    function installLoadDiscovery() {
+        window.addEventListener(
+            "load",
+            () => {
+                patchWebpackChunkGlobals();
+            },
+            { once: true }
+        );
+    }
+
+    function install() {
+        window[GLOBAL_KEY] = bridge;
+
+        patchWebpackChunkGlobals();
+        installPollingDiscovery();
+        installLoadDiscovery();
+    }
+
+    install();
 })();
