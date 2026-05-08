@@ -7,10 +7,18 @@ const OUTPUT_DIR = "export";
 const OUTPUT = "project_context_full.txt";
 
 const ROOT_FILES = new Set([
-  "build.cjs",
+  ".gitignore",
+  "LICENSE",
+  "LICENSE.md",
+  "README.md",
+  "PRIVACY.md",
+  "CHANGELOG.md",
+  "SECURITY.md",
+  "CONTRIBUTING.md",
   "playwright.config.js",
   "vitest.config.js",
   "package.json",
+  "package-lock.json",
   "manifest.json",
 ]);
 
@@ -97,10 +105,14 @@ Examples:
 }
 
 function shouldIncludeFile(relPath) {
-  const base = path.basename(relPath);
-  if (ROOT_FILES.has(base)) return true;
+  const normalized = relPath.split(path.sep).join("/");
+  const base = path.basename(normalized);
 
-  const ext = path.extname(relPath);
+  if (ROOT_FILES.has(normalized) || ROOT_FILES.has(base)) {
+    return true;
+  }
+
+  const ext = path.extname(normalized);
   return INCLUDE_EXTENSIONS.has(ext);
 }
 
