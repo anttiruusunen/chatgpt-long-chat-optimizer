@@ -279,6 +279,11 @@ async function initialize() {
         },
         onReplySettled: () => {
             flushDeferredCssVisibilityWindowSync("reply-settled");
+
+            if (state.settings.autoPrune && state.featureFlags.pruning) {
+                scheduleAutoPrune("reply-settled");
+            }
+
             scheduleConversationChromeSync({
                 reason: "reply-settled",
                 forceCss: true,

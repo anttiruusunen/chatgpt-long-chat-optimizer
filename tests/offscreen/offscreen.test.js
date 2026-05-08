@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushDomWriteBatchNow } from "../../src/content/core/domWriteBatch.js";
+
+const mockRefs = vi.hoisted(() => ({
+    isReplyStreaming: vi.fn(() => false),
+}));
+
+vi.mock("../../src/content/streaming/replyTiming.js", () => ({
+    isReplyStreaming: mockRefs.isReplyStreaming,
+}));
+
 import {
+    handleReplyStreamingStarted,
     refreshObservedSections,
     setOffscreenOptimizationEnabled,
 } from "../../src/content/offscreen/offscreen.js";
@@ -40,6 +50,7 @@ function getLatestAssistant() {
 
 describe("offscreen CSS-driven section mode", () => {
     beforeEach(() => {
+        mockRefs.isReplyStreaming.mockReturnValue(false);
         vi.useFakeTimers();
 
         document.documentElement.removeAttribute(
@@ -171,5 +182,26 @@ describe("offscreen CSS-driven section mode", () => {
         expect(
             latestAssistant.getAttribute("data-thread-optimizer-offscreen-live")
         ).toBe("true");
+    });
+
+    it("pins latest assistant without scheduling full refresh while streaming", async () => {
+        mockRefs.isReplyStreaming.mockReturnValue(true);
+
+        const latestAssistant = document.createElement("section");
+        latestAssistant.setAttribute("data-turn", "assistant");
+        latestAssistant.setAttribute("data-testid", "conversation-turn-latest");
+
+        document.body.innerHTML = `<main><div></div></main>`;
+        document.querySelector("div").appendChild(latestAssistant);
+
+        state.featureFlags.offscreenOptimization = true;
+
+        handleReplyStreamingStarted();
+
+        expect(latestAssistant.getAttribute(
+            "data-thread-optimizer-offscreen-live"
+        )).toBe("true");
+
+        expect(state.isOffscreenRefreshScheduled).toBe(false);
     });
 });

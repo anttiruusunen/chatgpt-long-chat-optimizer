@@ -71,6 +71,54 @@ function applySectionCssModePlan({ root, enabled }) {
     }
 }
 
+function clearStaleLiveOverridesExcept(sectionToKeep) {
+    const sections = getConversationSections();
+
+    for (let i = 0; i < sections.length; i += 1) {
+        const section = sections[i];
+
+        if (section === sectionToKeep) {
+            continue;
+        }
+
+        setSectionLiveOverride(section, false);
+    }
+}
+
+function pinLatestAssistantLiveOnly(reason = "unknown") {
+    const enabled = Boolean(state.featureFlags.offscreenOptimization);
+
+    applySectionCssModePlan({
+        root: getStyleRoot(),
+        enabled: enabled && !isReplyStreaming(),
+    });
+
+    if (!enabled) {
+        clearStaleLiveOverridesExcept(null);
+        state.offscreenLiveSection = null;
+        return null;
+    }
+
+    const latestAssistant = getLatestAssistantSection();
+
+    clearStaleLiveOverridesExcept(latestAssistant);
+
+    if (latestAssistant) {
+        setSectionLiveOverride(latestAssistant, true);
+        setCurrentLiveSection(latestAssistant);
+    } else {
+        state.offscreenLiveSection = null;
+    }
+
+    debugLog("Offscreen: pinned latest assistant only", {
+        reason,
+        hasLatestAssistant: Boolean(latestAssistant),
+        replyStreaming: isReplyStreaming(),
+    });
+
+    return latestAssistant;
+}
+
 function collectLiveSectionPlan() {
     const previousLiveSection = getCurrentLiveSection();
     const enabled = Boolean(state.featureFlags.offscreenOptimization);
@@ -157,6 +205,15 @@ function applyOffscreenSectionPlan(plan) {
     applyLiveSectionPlan(plan.liveSectionPlan);
 }
 
+function applyOffscreenSectionPlanSafely(reason = "unknown") {
+    if (isReplyStreaming()) {
+        pinLatestAssistantLiveOnly(reason);
+        return;
+    }
+
+    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
+}
+
 function clearCurrentLiveSection() {
     const currentLiveSection = getCurrentLiveSection();
 
@@ -165,20 +222,6 @@ function clearCurrentLiveSection() {
     }
 
     state.offscreenLiveSection = null;
-}
-
-function clearStaleLiveOverridesExcept(sectionToKeep) {
-    const sections = getConversationSections();
-
-    for (let i = 0; i < sections.length; i += 1) {
-        const section = sections[i];
-
-        if (section === sectionToKeep) {
-            continue;
-        }
-
-        setSectionLiveOverride(section, false);
-    }
 }
 
 function syncSectionCssMode() {
@@ -198,15 +241,14 @@ export function clearOffscreenOptimization(section) {
 }
 
 export function ensureSectionCssOffscreenMode() {
-    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
+    applyOffscreenSectionPlanSafely("ensure-section-css-offscreen-mode");
 
     debugLog("Offscreen: section offscreening is CSS-driven");
     return null;
 }
 
 export function handleReplyStreamingStarted() {
-    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
-    scheduleOffscreenRefresh("reply-streaming-started");
+    pinLatestAssistantLiveOnly("reply-streaming-started");
 
     debugLog("Offscreen: reply streaming started");
 }
@@ -229,12 +271,17 @@ export function resetOffscreenOptimization() {
 }
 
 export function refreshObservedSections() {
-    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
+    applyOffscreenSectionPlanSafely("refresh-observed-sections");
 
     debugLog("Offscreen: refreshed CSS-driven section state");
 }
 
 export function scheduleOffscreenRefresh(reason = "unknown") {
+    if (isReplyStreaming()) {
+        pinLatestAssistantLiveOnly(`scheduled-during-streaming:${reason}`);
+        return;
+    }
+
     if (state.isOffscreenRefreshScheduled) {
         debugLog("Offscreen: skipped duplicate refresh schedule");
         return;
@@ -249,7 +296,7 @@ export function scheduleOffscreenRefresh(reason = "unknown") {
 export function setOffscreenOptimizationEnabled(enabled) {
     state.featureFlags.offscreenOptimization = Boolean(enabled);
 
-    applyOffscreenSectionPlan(collectOffscreenSectionPlan());
+    applyOffscreenSectionPlanSafely("feature-toggle");
 
     if (!enabled) {
         clearStaleLiveOverridesExcept(null);
@@ -258,7 +305,9 @@ export function setOffscreenOptimizationEnabled(enabled) {
         return;
     }
 
-    scheduleOffscreenRefresh("feature-enabled");
+    if (!isReplyStreaming()) {
+        scheduleOffscreenRefresh("feature-enabled");
+    }
 
     debugLog("Offscreen: feature enabled");
 }

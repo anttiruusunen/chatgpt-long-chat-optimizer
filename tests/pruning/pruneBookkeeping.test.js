@@ -14,6 +14,14 @@ import {
     runInitialPrune,
 } from "../../src/content/pruning/prune.js";
 
+const mockRefs = vi.hoisted(() => ({
+    isReplyStreaming: vi.fn(() => false),
+}));
+
+vi.mock("../../src/content/streaming/replyTiming.js", () => ({
+    isReplyStreaming: mockRefs.isReplyStreaming,
+}));
+
 const BRIDGE_TOKEN = "0123456789abcdef0123456789abcdef";
 
 function makeSection({
@@ -90,6 +98,7 @@ function getPlaceholder() {
 
 function resetState() {
     state.softPrunedSections = [];
+    state.deferredReactPruneSections = [];
     state.hiddenCount = 0;
     state.totalHiddenCount = 0;
     state.hardEvictedCount = 0;
@@ -148,6 +157,7 @@ function makeDeps() {
 
 beforeEach(() => {
     vi.restoreAllMocks();
+    mockRefs.isReplyStreaming.mockReturnValue(false);
     resetConversationDomCacheForTests();
     document.body.innerHTML = "";
     resetState();
@@ -186,6 +196,27 @@ describe("prune bookkeeping", () => {
         expect(placeholder).not.toBeNull();
         expect(placeholder.textContent).toContain("8");
         expect(placeholder.textContent.toLowerCase()).toContain("messages");
+    });
+
+    it("defers React pruning during streaming without inflating hidden counts", () => {
+        buildConversation(8);
+
+        pruneOldSections(4, { showPlaceholder: true }, makeDeps());
+
+        const hiddenBeforeStreaming = state.hiddenCount;
+        const totalHiddenBeforeStreaming = state.totalHiddenCount;
+        const hardEvictedBeforeStreaming = state.hardEvictedCount;
+
+        mockRefs.isReplyStreaming.mockReturnValue(true);
+        state.settings.historyKeptExchanges = 1;
+
+        enforceSoftPrunedLimit();
+
+        expect(state.hiddenCount).toBeLessThanOrEqual(hiddenBeforeStreaming);
+        expect(state.totalHiddenCount).toBeLessThanOrEqual(totalHiddenBeforeStreaming);
+        expect(state.hardEvictedCount).toBe(hardEvictedBeforeStreaming);
+        expect(state.softPrunedSections.length).toBe(0);
+        expect(state.deferredReactPruneSections.length).toBeGreaterThan(0);
     });
 
     it("restore one exchange decreases soft-pruned count and increases visible count", () => {

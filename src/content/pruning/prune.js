@@ -36,6 +36,7 @@ import {
     pruneSectionsWithReactStoreBridge,
 } from "../bridge/chatStoreBridgeClient.js";
 import { isIncompleteAssistantSection } from "../streaming/assistantSignals.js";
+import { isReplyStreaming } from "../streaming/replyTiming.js";
 
 const VISIBLE_EXCHANGES = 1;
 const SECTIONS_PER_EXCHANGE = 2;
@@ -60,6 +61,14 @@ function getSoftPrunedSectionsLimit(
         getRecoverableSectionsLimit(historyKeptExchanges) -
             getVisibleSectionsLimit()
     );
+}
+
+function getDeferredReactPruneSections() {
+    if (!Array.isArray(state.deferredReactPruneSections)) {
+        state.deferredReactPruneSections = [];
+    }
+
+    return state.deferredReactPruneSections;
 }
 
 function updateHiddenCounts() {
@@ -136,8 +145,25 @@ function reactPruneSectionsWithBridge(
         return {
             prunedCount: 0,
             posted: false,
+            deferred: false,
             messageIds: [],
             reason: "no candidate sections",
+        };
+    }
+
+    if (isReplyStreaming()) {
+        debugLog("Prune: deferred React store pruning during active reply", {
+            sections: sections.length,
+            candidates: candidates.length,
+            reason,
+        });
+
+        return {
+            prunedCount: 0,
+            posted: false,
+            deferred: true,
+            messageIds: [],
+            reason: "reply streaming",
         };
     }
 
@@ -175,7 +201,14 @@ export function enforceSoftPrunedLimit() {
             reason: "soft-pruned-overflow",
         });
 
-        state.hardEvictedCount += pruneResult.prunedCount || 0;
+        if (pruneResult.deferred) {
+            state.deferredReactPruneSections = [
+                ...getDeferredReactPruneSections(),
+                ...overflowSections,
+            ];
+        } else {
+            state.hardEvictedCount += pruneResult.prunedCount || 0;
+        }
 
         debugLog("Prune: React-pruned soft-pruned overflow sections", {
             overflowCount,
@@ -447,7 +480,14 @@ export function pruneOldSections(
             !getConversationTurnRoot(section)?.isConnected
     );
 
-    const logicalSections = detachedSoftPrunedSections.concat(currentVisibleSections);
+    const deferredReactPruneSections = getDeferredReactPruneSections().filter(
+        (section) =>
+            section instanceof Element &&
+            !getConversationTurnRoot(section)?.isConnected
+    );
+
+    const logicalSections = deferredReactPruneSections
+        .concat(detachedSoftPrunedSections, currentVisibleSections);
 
     const visibleSectionsLimit = getVisibleSectionsLimit();
     const softPrunedSectionsLimit =
@@ -516,8 +556,17 @@ export function pruneOldSections(
 
         invalidateConversationDomCache();
 
-        state.softPrunedSections = [...sectionsToSoftPrune];
-        state.hardEvictedCount += reactPruneResult.prunedCount || 0;
+        if (reactPruneResult.deferred) {
+            state.deferredReactPruneSections = [
+                ...getDeferredReactPruneSections(),
+                ...sectionsToReactPruneNow,
+            ];
+            state.softPrunedSections = [...sectionsToSoftPrune];
+        } else {
+            state.deferredReactPruneSections = [];
+            state.softPrunedSections = [...sectionsToSoftPrune];
+            state.hardEvictedCount += reactPruneResult.prunedCount || 0;
+        }
 
         updateHiddenCounts();
 
