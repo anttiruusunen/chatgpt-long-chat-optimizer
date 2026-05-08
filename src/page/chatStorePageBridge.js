@@ -41,12 +41,12 @@
             key: "nodeStableCache",
             install: "installExistingNodeStableCache",
             uninstall: "uninstallExistingNodeStableCache",
-            installedFlag: "__existingnodeStableCacheInstalled",
+            installedFlag: "__existingNodeStableCacheInstalled",
             slots: [
-                "__existingnodeStableCacheOriginal",
-                "__existingnodeStableCache",
-                "__existingnodeStableCacheStats",
-                "__existingnodeStableCacheApi",
+                "__existingNodeStableCacheOriginal",
+                "__existingNodeStableCache",
+                "__existingNodeStableCacheStats",
+                "__existingNodeStableCacheApi",
             ],
         },
         {
@@ -95,21 +95,6 @@
         }
     }
 
-    function runStoreEnhancementInstalls(bridge) {
-        const result = {};
-
-        for (const enhancement of STORE_ENHANCEMENTS) {
-            const install = bridge[enhancement.install];
-
-            result[enhancement.key] =
-                typeof install === "function"
-                    ? install.call(bridge, { profiled: ENABLE_CACHE_PROFILING })
-                    : { ok: false, reason: `missing installer: ${enhancement.install}` };
-        }
-
-        return result;
-    }
-
     function runStoreEnhancementUninstalls(bridge) {
         const result = {};
 
@@ -125,43 +110,6 @@
 
         return result;
     }
-
-    function waitForBridge(timeout = 5000, interval = 50) {
-        return new Promise(resolve => {
-            const start = Date.now();
-            const timer = setInterval(() => {
-                if (window.__threadOptimizerChatStoreBridge) {
-                    clearInterval(timer);
-                    resolve(window.__threadOptimizerChatStoreBridge);
-                } else if (Date.now() - start > timeout) {
-                    clearInterval(timer);
-                    resolve(null);
-                }
-            }, interval);
-        });
-    }
-
-    async function installBridgeSafely() {
-        const currentScript = document.currentScript;
-        const token = currentScript?.getAttribute("data-thread-optimizer-chat-store-page-bridge-token");
-
-        if (!token) {
-            console.warn("[thread-optimizer bridge] no token found, bridge install skipped");
-            return;
-        }
-
-        const bridge = await waitForBridge();
-        if (!bridge) {
-            console.warn("[thread-optimizer bridge] bridge object never initialized, install skipped");
-            return;
-        }
-
-        if (!bridge.__installed && typeof bridge.install === "function") {
-            bridge.install(token);
-        }
-    }
-
-    installBridgeSafely();
 
     const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
 
@@ -3475,36 +3423,13 @@
                 maxPredicateSourcesPerSite: stats.maxPredicateSourcesPerSite,
                 topCallSites: Object.entries(stats.callSites)
                     .map(([stack, data]) => {
-                        const cacheObserved =
-                            data.cacheHits +
-                            data.cacheMisses +
-                            data.cacheStaleHits +
-                            data.cacheWrites;
-
                         const topPredicateSources = Object.entries(data.predicateSources || {})
-                            .map(([source, sourceData]) => {
-                                const sourceObserved =
-                                    sourceData.cacheHits +
-                                    sourceData.cacheMisses +
-                                    sourceData.cacheStaleHits +
-                                    sourceData.cacheWrites;
-
-                                return {
-                                    source,
-                                    calls: sourceData.calls,
-                                    firstSeenAt: sourceData.firstSeenAt,
-                                    lastSeenAt: sourceData.lastSeenAt,
-                                    cacheHits: sourceData.cacheHits,
-                                    cacheMisses: sourceData.cacheMisses,
-                                    cacheStaleHits: sourceData.cacheStaleHits,
-                                    cacheWrites: sourceData.cacheWrites,
-                                    cacheUnknown: sourceData.cacheUnknown,
-                                    cacheHitRate:
-                                        sourceObserved > 0
-                                            ? sourceData.cacheHits / sourceObserved
-                                            : 0,
-                                };
-                            })
+                            .map(([source, sourceData]) => ({
+                                source,
+                                calls: sourceData.calls,
+                                firstSeenAt: sourceData.firstSeenAt,
+                                lastSeenAt: sourceData.lastSeenAt,
+                            }))
                             .sort((a, b) => b.calls - a.calls)
                             .slice(0, stats.maxPredicateSourcesPerSite);
 
@@ -3515,16 +3440,9 @@
                             lastArgType: data.lastArgType,
                             firstSeenAt: data.firstSeenAt,
                             lastSeenAt: data.lastSeenAt,
-                            cacheHits: data.cacheHits,
-                            cacheMisses: data.cacheMisses,
-                            cacheStaleHits: data.cacheStaleHits,
-                            cacheWrites: data.cacheWrites,
-                            cacheUnknown: data.cacheUnknown,
-                            cacheHitRate:
-                                cacheObserved > 0
-                                    ? data.cacheHits / cacheObserved
-                                    : 0,
-                            uniquePredicateSourceCount: Object.keys(data.predicateSources || {}).length,
+                            uniquePredicateSourceCount: Object.keys(
+                                data.predicateSources || {}
+                            ).length,
                             topPredicateSources,
                         };
                     })
@@ -4347,7 +4265,7 @@
                 return "topology-mutation";
             }
 
-            // Assistant/tool/system streaming nodes should not keep nuking findNode sharing.
+            // Assistant/tool/system streaming nodes should not keep invalidating stable read caches.
             if (
                 role === "assistant" ||
                 role === "tool" ||
