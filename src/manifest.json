@@ -1,10 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Thread Optimizer",
+  "name": "Thread Optimizer for ChatGPT",
   "version": "1.0.0",
-  "description": "Keeps long ChatGPT threads responsive by pruning older messages and optimizing heavy code blocks.",
+  "description": "Keeps long ChatGPT conversations responsive by pruning older visible sections and reducing DOM pressure.",
   "permissions": [
-    "tabs",
     "storage"
   ],
   "host_permissions": [
@@ -33,19 +32,9 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "page/chatStorePageBridge.js"
-      ],
-      "matches": [
-        "https://chatgpt.com/*"
-      ]
-    }
-  ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "thread-optimizer@example.com",
+      "id": "thread-optimizer-for-chatgpt@anttiruusunen",
       "strict_min_version": "121.0"
     }
   }
