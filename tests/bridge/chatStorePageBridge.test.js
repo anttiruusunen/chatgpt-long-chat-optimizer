@@ -594,7 +594,6 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__initTiming.lastApplyOptimizationMs).toBe(0);
 
         expect(bridge.__messageIdIndexInstalled).toBe(false);
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
     });
 
     it("set-store-read-optimization only records requested state when no store exists", () => {
@@ -613,7 +612,6 @@ describe("chatStorePageBridge", () => {
         expect(bridge.hasStore()).toBe(false);
         expect(bridge.__discoveryRuns).toBe(0);
         expect(bridge.__messageIdIndexInstalled).toBe(false);
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
     });
 
     it("visible-messages-ready discovers, registers store, and installs optimizations once", () => {
@@ -645,9 +643,6 @@ describe("chatStorePageBridge", () => {
 
         expect(bridge.__messageIdIndexInstalled).toBe(true);
         expect(bridge.__existingNodeStableCacheInstalled).toBe(true);
-        expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(true);
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(true);
-        expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(true);
         expect(bridge.__branchCacheInstalled).toBe(true);
         expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(true);
 
@@ -694,16 +689,13 @@ describe("chatStorePageBridge", () => {
         });
 
         expect(bridge.__messageIdIndexInstalled).toBe(true);
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(true);
+        expect(bridge.__branchCacheInstalled).toBe(true);
 
         const result = bridge.disableStoreReadOptimization();
 
         expect(result.ok).toBe(true);
         expect(bridge.__messageIdIndexInstalled).toBe(false);
         expect(bridge.__existingNodeStableCacheInstalled).toBe(false);
-        expect(bridge.__findNodeFromLeafFrameCacheInstalled).toBe(false);
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
-        expect(bridge.__getLeafFromNodeFrameCacheInstalled).toBe(false);
         expect(bridge.__branchCacheInstalled).toBe(false);
         expect(bridge.__resolvedNodeFrameCacheInstalled).toBe(false);
     });
@@ -720,7 +712,7 @@ describe("chatStorePageBridge", () => {
         });
 
         expect(bridge.__messageIdIndex).toBeTruthy();
-        expect(bridge.__findNodePredicateCache).toBeTruthy();
+        expect(bridge.__branchCache).toBeTruthy();
 
         bridge.resetInstalledStoreEnhancements();
 
@@ -728,11 +720,6 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__messageIdIndexOriginal).toBeNull();
         expect(bridge.__messageIdIndex).toBeNull();
         expect(bridge.__messageIdIndexStats).toBeNull();
-
-        expect(bridge.__findNodePredicateCacheInstalled).toBe(false);
-        expect(bridge.__findNodePredicateCacheOriginal).toBeNull();
-        expect(bridge.__findNodePredicateCache).toBeNull();
-        expect(bridge.__findNodePredicateCacheStats).toBeNull();
 
         expect(bridge.__branchCacheInstalled).toBe(false);
         expect(bridge.__branchCacheOriginals).toBeNull();

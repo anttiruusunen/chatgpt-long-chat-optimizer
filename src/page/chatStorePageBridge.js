@@ -16,6 +16,12 @@
             branchCallSites: false,
             nodeCallSites: false,
             findNodeCallSites: false,
+
+            messageIdIndexCache: true,
+            existingNodeStableCache: true,
+            branchCache: true,
+            resolvedNodeFrameCache: true,
+            getNodeByIdOrMessageIdCache: true,
         },
     };
 
@@ -52,45 +58,6 @@
                 "__getNodeByIdOrMessageIdCacheOriginal",
                 "__getNodeByIdOrMessageIdCache",
                 "__getNodeByIdOrMessageIdCacheStats",
-            ],
-        },
-        {
-            key: "findNodeFromLeafFrameCache",
-            install: "installFindNodeFromLeafFrameCache",
-            uninstall: "uninstallFindNodeFromLeafFrameCache",
-            installedFlag: "__findNodeFromLeafFrameCacheInstalled",
-            slots: [
-                "__findNodeFromLeafFrameCacheOriginal",
-                "__findNodeFromLeafFrameCache",
-                "__findNodeFromLeafFrameCacheStats",
-                "__findNodeFromLeafCacheController",
-                "__findNodeFromLeafAncestorChainCache",
-                "__findNodeFromLeafDormantAncestorResultCache",
-                "__findNodeFromLeafHotPredicateIds",
-            ],
-        },
-        {
-            key: "findNodePredicateCache",
-            install: "installFindNodePredicateCache",
-            uninstall: "uninstallFindNodePredicateCache",
-            installedFlag: "__findNodePredicateCacheInstalled",
-            slots: [
-                "__findNodePredicateCacheOriginal",
-                "__findNodePredicateCache",
-                "__findNodePredicateCacheStats",
-            ],
-        },
-        {
-            key: "getLeafFromNodeFrameCache",
-            install: "installGetLeafFromNodeFrameCache",
-            uninstall: "uninstallGetLeafFromNodeFrameCache",
-            installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-            slots: [
-                "__getLeafFromNodeFrameCacheOriginal",
-                "__getLeafFromNodeFrameCache",
-                "__getLeafFromNodeFrameCacheStats",
-                "__leafDescendantCache",
-                "__leafDescendantMissCache",
             ],
         },
         {
@@ -157,16 +124,6 @@
         }
 
         return result;
-    }
-
-    function getStoreEnhancementInstallSummary(result) {
-        const installed = {};
-
-        for (const enhancement of STORE_ENHANCEMENTS) {
-            installed[enhancement.key] = result[enhancement.key]?.ok;
-        }
-
-        return installed;
     }
 
     function waitForBridge(timeout = 5000, interval = 50) {
@@ -254,6 +211,20 @@
     const ENABLE_CACHE_PROFILING = CONFIG.flags.cacheProfiling || ENABLE_DEBUG;
     const ENABLE_NODE_CALLSITE_STATS = CONFIG.flags.nodeCallSites || ENABLE_DEBUG;
     const ENABLE_FIND_NODE_CALLSITE_STATS = CONFIG.flags.findNodeCallSites || ENABLE_DEBUG;
+    const ENABLE_MESSAGE_ID_INDEX_CACHE =
+        CONFIG.flags.messageIdIndexCache;
+
+    const ENABLE_EXISTING_NODE_STABLE_CACHE =
+        CONFIG.flags.existingNodeStableCache;
+
+    const ENABLE_BRANCH_CACHE =
+        CONFIG.flags.branchCache;
+
+    const ENABLE_RESOLVED_NODE_FRAME_CACHE =
+        CONFIG.flags.resolvedNodeFrameCache;
+
+    const ENABLE_GET_NODE_BY_ID_OR_MESSAGE_ID_CACHE =
+        CONFIG.flags.getNodeByIdOrMessageIdCache;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
@@ -406,13 +377,6 @@
         return Math.max(3, Math.floor(estimatedTurns * 0.25));
     }
 
-    function isStoreGoodEnough(store) {
-        const nodeCount = getStoreNodeCount(store);
-        const minimum = getExpectedMinimumStoreNodeCount();
-
-        return nodeCount >= minimum;
-    }
-
     function getNewestVisibleMessageIdFromDom() {
         const selectors = [
             "[data-message-id]",
@@ -544,19 +508,9 @@
         return typeof method === "function" ? method : null;
     }
 
-    const PERSIST_ACROSS_TOPOLOGY_CACHE_SLOTS = new Set([
-        "__existingNodeStableCache",
-        "__getNodeByIdOrMessageIdCache",
-        "__messageIdIndex",
-        "__resolvedNodeFrameCache",
-        "__findNodeFromLeafFrameCache",
-    ]);
-
     const STABLE_CACHE_SLOTS = [
         ["__existingNodeStableCache", "__existingNodeStableCacheStats"],
-        ["__findNodeFromLeafFrameCache", "__findNodeFromLeafFrameCacheStats"],
         ["__getNodeByIdOrMessageIdCache", "__getNodeByIdOrMessageIdCacheStats"],
-        ["__getLeafFromNodeFrameCache", "__getLeafFromNodeFrameCacheStats"],
         ["__branchCache", "__branchCacheStats"],
         ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
     ];
@@ -1354,17 +1308,6 @@
         __getNodeByIdOrMessageIdCache: null,
         __getNodeByIdOrMessageIdCacheStats: null,
 
-        __findNodeFromLeafFrameCacheInstalled: false,
-        __findNodeFromLeafFrameCacheOriginal: null,
-        __findNodeFromLeafFrameCache: null,
-        __findNodeFromLeafFrameCacheStats: null,
-        __findNodeFromLeafCacheController: null,
-
-        __getLeafFromNodeFrameCacheInstalled: false,
-        __getLeafFromNodeFrameCacheOriginal: null,
-        __getLeafFromNodeFrameCache: null,
-        __getLeafFromNodeFrameCacheStats: null,
-
         __branchCacheInstalled: false,
         __branchCacheOriginals: null,
         __branchCache: null,
@@ -1403,11 +1346,6 @@
         __updateNodeMessageRafBatcherOriginal: null,
         __updateNodeMessageRafBatcherPending: null,
 
-        __findNodePredicateCacheInstalled: false,
-        __findNodePredicateCacheOriginal: null,
-        __findNodePredicateCache: null,
-        __findNodePredicateCacheStats: null,
-
         __findNodeCallSiteProfilerInstalled: false,
         __findNodeCallSiteProfilerOriginal: null,
         __findNodeCallSiteProfilerStats: null,
@@ -1439,7 +1377,6 @@
                         this.__store && typeof this.__store.messageIdToExistingNodeId === "function"
                     ),
                     getBranch: Boolean(this.__store && typeof this.__store.getBranch === "function"),
-                    getBranchFromLeaf: Boolean(this.__store && typeof this.__store.getBranchFromLeaf === "function"),
                 },
                 ...getStoreInfo(this.__store),
             };
@@ -1731,14 +1668,11 @@
             temporarilyRestore("messageIdToExistingNodeId", "__messageIdIndexOriginal");
             temporarilyRestore("getNodeIfExists", "__existingNodeStableCacheOriginal");
             temporarilyRestore("getNodeByIdOrMessageId", "__getNodeByIdOrMessageIdCacheOriginal");
-            temporarilyRestore("findNodeFromLeaf", "__findNodeFromLeafFrameCacheOriginal");
-            temporarilyRestore("findNode", "__findNodePredicateCacheOriginal");
-            temporarilyRestore("getLeafFromNode", "__getLeafFromNodeFrameCacheOriginal");
 
             // Branch wrappers should not be involved while topology is changing.
             const branchOriginals = this.__branchCacheOriginals;
             if (branchOriginals) {
-                for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
+                for (const methodName of ["getBranch"]) {
                     const original = branchOriginals[methodName];
 
                     if (typeof original === "function" && store[methodName] !== original) {
@@ -1865,7 +1799,7 @@
                 result.repairResult =
                     this.repairDeletedNodeReferences?.(deletedNodeIds) ?? null;
 
-                this.beginStoreTopologyMutation?.("react-prune-complete");
+                this.clearFullTopologyCaches?.("react-prune-complete");
             }
 
             return result;
@@ -2900,552 +2834,6 @@
             );
         },
 
-        installFindNodeFromLeafFrameCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) {
-                return unavailable("store not registered");
-            }
-
-            if (this.__findNodeFromLeafFrameCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__findNodeFromLeafFrameCacheStats,
-                };
-            }
-
-            const original = getStoreMethod(store, "findNodeFromLeaf");
-
-            if (!original) {
-                return unavailable("findNodeFromLeaf unavailable");
-            }
-
-            const resultCache = new Map();
-            const nodeCache = this.ensureNodeObjectCache({ profiled });
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    rejected: 0,
-                    writes: 0,
-                    ancestorFastHits: 0,
-                    ancestorFastMisses: 0,
-                    originalCalls: 0,
-                    nullResults: 0,
-                    invalidCalls: 0,
-                    cached: 0,
-                    mode: "profiled:name-result-cache+validated+ancestor-fast-path-depth-2",
-                }
-                : {
-                    cached: 0,
-                    mode: "production:name-result-cache+validated+ancestor-fast-path-depth-2",
-                };
-
-            this.__findNodeFromLeafFrameCacheOriginal = {
-                findNodeFromLeaf: original,
-            };
-            this.__findNodeFromLeafFrameCache = resultCache;
-            this.__findNodeFromLeafFrameCacheStats = stats;
-
-            function getPredicateNameKey(predicateFn) {
-                return predicateFn.name || "<anon>";
-            }
-
-            function getCachedResult(predicateFn, key) {
-                if (!resultCache.has(key)) {
-                    return undefined;
-                }
-
-                const cached = resultCache.get(key);
-
-                if (cached === null) {
-                    return null;
-                }
-
-                return predicateFn(cached)
-                    ? cached
-                    : CACHE_MISS;
-            }
-
-            function findNearLeaf(predicateFn, leafId) {
-                let node = nodeCache ? nodeCache.resolve(leafId) : getNodeDirect(store, leafId);
-
-                for (let depth = 0; node && depth <= 2; depth += 1) {
-                    if (predicateFn(node)) {
-                        return node;
-                    }
-
-                    node = nodeCache
-                        ? nodeCache.resolve(node.parentId)
-                        : getNodeDirect(store, node.parentId);
-                }
-
-                return undefined;
-            }
-
-            if (profiled) {
-                store.findNodeFromLeaf = function cachedFindNodeFromLeafProfiled(
-                    predicateFn,
-                    leafId,
-                    ...rest
-                ) {
-                    if (
-                        typeof predicateFn !== "function" ||
-                        !leafId
-                    ) {
-                        stats.invalidCalls += 1;
-                        stats.originalCalls += 1;
-
-                        return original.call(
-                            store,
-                            predicateFn,
-                            leafId,
-                            ...rest
-                        );
-                    }
-
-                    const key = getPredicateNameKey(predicateFn);
-                    const cached = getCachedResult(predicateFn, key);
-
-                    if (cached !== undefined) {
-                        if (cached === CACHE_MISS) {
-                            stats.rejected += 1;
-                        } else {
-                            stats.hits += 1;
-                            return cached;
-                        }
-                    }
-
-                    const nearLeaf = findNearLeaf(predicateFn, leafId);
-
-                    if (nearLeaf !== undefined) {
-                        stats.ancestorFastHits += 1;
-                        resultCache.set(key, nearLeaf);
-                        stats.writes += 1;
-                        stats.cached = resultCache.size;
-                        return nearLeaf;
-                    }
-
-                    stats.ancestorFastMisses += 1;
-                    stats.originalCalls += 1;
-
-                    const result =
-                        original.call(
-                            store,
-                            predicateFn,
-                            leafId,
-                            ...rest
-                        ) ?? null;
-
-                    if (result === null) {
-                        stats.nullResults += 1;
-                    }
-
-                    resultCache.set(key, result);
-                    stats.writes += 1;
-                    stats.cached = resultCache.size;
-
-                    return result;
-                };
-            } else {
-                store.findNodeFromLeaf = function cachedFindNodeFromLeafProduction(
-                    predicateFn,
-                    leafId,
-                    ...rest
-                ) {
-                    if (
-                        typeof predicateFn !== "function" ||
-                        !leafId
-                    ) {
-                        return original.call(
-                            store,
-                            predicateFn,
-                            leafId,
-                            ...rest
-                        );
-                    }
-
-                    const key = getPredicateNameKey(predicateFn);
-                    const cached = getCachedResult(predicateFn, key);
-
-                    if (cached !== undefined && cached !== CACHE_MISS) {
-                        return cached;
-                    }
-
-                    const nearLeaf = findNearLeaf(predicateFn, leafId);
-
-                    if (nearLeaf !== undefined) {
-                        resultCache.set(key, nearLeaf);
-                        return nearLeaf;
-                    }
-
-                    const result =
-                        original.call(
-                            store,
-                            predicateFn,
-                            leafId,
-                            ...rest
-                        ) ?? null;
-
-                    resultCache.set(key, result);
-
-                    return result;
-                };
-            }
-
-            this.__findNodeFromLeafFrameCacheInstalled = true;
-
-            return {
-                ok: true,
-                installed: true,
-                profiled,
-                stats,
-            };
-        },
-
-        uninstallFindNodeFromLeafFrameCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__findNodeFromLeafFrameCacheOriginal",
-                installedFlag: "__findNodeFromLeafFrameCacheInstalled",
-            });
-        },
-
-        getFindNodeFromLeafFrameCacheStats() {
-            return getCacheSnapshot(
-                this,
-                "__findNodeFromLeafFrameCacheInstalled",
-                "__findNodeFromLeafFrameCache",
-                "__findNodeFromLeafFrameCacheStats"
-            );
-        },
-
-        installGetLeafFromNodeFrameCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__getLeafFromNodeFrameCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__getLeafFromNodeFrameCacheStats,
-                };
-            }
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    cached: 0,
-                    activeLeafEpochHits: 0,
-                    activeLeafEpochMisses: 0,
-                    descendantHits: 0,
-                    descendantWrites: 0,
-                    descendantMissHits: 0,
-                    descendantMissWrites: 0,
-                    directWalks: 0,
-                    directWalkReturns: 0,
-                    originalCalls: 0,
-                    nullResults: 0,
-                    mode: "profiled:persistent+active-leaf-epoch+descendant-direct+shared-node-cache",
-                }
-                : {
-                    cached: 0,
-                    mode: "production:persistent+active-leaf-epoch+descendant-direct+shared-node-cache",
-                };
-
-            const frameCache = createPersistentCache({
-                stats,
-                profiled,
-            });
-
-            const nodeCache = this.ensureNodeObjectCache({ profiled });
-
-            this.__getLeafFromNodeFrameCache = frameCache.cache;
-            this.__getLeafFromNodeFrameCacheStats = stats;
-
-            const leafDescendantCache = new Map();
-            this.__leafDescendantCache = leafDescendantCache;
-
-            const leafDescendantMissCache = new Set();
-            this.__leafDescendantMissCache = leafDescendantMissCache;
-
-            const get = frameCache.get;
-            const set = frameCache.set;
-
-            let activeLeafEpoch = -1;
-            let activeLeafKey = null;
-            let activeLeafValue = null;
-
-            function normalizeLeafInputKey(id) {
-                return typeof id === "string" ||
-                    typeof id === "number" ||
-                    typeof id === "boolean" ||
-                    id == null
-                    ? id
-                    : id.id ?? id.nodeId ?? id.message?.id ?? id;
-            }
-
-            function readCurrentLeafId() {
-                return typeof store.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store.currentLeafId;
-            }
-
-            function resolveNode(id) {
-                return nodeCache
-                    ? nodeCache.resolve(id)
-                    : getNodeDirect(store, id);
-            }
-
-            function tryDirectLeafWalk(key) {
-                let node = resolveNode(key);
-
-                if (!node || node.message?.status === "in_progress") {
-                    return null;
-                }
-
-                let leaf = node;
-                let guard = 0;
-
-                while (
-                    leaf &&
-                    Array.isArray(leaf.children) &&
-                    leaf.children.length > 0 &&
-                    guard < 2000
-                ) {
-                    const childId = leaf.children[0];
-                    const next = resolveNode(childId);
-
-                    if (!next || next === leaf) break;
-
-                    leaf = next;
-                    guard += 1;
-                }
-
-                if (!leaf?.id || leaf.message?.status === "in_progress") {
-                    return null;
-                }
-
-                return leaf;
-            }
-
-            function rememberLeaf(key, leaf) {
-                set(key, leaf);
-
-                if (leaf?.id && leaf.id !== key) {
-                    set(leaf.id, leaf);
-                }
-
-                if (nodeCache && leaf?.id) {
-                    nodeCache.set(leaf.id, leaf);
-                }
-
-                return leaf;
-            }
-
-            const result = installStoreMethodWrapper({
-                bridge: this,
-                methodName: "getLeafFromNode",
-                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
-                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-                createWrapper: ({ store, original, bridge }) => {
-                    if (profiled) {
-                        return function cachedGetLeafFromNodeProfiled(id) {
-                            const key = normalizeLeafInputKey(id);
-
-                            if (!key) {
-                                stats.originalCalls += 1;
-                                return original.call(store, id) ?? null;
-                            }
-
-                            if (key === readCurrentLeafId()) {
-                                const epoch = bridge.__storeReadEpoch;
-
-                                if (
-                                    activeLeafEpoch === epoch &&
-                                    activeLeafKey === key &&
-                                    activeLeafValue !== null
-                                ) {
-                                    stats.activeLeafEpochHits += 1;
-                                    return activeLeafValue;
-                                }
-
-                                stats.activeLeafEpochMisses += 1;
-                            }
-
-                            const cached = get(key);
-                            if (cached !== undefined) return cached;
-
-                            const descendantCached = leafDescendantCache.get(key);
-
-                            if (descendantCached !== undefined) {
-                                stats.descendantHits += 1;
-                                return rememberLeaf(key, descendantCached);
-                            }
-
-                            if (leafDescendantMissCache.has(key)) {
-                                stats.descendantMissHits += 1;
-                                stats.originalCalls += 1;
-
-                                const result = original.call(store, id) ?? null;
-
-                                if (result === null) {
-                                    stats.nullResults += 1;
-                                }
-
-                                const leafId = result?.id ?? null;
-
-                                if (leafId && leafId !== key) {
-                                    leafDescendantCache.set(key, result);
-                                    leafDescendantMissCache.delete(key);
-                                    stats.descendantWrites += 1;
-                                }
-
-                                return rememberLeaf(key, result);
-                            }
-
-                            stats.directWalks += 1;
-
-                            const directLeaf = tryDirectLeafWalk(key);
-
-                            if (directLeaf) {
-                                stats.directWalkReturns += 1;
-                                stats.descendantWrites += 1;
-
-                                leafDescendantCache.set(key, directLeaf);
-
-                                if (key === readCurrentLeafId()) {
-                                    activeLeafEpoch = bridge.__storeReadEpoch;
-                                    activeLeafKey = key;
-                                    activeLeafValue = directLeaf;
-                                }
-
-                                return rememberLeaf(key, directLeaf);
-                            }
-
-                            leafDescendantMissCache.add(key);
-                            stats.descendantMissWrites += 1;
-                            stats.originalCalls += 1;
-
-                            const result = original.call(store, id) ?? null;
-
-                            if (result === null) {
-                                stats.nullResults += 1;
-                            }
-
-                            const leafId = result?.id ?? null;
-
-                            if (leafId && leafId !== key) {
-                                leafDescendantCache.set(key, result);
-                                leafDescendantMissCache.delete(key);
-                                stats.descendantWrites += 1;
-                            }
-
-                            if (key === readCurrentLeafId()) {
-                                activeLeafEpoch = bridge.__storeReadEpoch;
-                                activeLeafKey = key;
-                                activeLeafValue = result;
-                            }
-
-                            return rememberLeaf(key, result);
-                        };
-                    }
-
-                    return function cachedGetLeafFromNodeProduction(id) {
-                        const key = normalizeLeafInputKey(id);
-
-                        if (!key) {
-                            return original.call(store, id) ?? null;
-                        }
-
-                        if (key === readCurrentLeafId()) {
-                            const epoch = bridge.__storeReadEpoch;
-
-                            if (
-                                activeLeafEpoch === epoch &&
-                                activeLeafKey === key &&
-                                activeLeafValue !== null
-                            ) {
-                                return activeLeafValue;
-                            }
-                        }
-
-                        const cached = get(key);
-                        if (cached !== undefined) return cached;
-
-                        const descendantCached = leafDescendantCache.get(key);
-
-                        if (descendantCached !== undefined) {
-                            return rememberLeaf(key, descendantCached);
-                        }
-
-                        if (!leafDescendantMissCache.has(key)) {
-                            const directLeaf = tryDirectLeafWalk(key);
-
-                            if (directLeaf) {
-                                leafDescendantCache.set(key, directLeaf);
-
-                                if (key === readCurrentLeafId()) {
-                                    activeLeafEpoch = bridge.__storeReadEpoch;
-                                    activeLeafKey = key;
-                                    activeLeafValue = directLeaf;
-                                }
-
-                                return rememberLeaf(key, directLeaf);
-                            }
-
-                            leafDescendantMissCache.add(key);
-                        }
-
-                        const result = original.call(store, id) ?? null;
-
-                        const leafId = result?.id ?? null;
-
-                        if (leafId && leafId !== key) {
-                            leafDescendantCache.set(key, result);
-                            leafDescendantMissCache.delete(key);
-                        }
-
-                        if (key === readCurrentLeafId()) {
-                            activeLeafEpoch = bridge.__storeReadEpoch;
-                            activeLeafKey = key;
-                            activeLeafValue = result;
-                        }
-
-                        return rememberLeaf(key, result);
-                    };
-                },
-            });
-
-            return {
-                ...result,
-                profiled,
-                stats,
-            };
-        },
-
-        uninstallGetLeafFromNodeFrameCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__getLeafFromNodeFrameCacheOriginal",
-                installedFlag: "__getLeafFromNodeFrameCacheInstalled",
-            });
-        },
-
-        getGetLeafFromNodeFrameCacheStats() {
-            return getCacheSnapshot(
-                this,
-                "__getLeafFromNodeFrameCacheInstalled",
-                "__getLeafFromNodeFrameCache",
-                "__getLeafFromNodeFrameCacheStats"
-            );
-        },
-
         recordBranchCallSite(methodName, args) {
             if (!ENABLE_BRANCH_CALLSITE_STATS) return;
             const stats = this.__branchCallSiteStats ??= {
@@ -3570,16 +2958,11 @@
             }
 
             const getBranchOriginal = getStoreMethod(store, "getBranch");
-            const getBranchFromLeafOriginal = getStoreMethod(store, "getBranchFromLeaf");
 
             const originals = {};
 
             if (getBranchOriginal) {
                 originals.getBranch = getBranchOriginal;
-            }
-
-            if (getBranchFromLeafOriginal) {
-                originals.getBranchFromLeaf = getBranchFromLeafOriginal;
             }
 
             if (Object.keys(originals).length === 0) {
@@ -3597,41 +2980,17 @@
                     mode: "production:persistent:getBranch",
                 };
 
-            const getBranchFromLeafStats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    calls: 0,
-                    cacheReturns: 0,
-                    prefixHits: 0,
-                    prefixMisses: 0,
-                    prefixRejected: 0,
-                    originalCalls: 0,
-                    cached: 0,
-                    mode: "profiled:persistent:getBranchFromLeaf",
-                }
-                : {
-                    mode: "production:persistent:getBranchFromLeaf",
-                };
-
             const getBranchCache = createPersistentCache({
                 stats: getBranchStats,
                 profiled,
             });
 
-            const getBranchFromLeafCache = createPersistentCache({
-                stats: getBranchFromLeafStats,
-                profiled,
-            });
-
             this.__branchCache = {
                 getBranch: getBranchCache.cache,
-                getBranchFromLeaf: getBranchFromLeafCache.cache,
             };
 
             this.__branchCacheStats = {
                 getBranch: getBranchStats,
-                getBranchFromLeaf: getBranchFromLeafStats,
             };
 
             this.__branchCacheOriginals = originals;
@@ -3660,105 +3019,6 @@
                 };
             }
 
-            if (typeof getBranchFromLeafOriginal === "function") {
-                if (profiled) {
-                    store.getBranchFromLeaf = function cachedGetBranchFromLeafProfiled(id, ...rest) {
-                        bridgeRef.recordBranchCallSite?.("getBranchFromLeaf", [id, ...rest]);
-                        getBranchFromLeafStats.calls += 1;
-
-                        const key =
-                            typeof id === "string" ||
-                                typeof id === "number" ||
-                                typeof id === "boolean" ||
-                                id == null
-                                ? id
-                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
-
-                        const cached = getBranchFromLeafCache.get(key);
-                        if (cached !== undefined) {
-                            getBranchFromLeafStats.cacheReturns += 1;
-                            return cached;
-                        }
-
-                        const node = getNodeDirect(store, key);
-                        const parentId = node?.parentId ?? null;
-
-                        if (node && parentId) {
-                            const parentBranch = getBranchFromLeafCache.get(parentId);
-
-                            if (
-                                Array.isArray(parentBranch) &&
-                                parentBranch[parentBranch.length - 1]?.id === parentId
-                            ) {
-                                getBranchFromLeafStats.prefixHits += 1;
-
-                                const result = parentBranch.concat(node);
-                                getBranchFromLeafCache.set(key, result);
-
-                                return result;
-                            }
-
-                            getBranchFromLeafStats.prefixMisses += 1;
-                        } else {
-                            getBranchFromLeafStats.prefixRejected += 1;
-                        }
-
-                        getBranchFromLeafStats.originalCalls += 1;
-
-                        const result = getBranchFromLeafOriginal.call(
-                            store,
-                            id,
-                            ...rest
-                        );
-
-                        getBranchFromLeafCache.set(key, result ?? null);
-                        return result ?? null;
-                    };
-                } else {
-                    const getBranchFromLeafGet = getBranchFromLeafCache.get;
-                    const getBranchFromLeafSet = getBranchFromLeafCache.set;
-
-                    store.getBranchFromLeaf = function cachedGetBranchFromLeafProduction(id, ...rest) {
-                        const key =
-                            typeof id === "string" ||
-                                typeof id === "number" ||
-                                typeof id === "boolean" ||
-                                id == null
-                                ? id
-                                : id.id ?? id.nodeId ?? id.message?.id ?? id;
-
-                        const cached = getBranchFromLeafGet(key);
-                        if (cached !== undefined) return cached;
-
-                        const node = getNodeDirect(store, key);
-                        const parentId = node?.parentId ?? null;
-
-                        if (node && parentId) {
-                            const parentBranch = getBranchFromLeafGet(parentId);
-
-                            if (
-                                Array.isArray(parentBranch) &&
-                                parentBranch[parentBranch.length - 1]?.id === parentId
-                            ) {
-                                const result = parentBranch.concat(node);
-                                getBranchFromLeafSet(key, result);
-
-                                return result;
-                            }
-                        }
-
-                        const result = getBranchFromLeafOriginal.call(
-                            store,
-                            id,
-                            ...rest
-                        );
-
-                        getBranchFromLeafSet(key, result ?? null);
-                        return result ?? null;
-                    };
-                }
-            }
-
             this.__branchCacheInstalled = true;
 
             const result = {
@@ -3785,17 +3045,9 @@
             const branchCache = this.__branchCache;
 
             branchCache?.getBranch?.clear?.();
-            branchCache?.getBranchFromLeaf?.clear?.();
 
             if (this.__branchCacheStats?.getBranch && "cached" in this.__branchCacheStats.getBranch) {
                 this.__branchCacheStats.getBranch.cached = 0;
-            }
-
-            if (
-                this.__branchCacheStats?.getBranchFromLeaf &&
-                "cached" in this.__branchCacheStats.getBranchFromLeaf
-            ) {
-                this.__branchCacheStats.getBranchFromLeaf.cached = 0;
             }
 
             return { ok: true };
@@ -3806,7 +3058,6 @@
                 installed: Boolean(this.__branchCacheInstalled),
                 size: {
                     getBranch: this.__branchCache?.getBranch?.size ?? 0,
-                    getBranchFromLeaf: this.__branchCache?.getBranchFromLeaf?.size ?? 0,
                 },
                 stats: this.__branchCacheStats ?? null,
                 lastInstallResult: this.__branchCacheLastInstallResult ?? null,
@@ -4080,7 +3331,7 @@
                 }
             }
 
-            function recordPredicateSource(entry, source, now, cacheEvent) {
+            function recordPredicateSource(entry, source, now) {
                 if (!source) return;
 
                 const sources = entry.predicateSources ??= {};
@@ -4089,42 +3340,30 @@
                 if (sourceEntry) {
                     sourceEntry.calls += 1;
                     sourceEntry.lastSeenAt = now;
-                } else {
-                    const keys = Object.keys(sources);
-
-                    if (keys.length >= maxPredicateSourcesPerSite) {
-                        const lowest = keys.reduce((a, b) =>
-                            sources[a].calls < sources[b].calls ? a : b
-                        );
-
-                        delete sources[lowest];
-                    }
-
-                    sourceEntry = sources[source] = {
-                        calls: 1,
-                        firstSeenAt: now,
-                        lastSeenAt: now,
-                        cacheHits: 0,
-                        cacheMisses: 0,
-                        cacheStaleHits: 0,
-                        cacheWrites: 0,
-                        cacheUnknown: 0,
-                    };
+                    return;
                 }
 
-                if (cacheEvent?.type === "hit") sourceEntry.cacheHits += 1;
-                else if (cacheEvent?.type === "miss") sourceEntry.cacheMisses += 1;
-                else if (cacheEvent?.type === "stale-hit") sourceEntry.cacheStaleHits += 1;
-                else if (cacheEvent?.type === "write") sourceEntry.cacheWrites += 1;
-                else sourceEntry.cacheUnknown += 1;
+                const keys = Object.keys(sources);
+
+                if (keys.length >= maxPredicateSourcesPerSite) {
+                    const lowest = keys.reduce((a, b) =>
+                        sources[a].calls < sources[b].calls ? a : b
+                    );
+
+                    delete sources[lowest];
+                }
+
+                sources[source] = {
+                    calls: 1,
+                    firstSeenAt: now,
+                    lastSeenAt: now,
+                };
             }
 
             store.findNode = function profiledFindNodeCallSite(...args) {
                 stats.totalCalls += 1;
 
                 const sampleThisCall = (stats.totalCalls % sampleEvery) === 0;
-                let beforeCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
-
                 const result = original.apply(store, args);
 
                 if (sampleThisCall) {
@@ -4133,11 +3372,6 @@
                     const now = Date.now();
                     const stack = normalizeFindNodeStack(new Error().stack);
                     const predicateSource = getPredicateSourcePreview(args[0]);
-
-                    const afterCacheEvent = bridgeRef.__lastFindNodePredicateCacheEvent || null;
-                    const afterCacheSeq = bridgeRef.__findNodePredicateCacheEventSeq || 0;
-                    const cacheEvent =
-                        afterCacheSeq !== beforeCacheSeq ? afterCacheEvent : null;
 
                     let entry = stats.callSites[stack];
 
@@ -4162,22 +3396,11 @@
                             lastArgType: typeof args[0],
                             firstSeenAt: now,
                             lastSeenAt: now,
-                            cacheHits: 0,
-                            cacheMisses: 0,
-                            cacheStaleHits: 0,
-                            cacheWrites: 0,
-                            cacheUnknown: 0,
                             predicateSources: {},
                         };
                     }
 
-                    if (cacheEvent?.type === "hit") entry.cacheHits += 1;
-                    else if (cacheEvent?.type === "miss") entry.cacheMisses += 1;
-                    else if (cacheEvent?.type === "stale-hit") entry.cacheStaleHits += 1;
-                    else if (cacheEvent?.type === "write") entry.cacheWrites += 1;
-                    else entry.cacheUnknown += 1;
-
-                    recordPredicateSource(entry, predicateSource, now, cacheEvent);
+                    recordPredicateSource(entry, predicateSource, now);
                 }
 
                 return result;
@@ -4310,312 +3533,6 @@
             };
         },
 
-        installFindNodePredicateCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__findNodePredicateCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__findNodePredicateCacheStats,
-                };
-            }
-
-            const original = getStoreMethod(store, "findNode");
-            if (!original) return unavailable("findNode unavailable");
-
-            const cache = new Map();
-
-            const fnToString = Function.prototype.toString;
-            const SOURCE_KEY_LEN = 160;
-
-            let lastPredicateFn = null;
-            let lastPredicateSourceKey = null;
-
-            let activeEpoch = -1;
-            let activeKey = null;
-            let activeValue = null;
-
-            const stats = profiled
-                ? {
-                    calls: 0,
-                    hits: 0,
-                    misses: 0,
-                    staleHits: 0,
-                    invalidPredicate: 0,
-                    writes: 0,
-                    activeEpochHits: 0,
-                    activeEpochMisses: 0,
-                    cached: 0,
-                    mode: "profiled:findNode-predicate-positive-result-cache+epoch-throttle",
-                }
-                : {
-                    cached: 0,
-                    mode: "production:findNode-predicate-positive-result-cache+epoch-throttle",
-                };
-
-            const bridgeRef = this;
-
-            bridgeRef.__storeReadEpoch = 0;
-
-            function readCurrentLeafId() {
-                return typeof store.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store.currentLeafId;
-            }
-
-            function getCurrentStoreReadEpoch() {
-                return bridgeRef.__storeReadEpoch;
-            }
-
-            function getPredicateSourceKey(predicateFn) {
-                if (predicateFn === lastPredicateFn) {
-                    return lastPredicateSourceKey;
-                }
-
-                const source = fnToString.call(predicateFn);
-                const key =
-                    source.length <= SOURCE_KEY_LEN
-                        ? source
-                        : (" " + source.slice(0, SOURCE_KEY_LEN)).slice(1);
-
-                lastPredicateFn = predicateFn;
-                lastPredicateSourceKey = key;
-
-                return key;
-            }
-
-            function makeKey(leafId, predicateSourceKey) {
-                return leafId + "::" + predicateSourceKey;
-            }
-
-            function recordFindNodePredicateCacheEvent(type, key = null, nodeId = null) {
-                bridgeRef.__findNodePredicateCacheEventSeq =
-                    (bridgeRef.__findNodePredicateCacheEventSeq || 0) + 1;
-
-                bridgeRef.__lastFindNodePredicateCacheEvent = {
-                    type,
-                    key,
-                    nodeId,
-                    epoch: getCurrentStoreReadEpoch(),
-                    at: Date.now(),
-                };
-            }
-
-            function rememberProduction(key, node) {
-                if (!node?.id) return;
-                cache.set(key, node.id);
-            }
-
-            function rememberProfiled(key, node) {
-                if (!node?.id) return;
-
-                cache.set(key, node.id);
-
-                stats.writes += 1;
-                stats.cached = cache.size;
-
-                recordFindNodePredicateCacheEvent("write", key, node.id);
-            }
-
-            function getCachedNodeProduction(key, predicateFn) {
-                const nodeId = cache.get(key);
-                if (nodeId === undefined) return undefined;
-
-                const node = getNodeDirect(store, nodeId);
-
-                if (node && predicateFn.call(store, node)) {
-                    return node;
-                }
-
-                cache.delete(key);
-                return undefined;
-            }
-
-            function getCachedNodeProfiled(key, predicateFn) {
-                const nodeId = cache.get(key);
-                if (nodeId === undefined) return undefined;
-
-                const node = getNodeDirect(store, nodeId);
-
-                if (node && predicateFn.call(store, node)) {
-                    stats.hits += 1;
-                    recordFindNodePredicateCacheEvent("hit", key, nodeId);
-                    return node;
-                }
-
-                cache.delete(key);
-
-                stats.staleHits += 1;
-                stats.cached = cache.size;
-
-                recordFindNodePredicateCacheEvent("stale-hit", key, nodeId);
-
-                return undefined;
-            }
-
-            function callOriginalWithEpochThrottleProduction(key, predicateFn) {
-                const epoch = getCurrentStoreReadEpoch();
-
-                if (activeEpoch === epoch && activeKey === key) {
-                    return activeValue;
-                }
-
-                const result = original.call(store, predicateFn) ?? null;
-
-                activeEpoch = epoch;
-                activeKey = key;
-                activeValue = result;
-
-                return result;
-            }
-
-            function callOriginalWithEpochThrottleProfiled(key, predicateFn) {
-                const epoch = getCurrentStoreReadEpoch();
-
-                if (activeEpoch === epoch && activeKey === key) {
-                    stats.activeEpochHits += 1;
-
-                    recordFindNodePredicateCacheEvent(
-                        "active-epoch-hit",
-                        key,
-                        activeValue?.id ?? null
-                    );
-
-                    return activeValue;
-                }
-
-                stats.activeEpochMisses += 1;
-
-                const result = original.call(store, predicateFn) ?? null;
-
-                activeEpoch = epoch;
-                activeKey = key;
-                activeValue = result;
-
-                recordFindNodePredicateCacheEvent(
-                    "active-epoch-miss",
-                    key,
-                    result?.id ?? null
-                );
-
-                return result;
-            }
-
-            this.__findNodePredicateCache = cache;
-            this.__findNodePredicateCacheStats = stats;
-            this.__findNodePredicateCacheOriginal = { findNode: original };
-
-            if (profiled) {
-                store.findNode = function cachedFindNodePredicateProfiled(predicateFn) {
-                    stats.calls += 1;
-
-                    if (typeof predicateFn !== "function") {
-                        stats.invalidPredicate += 1;
-                        return original.call(store, predicateFn) ?? null;
-                    }
-
-                    const leafId = readCurrentLeafId();
-
-                    if (!leafId) {
-                        stats.misses += 1;
-                        recordFindNodePredicateCacheEvent("miss", null, null);
-                        return original.call(store, predicateFn) ?? null;
-                    }
-
-                    const sourceKey = getPredicateSourceKey(predicateFn);
-                    const key = makeKey(leafId, sourceKey);
-
-                    const cached = getCachedNodeProfiled(key, predicateFn);
-                    if (cached !== undefined) {
-                        return cached;
-                    }
-
-                    stats.misses += 1;
-
-                    const result = callOriginalWithEpochThrottleProfiled(
-                        key,
-                        predicateFn
-                    );
-
-                    if (result?.id) {
-                        rememberProfiled(key, result);
-                    }
-
-                    return result;
-                };
-            } else {
-                store.findNode = function cachedFindNodePredicateProduction(predicateFn) {
-                    if (typeof predicateFn !== "function") {
-                        return original.call(store, predicateFn) ?? null;
-                    }
-
-                    const leafId = readCurrentLeafId();
-                    if (!leafId) {
-                        return original.call(store, predicateFn) ?? null;
-                    }
-
-                    const sourceKey = getPredicateSourceKey(predicateFn);
-                    const key = makeKey(leafId, sourceKey);
-
-                    const cached = getCachedNodeProduction(key, predicateFn);
-                    if (cached !== undefined) {
-                        return cached;
-                    }
-
-                    const result = callOriginalWithEpochThrottleProduction(
-                        key,
-                        predicateFn
-                    );
-
-                    if (result?.id) {
-                        rememberProduction(key, result);
-                    }
-
-                    return result;
-                };
-            }
-
-            this.__findNodePredicateCacheInstalled = true;
-
-            return {
-                ok: true,
-                installed: true,
-                methods: ["findNode"],
-                profiled,
-            };
-        },
-
-        uninstallFindNodePredicateCache() {
-            if (!this.__findNodePredicateCacheInstalled) {
-                return { ok: true, alreadyUninstalled: true };
-            }
-
-            const original = this.__findNodePredicateCacheOriginal?.findNode;
-
-            if (this.__store && typeof original === "function") {
-                this.__store.findNode = original;
-            }
-
-            this.__findNodePredicateCacheInstalled = false;
-            this.__findNodePredicateCacheOriginal = null;
-            this.__findNodePredicateCache = null;
-            this.__findNodePredicateCacheStats = null;
-
-            return { ok: true, uninstalled: true };
-        },
-
-        getFindNodePredicateCacheStats() {
-            return {
-                installed: Boolean(this.__findNodePredicateCacheInstalled),
-                size: this.__findNodePredicateCache?.size ?? 0,
-                stats: this.__findNodePredicateCacheStats,
-            };
-        },
-
         getNodeByIdOrMessageIdCallSiteStats() {
             const stats = this.__getNodeByIdOrMessageIdCallSites;
 
@@ -4640,105 +3557,111 @@
             };
         },
 
-        applyStoreReadOptimization({ debug = false, clearStats = false } = {}) {
-            const optimizationStartedAt = performance.now();
-            const discoveryResult = this.hasStore();
+        applyStoreReadOptimization({
+            debug = false,
+            clearStats = false,
+        } = {}) {
+            const startedAt = performance.now();
 
-            if (!this.hasStore()) {
+            this.__storeReadOptimizationRequested = true;
+            this.__storeReadOptimizationDebug = Boolean(debug);
+
+            if (!this.__store) {
                 return {
                     ok: false,
                     reason: "store not registered",
-                    discoveryResult,
-                    status: this.status(),
                 };
             }
 
-            if (!smokeTestStoreWrappers(this.__store)) {
-                this.__storeValidationFailed = true;
+            const profiled = ENABLE_CACHE_PROFILING || Boolean(debug);
+            const results = [];
 
-                return {
-                    ok: false,
-                    reason: "store wrapper smoke test failed before optimization",
-                    status: this.status(),
-                };
-            }
-
-            const result = {
-                ok: true,
-                discoveryResult,
-                statusBefore: this.status(),
-
-                //updateNodeMessageRafBatcher: this.installUpdateNodeMessageRafBatcher(),
-                indexRefreshHooks: [
-                    this.wrapMutationForIndexRefresh("addMessageNode"),
-                    this.wrapMutationForIndexRefresh("addOptimisticMessageNode"),
-                    this.wrapMutationForIndexRefresh("prependNode"),
-                    this.wrapMutationForIndexRefresh("prependOptismisticNode"),
-                    this.wrapMutationForIndexRefresh("processUpdate", {
-                        clearCaches: false,
-                    }),
-                ],
-
-                ...runStoreEnhancementInstalls(this),
-
-                findNodeCallSiteProfiler: ENABLE_FIND_NODE_CALLSITE_STATS
-                    ? this.installFindNodeCallSiteProfiler()
-                    : {
-                        ok: true,
+            const installIfEnabled = (enabled, name, installer, options = {}) => {
+                if (!enabled) {
+                    results.push({
+                        name,
                         skipped: true,
-                        reason: "disabled by ENABLE_FIND_NODE_CALLSITE_STATS",
-                    },
+                        reason: "disabled by config",
+                    });
+                    return;
+                }
 
-                profiler: ENABLE_STORE_PROFILER
-                    ? this.installStoreProfiler()
-                    : {
-                        ok: true,
-                        skipped: true,
-                        reason: "disabled by ENABLE_STORE_PROFILER",
-                    },
+                if (typeof installer !== "function") {
+                    results.push({
+                        name,
+                        ok: false,
+                        reason: "installer unavailable",
+                    });
+                    return;
+                }
 
-                cleared: null,
+                const result = installer.call(this, {
+                    profiled,
+                    clearStats,
+                    ...options,
+                });
+
+                results.push({
+                    name,
+                    ...result,
+                });
             };
 
-            if (clearStats) {
-                result.cleared = this.clearPerformanceStats();
+            installIfEnabled(
+                ENABLE_MESSAGE_ID_INDEX_CACHE,
+                "messageIdIndex",
+                this.installMessageIdIndex
+            );
+
+            installIfEnabled(
+                ENABLE_EXISTING_NODE_STABLE_CACHE,
+                "existingNodeStableCache",
+                this.installExistingNodeStableCache
+            );
+
+            installIfEnabled(
+                ENABLE_BRANCH_CACHE,
+                "branchCache",
+                this.installBranchCache
+            );
+
+            installIfEnabled(
+                ENABLE_RESOLVED_NODE_FRAME_CACHE,
+                "resolvedNodeFrameCache",
+                this.installResolvedNodeFrameCache
+            );
+
+            installIfEnabled(
+                ENABLE_GET_NODE_BY_ID_OR_MESSAGE_ID_CACHE,
+                "getNodeByIdOrMessageIdCache",
+                this.installGetNodeByIdOrMessageIdCache
+            );
+
+            if (ENABLE_STORE_PROFILER) {
+                results.push({
+                    name: "storeProfiler",
+                    ...this.installStoreProfiler(),
+                });
             }
 
-            result.statusAfter = this.status();
+            const durationMs = performance.now() - startedAt;
 
-            if (debug) {
-                console.log("[thread-optimizer bridge] store read optimization applied", result);
+            this.__initTiming.lastApplyOptimizationMs = durationMs;
+
+            if (debug || ENABLE_DEBUG) {
+                console.log(DISCOVERY_LOG_PREFIX, "optimization install completed", {
+                    durationMs,
+                    profiled,
+                    results,
+                });
             }
 
-            this.__initTiming.lastApplyOptimizationMs =
-                performance.now() - optimizationStartedAt;
-
-            console.log(DISCOVERY_LOG_PREFIX, "optimization install completed", {
-                elapsedMs: Math.round(this.__initTiming.lastApplyOptimizationMs * 10) / 10,
-                ok: result.ok,
-                installed: {
-                    ...getStoreEnhancementInstallSummary(result),
-                    updateNodeMessageRafBatcher: result.updateNodeMessageRafBatcher?.ok,
-                    findNodeCallSiteProfiler: result.findNodeCallSiteProfiler?.ok,
-                    profiler: result.profiler?.ok,
-                },
-                statusAfter: result.statusAfter,
-            });
-
-            if (!smokeTestStoreWrappers(this.__store)) {
-                this.disableStoreReadOptimization?.({ debug: false });
-                this.resetInstalledStoreEnhancements();
-
-                this.__storeValidationFailed = true;
-
-                return {
-                    ok: false,
-                    reason: "store wrapper smoke test failed after optimization",
-                    status: this.status(),
-                };
-            }
-
-            return result;
+            return {
+                ok: true,
+                profiled,
+                durationMs,
+                results,
+            };
         },
 
         disableStoreReadOptimization({ debug = false } = {}) {
@@ -4780,30 +3703,10 @@
                         this.__branchCache?.getBranch
                     );
 
-                    resetFrameCacheStats(
-                        this.__branchCacheStats?.getBranchFromLeaf,
-                        this.__branchCache?.getBranchFromLeaf
-                    );
-
                     continue;
                 }
 
                 resetFrameCacheStats(this[statsSlot], this[cacheSlot]);
-            }
-
-            if (this.__findNodePredicateCacheStats) {
-                const stats = this.__findNodePredicateCacheStats;
-
-                if ("calls" in stats) stats.calls = 0;
-                if ("hits" in stats) stats.hits = 0;
-                if ("misses" in stats) stats.misses = 0;
-                if ("staleHits" in stats) stats.staleHits = 0;
-                if ("invalidPredicate" in stats) stats.invalidPredicate = 0;
-                if ("writes" in stats) stats.writes = 0;
-                if ("activeRafHits" in stats) stats.activeRafHits = 0;
-                if ("activeRafMisses" in stats) stats.activeRafMisses = 0;
-
-                stats.cached = this.__findNodePredicateCache?.size ?? 0;
             }
 
             if (ENABLE_BRANCH_CALLSITE_STATS) {
@@ -4832,8 +3735,6 @@
                 messageIdIndex: this.getMessageIdIndexStats?.(),
                 existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
                 getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
-                findNodeFromLeafFrameCache: this.getFindNodeFromLeafFrameCacheStats?.(),
-                getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
 
@@ -4842,7 +3743,6 @@
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
                 findNodeCallSites: this.getFindNodeCallSiteProfilerStats?.(),
-                findNodePredicateCache: this.getFindNodePredicateCacheStats?.(),
                 nodeObjectCache: {
                     installed: Boolean(this.__nodeObjectCacheApi),
                     size: this.__nodeObjectCache?.size ?? 0,
@@ -4859,7 +3759,7 @@
         },
 
         clearStoreReadCache(reason = "manual") {
-            if (shouldAdvanceFindNodeEpoch(reason)) {
+            if (shouldAdvanceStoreEpoch(reason)) {
                 this.__storeReadEpoch += 1;
             }
 
@@ -4918,19 +3818,10 @@
 
             const recordBranchSkip = (why) => {
                 const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
-                const getBranchFromLeafSize =
-                    this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
                 recordInvalidation("__branchCache.getBranch", "skipped", getBranchSize, {
                     why,
                 });
-
-                recordInvalidation(
-                    "__branchCache.getBranchFromLeaf",
-                    "skipped",
-                    getBranchFromLeafSize,
-                    { why }
-                );
             };
 
             const recordCacheSkip = (cacheSlot, stats, why) => {
@@ -4969,44 +3860,18 @@
 
                 if (cacheSlot === "__branchCache") {
                     const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
-                    const getBranchFromLeafSize =
-                        this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
-                    if (this.__branchCache instanceof Map) {
-                        for (const cache of this.__branchCache.values()) {
-                            cache?.clear?.();
-                        }
-                    }
+                    this.clearBranchCache?.();
 
                     recordInvalidation("__branchCache.getBranch", "cleared", getBranchSize);
-                    recordInvalidation(
-                        "__branchCache.getBranchFromLeaf",
-                        "cleared",
-                        getBranchFromLeafSize
-                    );
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
                         if (this.__branchCacheStats.getBranch) {
                             this.__branchCacheStats.getBranch.cached = 0;
                         }
-
-                        if (this.__branchCacheStats.getBranchFromLeaf) {
-                            this.__branchCacheStats.getBranchFromLeaf.cached = 0;
-                        }
                     }
 
                     continue;
-                }
-
-                if (cacheSlot === "__findNodeFromLeafFrameCache") {
-                    this.__findNodeFromLeafAncestorChainCache?.clear?.();
-                    this.__findNodeFromLeafPredicateNodeResultCache?.clear?.();
-                    this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
-                }
-
-                if (cacheSlot === "__getLeafFromNodeFrameCache") {
-                    this.__leafDescendantCache?.clear?.();
-                    this.__leafDescendantMissCache?.clear?.();
                 }
 
                 const sizeBefore = cache?.size ?? 0;
@@ -5037,16 +3902,12 @@
                 installed: Boolean(
                     this.__messageIdIndexInstalled ||
                     this.__existingNodeStableCacheInstalled ||
-                    this.__findNodeFromLeafFrameCacheInstalled ||
-                    this.__getLeafFromNodeFrameCacheInstalled ||
                     this.__branchCacheInstalled ||
                     this.__resolvedNodeFrameCacheInstalled
                 ),
                 messageIdIndex: this.getMessageIdIndexStats?.(),
                 existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
                 getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
-                findNodeFromLeafFrameCache: this.getFindNodeFromLeafFrameCacheStats?.(),
-                getLeafFromNodeFrameCache: this.getGetLeafFromNodeFrameCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
             };
@@ -5080,12 +3941,6 @@
             this.__getNodeByIdOrMessageIdCache?.clear?.();
             this.__resolvedNodeFrameCache?.clear?.();
 
-            this.__findNodeFromLeafFrameCache?.clear?.();
-            this.__findNodeFromLeafAncestorChainCache?.clear?.();
-            this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
-            this.__findNodePredicateCache?.clear?.();
-
-            this.__getLeafFromNodeFrameCache?.clear?.();
             this.__leafDescendantCache?.clear?.();
             this.__leafDescendantMissCache?.clear?.();
 
@@ -5154,27 +4009,11 @@
 
             // Branch cache:
             // getBranch is current-leaf derived, so any topology mutation invalidates it.
-            // getBranchFromLeaf(parent/children/descendants) can all change because
-            // deleteNode splices children into the parent. Targeted is possible, but
-            // cheap/safe option is clearing this branch-path cache.
             this.clearBranchCache?.();
 
             // Leaf caches are path/topology dependent. Clear whole.
-            this.__getLeafFromNodeFrameCache?.clear?.();
             this.__leafDescendantCache?.clear?.();
             this.__leafDescendantMissCache?.clear?.();
-
-            // findNodeFromLeaf caches predicate results along parent chains.
-            // A deleted node can invalidate any cached chain crossing that node.
-            this.__findNodeFromLeafFrameCache?.clear?.();
-            this.__findNodeFromLeafAncestorChainCache?.clear?.();
-            this.__findNodeFromLeafDormantAncestorResultCache?.clear?.();
-
-            // Predicate cache may hold the deleted node as a result.
-            this.__findNodePredicateCache?.delete?.(nodeId);
-            for (const alias of aliases) {
-                this.__findNodePredicateCache?.delete?.(alias);
-            }
 
             this.__liveNodeCacheDirty = true;
 
@@ -5482,7 +4321,7 @@
         bridge.__lastVisibleMessagesVerificationResult = null;
     }
 
-    function shouldAdvanceFindNodeEpoch(reason) {
+    function shouldAdvanceStoreEpoch(reason) {
         return (
             reason === "topology-mutation" ||
             reason === "conversation-change" ||
@@ -5503,7 +4342,7 @@
             const status = message?.status;
             const metadata = message?.metadata || {};
 
-            // User send is the one we care about for findNode epoch.
+            // User send is the one we care about for store topology epoch.
             if (role === "user") {
                 return "topology-mutation";
             }

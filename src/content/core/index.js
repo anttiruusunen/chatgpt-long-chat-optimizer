@@ -51,6 +51,29 @@ const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
 
+const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
+
+let pendingReplySettledPruneTimer = null;
+
+function clearPendingReplySettledPrune() {
+    if (pendingReplySettledPruneTimer) {
+        clearTimeout(pendingReplySettledPruneTimer);
+        pendingReplySettledPruneTimer = null;
+    }
+}
+
+function scheduleReplySettledPrune() {
+    clearPendingReplySettledPrune();
+
+    pendingReplySettledPruneTimer = setTimeout(() => {
+        pendingReplySettledPruneTimer = null;
+
+        if (state.settings.autoPrune && state.featureFlags.pruning) {
+            scheduleAutoPrune("reply-settled-idle");
+        }
+    }, REPLY_SETTLED_PRUNE_DELAY_MS);
+}
+
 installDomMutationGuard();
 
 function clearPendingNavigationPrune() {
@@ -127,6 +150,7 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
  * navigation can restore/prune nodes into the wrong thread.
  */
 function resetConversationLifecycleForNavigation() {
+    clearPendingReplySettledPrune();
     clearPendingNavigationPrune();
     invalidateConversationDomCache();
     clearPendingAutoPrune();
@@ -275,14 +299,13 @@ async function initialize() {
 
     installReplyTimingListeners({
         onReplyStarted: () => {
+            clearPendingReplySettledPrune();
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
             flushDeferredCssVisibilityWindowSync("reply-settled");
 
-            if (state.settings.autoPrune && state.featureFlags.pruning) {
-                scheduleAutoPrune("reply-settled");
-            }
+            scheduleReplySettledPrune();
 
             scheduleConversationChromeSync({
                 reason: "reply-settled",
@@ -432,6 +455,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
             scheduleAutoPrune();
         }
     } else {
+        clearPendingReplySettledPrune();
         clearPendingAutoPrune();
         scheduleRefreshPostPruneState();
     }
