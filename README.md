@@ -1,10 +1,17 @@
-# Thread Optimizer (Chrome Extension)
+# Thread Optimizer for ChatGPT
 
-Performance-focused ChatGPT thread optimizer:
-- Auto-pruning old sections
-- CSS-driven offscreen rendering
-- Streaming reply hiding
-- Large code block optimization
+Performance-focused browser extension for long ChatGPT conversations.
+
+Thread Optimizer improves responsiveness in large ChatGPT threads by reducing DOM pressure locally in your browser.
+
+Features:
+- Auto-pruning old conversation sections
+- Recoverable soft-pruned history
+- CSS-driven offscreen rendering optimization
+- Streaming-aware UI management
+- Long prompt and code block scrollbar quality-of-life styles
+
+This extension is an independent third-party project and is not affiliated with OpenAI.
 
 ---
 
@@ -50,9 +57,12 @@ npm run test:watch
 ```
 
 ## Key Files
-- src/core/index.js → main orchestrator
-- src/pruning/prune.js → pruning logic
-- src/pruning/sentinelObservers.js → scroll-triggered restore/prune
-- src/offscreen/offscreen.js → section visibility optimization
-- src/streaming/streamingSection.js → streaming UI behavior
-- src/ui/qolStyles.js → CSS rules
+
+- `src/content/core/index.js` → main content-script orchestrator
+- `src/content/pruning/prune.js` → pruning and soft-prune bookkeeping
+- `src/content/pruning/pruneDom.js` → DOM removal/restoration helpers
+- `src/content/pruning/sentinelObservers.js` → scroll-triggered restore/prune
+- `src/content/offscreen/offscreen.js` → section visibility optimization
+- `src/content/streaming/replyTiming.js` → streaming-state detection
+- `src/content/ui/qolStyles.js` → quality-of-life CSS rules
+- `src/page/chatStorePageBridge.js` → page-context store optimization bridge
