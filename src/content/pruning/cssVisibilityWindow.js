@@ -1,7 +1,5 @@
 import {
     state,
-    PRUNED_ATTR,
-    UNPRUNEABLE_ATTR,
     OUT_OF_WINDOW_ATTR,
 } from "../core/state.js";
 import { getConversationSections } from "../core/dom.js";
@@ -56,12 +54,13 @@ export function clearCssVisibilityWindow() {
     clearAllMarkedCssVisibilityWindow();
 }
 
+/**
+ * Offscreen optimization now treats every mounted conversation section as
+ * eligible. Store pruning owns actual history deletion; this layer only marks
+ * older still-mounted sections for CSS content-visibility.
+ */
 export function getEligibleVisibleSections(sections = getConversationSections()) {
-    return sections.filter(
-        (section) =>
-            !section.hasAttribute(PRUNED_ATTR) &&
-            !section.hasAttribute(UNPRUNEABLE_ATTR)
-    );
+    return sections.filter((section) => section instanceof HTMLElement);
 }
 
 export function getCssHiddenSections({
@@ -76,19 +75,13 @@ export function getCssHiddenSections({
     );
 }
 
-/**
- * Computes the CSS visibility window.
- *
- * Real pruning removes older turns from the DOM. This lighter layer keeps only
- * the newest visible exchange fully rendered and marks older still-mounted
- * sections as out-of-window for CSS content-visibility.
- */
 function collectCssVisibilityWindowPlan({
     sections = getConversationSections(),
     visibleLimit = getVisibleSectionsLimit(),
 } = {}) {
     const eligibleVisibleSections = getEligibleVisibleSections(sections);
     const visibleWindow = new Set(eligibleVisibleSections.slice(-visibleLimit));
+
     const sectionsToHide = eligibleVisibleSections.filter(
         (section) => !visibleWindow.has(section)
     );
@@ -127,12 +120,6 @@ function applyCssVisibilityWindowDiff(sectionsToHide) {
     };
 }
 
-/**
- * Cleans up sections marked by an older/stale pass.
- *
- * This makes sync idempotent even if tracked state was reset by tests,
- * navigation, or extension reloads.
- */
 function reconcileExternallyMarkedSections(sectionsToHide) {
     const nextHiddenSections = new Set(sectionsToHide);
     const markedSections = collectMarkedOutOfWindowSections();
@@ -151,17 +138,17 @@ function reconcileExternallyMarkedSections(sectionsToHide) {
 }
 
 export function syncCssVisibilityWindow() {
-    const plan = collectCssVisibilityWindowPlan();
-
-    if (!state.featureFlags.pruning) {
+    if (!state.featureFlags.offscreenOptimization) {
         const clearedCount = clearAllMarkedCssVisibilityWindow();
 
-        debugLog("CSS visibility window: skipped sync because pruning is disabled", {
+        debugLog("CSS visibility window: skipped sync because offscreen optimization is disabled", {
             clearedCount,
         });
 
         return [];
     }
+
+    const plan = collectCssVisibilityWindowPlan();
 
     if (plan.sections.length === 0) {
         const clearedCount = clearAllMarkedCssVisibilityWindow();
@@ -189,6 +176,7 @@ export function syncCssVisibilityWindow() {
         cssHiddenSections: plan.sectionsToHide.length,
         clearedCount: clearedCount + externallyClearedCount,
         markedCount,
+        offscreenOptimizationEnabled: state.featureFlags.offscreenOptimization,
     });
 
     return plan.sectionsToHide;

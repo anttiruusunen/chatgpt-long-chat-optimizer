@@ -365,10 +365,12 @@ describe("chatStorePageBridge", () => {
             type: "thread-optimizer:set-pruning-state",
             enabled: true,
             prunedTurnCount: 5,
+            historyKeptExchanges: 3,
         });
 
         expect(bridge.__knownPruningEnabled).toBe(true);
         expect(bridge.__knownPrunedTurnCount).toBe(5);
+        expect(bridge.__knownHistoryKeptExchanges).toBe(3);
     });
 
     it("normalizes invalid prunedTurnCount to zero", () => {
@@ -426,35 +428,22 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__storeReadOptimizationDebug).toBe(true);
     });
 
-    it("ignores invalid React prune message ids safely", () => {
-        loadBridgeWithCurrentScript(script);
-
-        const bridge = window[BRIDGE_GLOBAL];
-        const pruneSpy = vi.spyOn(bridge, "pruneReactMessageIds");
-
-        dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
-            messageIds: ["", "   ", "x".repeat(301)],
-        });
-
-        expect(pruneSpy).not.toHaveBeenCalled();
-    });
-
-    it("handles React prune safely without a store", () => {
+    it("handles store-history prune safely without a store", () => {
         loadBridgeWithCurrentScript(script);
 
         const bridge = window[BRIDGE_GLOBAL];
 
         expect(() => {
-            dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
-                messageIds: ["msg-1", "msg-2"],
-                reason: "test",
+            dispatchValidBridgeMessage("thread-optimizer:prune-store-history", {
+                historyKeptExchanges: 1,
+                reason: "test-no-store",
             });
         }).not.toThrow();
 
         expect(bridge.hasStore()).toBe(false);
     });
 
-    it("React-prunes message ids through store.deleteNode and keeps wrappers installed", () => {
+    it("store-prunes old active-branch nodes and keeps wrappers installed", () => {
         appendVisibleMessage("msg-4");
         loadBridgeWithCurrentScript(script);
 
@@ -462,7 +451,7 @@ describe("chatStorePageBridge", () => {
         const fakeStore = createFakeStore(5);
 
         bridge.registerStore(fakeStore, {
-            source: "test-react-prune",
+            source: "test-store-prune",
         });
 
         const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
@@ -471,16 +460,19 @@ describe("chatStorePageBridge", () => {
 
         const epochBefore = bridge.__storeReadEpoch;
 
-        dispatchValidBridgeMessage("thread-optimizer:prune-react-message-ids", {
-            messageIds: ["msg-2"],
-            reason: "test-react-prune",
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-store-prune",
         });
 
-        expect(deleteSpy).toHaveBeenCalledWith("node-2");
-        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
+        expect(result.ok).toBe(true);
+        expect(result.deleted.length).toBeGreaterThan(0);
+        expect(deleteSpy).toHaveBeenCalled();
 
-        expect(fakeStore.getNodeIfExists("node-3").parentId).toBe("node-1");
-        expect(fakeStore.getNodeIfExists("node-1").children).toEqual(["node-3"]);
+        expect(fakeStore.__nodeMap.has("node-1")).toBe(false);
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
+        expect(fakeStore.__nodeMap.has("node-3")).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-4")).toBe(true);
 
         expect(bridge.__storeReadEpoch).toBeGreaterThan(epochBefore);
 
@@ -492,7 +484,7 @@ describe("chatStorePageBridge", () => {
         expect(resetSpy).not.toHaveBeenCalled();
     });
 
-    it("refuses to React-prune the current leaf", () => {
+    it("handles prune-store-history bridge messages through the active store", () => {
         appendVisibleMessage("msg-4");
         loadBridgeWithCurrentScript(script);
 
@@ -500,28 +492,50 @@ describe("chatStorePageBridge", () => {
         const fakeStore = createFakeStore(5);
 
         bridge.registerStore(fakeStore, {
-            source: "test-react-prune-current-leaf",
+            source: "test-prune-store-history-message",
         });
 
-        const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
+        const pruneSpy = vi.spyOn(bridge, "pruneStoreHistory");
 
-        const result = bridge.pruneReactMessageIds(["msg-4"], {
+        dispatchValidBridgeMessage("thread-optimizer:prune-store-history", {
+            historyKeptExchanges: 1,
+            reason: "test-prune-store-history-message",
+        });
+
+        expect(pruneSpy).toHaveBeenCalledWith({
+            historyKeptExchanges: 1,
+            reason: "test-prune-store-history-message",
+        });
+
+        expect(fakeStore.__nodeMap.has("node-1")).toBe(false);
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
+        expect(fakeStore.__nodeMap.has("node-3")).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-4")).toBe(true);
+    });
+
+    it("does not delete the current leaf during store-history prune", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-store-prune-current-leaf",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
             reason: "test-current-leaf",
         });
 
-        expect(result.ok).toBe(false);
-        expect(result.failed).toEqual([
-            {
-                inputId: "msg-4",
-                nodeId: "node-4",
-                reason: "refusing to delete current leaf",
-            },
-        ]);
-        expect(deleteSpy).not.toHaveBeenCalled();
+        expect(result.ok).toBe(true);
+        expect(result.keepNodeIds).toContain("node-4");
+        expect(result.deleteNodeIds).not.toContain("node-4");
         expect(fakeStore.getNodeIfExists("node-4")).toBeTruthy();
     });
 
-    it("purges deleted node aliases from direct caches during React prune", () => {
+    it("purges deleted node aliases from direct caches during store-history prune", () => {
         appendVisibleMessage("msg-4");
         loadBridgeWithCurrentScript(script);
 
@@ -540,13 +554,12 @@ describe("chatStorePageBridge", () => {
         bridge.__messageIdIndex?.set("node-2", "node-2");
         bridge.__nodeIdDirectIndex?.set("node-2", node);
 
-        const result = bridge.pruneReactMessageIds(["msg-2"], {
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
             reason: "test-cache-purge",
         });
 
-        expect(result.deleted).toHaveLength(1);
-        expect(result.deleted[0].purgedAliases).toContain("msg-2");
-        expect(result.deleted[0].purgedAliases).toContain("node-2");
+        expect(result.deleted.some((entry) => entry.nodeId === "node-2")).toBe(true);
 
         expect(bridge.__nodeObjectCache?.has("node-2")).toBe(false);
         expect(bridge.__nodeObjectCache?.has("msg-2")).toBe(false);
@@ -554,7 +567,7 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__messageIdIndex?.has("node-2")).toBe(false);
         expect(
             bridge.__nodeIdDirectIndex == null ||
-            bridge.__nodeIdDirectIndex.has("node-2") === false
+                bridge.__nodeIdDirectIndex.has("node-2") === false
         ).toBe(true);
     });
 
@@ -789,41 +802,6 @@ describe("chatStorePageBridge", () => {
 
         expect(stats.calls).toBeUndefined();
         expect(stats.inputSamples).toBeUndefined();
-    });
-
-    it("repairs dangling child references after React prune", () => {
-        appendVisibleMessage("msg-4");
-        loadBridgeWithCurrentScript(script);
-
-        const bridge = window[BRIDGE_GLOBAL];
-        const fakeStore = createFakeStore(5);
-
-        fakeStore.deleteNode = function buggyDeleteNode(id) {
-            const node = this.getNodeByIdOrMessageId(id);
-            const parent = this.getNodeIfExists(node.parentId);
-
-            // Simulate real-world bad intermediate/stale topology:
-            // node is removed, but parent.children still points at deleted id.
-            if (parent) {
-                parent.children = [...parent.children];
-            }
-
-            this.__nodeMap.delete(node.id);
-        };
-
-        bridge.registerStore(fakeStore, {
-            source: "test-dangling-child-repair",
-        });
-
-        const result = bridge.pruneReactMessageIds(["msg-2"], {
-            reason: "test-dangling-child-repair",
-        });
-
-        expect(result.deleted).toHaveLength(1);
-        expect(fakeStore.__nodeMap.has("node-2")).toBe(false);
-
-        expect(fakeStore.getNodeIfExists("node-1").children).not.toContain("node-2");
-        expect(result.repairResult.repairedParents).toBeGreaterThan(0);
     });
 
     it("repairDeletedNodeReferences removes deleted ids from remaining children arrays", () => {

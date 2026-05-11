@@ -9,6 +9,7 @@ import { resetCoreStateForTests } from "../utils/state.js";
 const mockRefs = vi.hoisted(() => ({
     runtimeListener: null,
     debugLog: vi.fn(),
+    postThreadOptimizerBridgeMessage: vi.fn(),
 }));
 
 vi.mock("../../src/shared/ext.js", () => ({
@@ -25,6 +26,15 @@ vi.mock("../../src/shared/ext.js", () => ({
 
 vi.mock("../../src/content/core/logger.js", () => ({
     debugLog: mockRefs.debugLog,
+}));
+
+vi.mock("../../src/content/ui/qolStyles.js", () => ({
+    syncCodeBlockScrollbarStyles: vi.fn(),
+    syncUserMessageClampStyles: vi.fn(),
+}));
+
+vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
+    postThreadOptimizerBridgeMessage: mockRefs.postThreadOptimizerBridgeMessage,
 }));
 
 async function importFreshModules() {
@@ -54,6 +64,7 @@ describe("core/messages", () => {
     beforeEach(async () => {
         mockRefs.runtimeListener = null;
         mockRefs.debugLog.mockClear();
+        mockRefs.postThreadOptimizerBridgeMessage.mockClear();
 
         const { stateModule } = await importFreshModules();
         const { state, DEFAULT_SETTINGS } = stateModule;
@@ -80,26 +91,7 @@ describe("core/messages", () => {
         expect(returned).toBe(true);
         expect(state.settings.historyKeptExchanges).toBe(4);
         expect(state.didInitialPrune).toBe(true);
-        expect(handlers.pruneOldSections).toHaveBeenCalledWith(4, {
-            showPlaceholder: true,
-        });
-        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
-    });
-
-    it("handles restore-all", async () => {
-        const { messagesModule } = await importFreshModules();
-
-        const { handlers, listener } = setupRuntimeHandlers(messagesModule);
-        const sendResponse = vi.fn();
-
-        const returned = listener(
-            { action: "restore-all" },
-            {},
-            sendResponse
-        );
-
-        expect(returned).toBe(true);
-        expect(handlers.restoreAllSections).toHaveBeenCalledTimes(1);
+        expect(handlers.pruneOldSections).toHaveBeenCalledWith(4);
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
@@ -126,6 +118,9 @@ describe("core/messages", () => {
                 enablePruning: true,
                 enableOffscreenOptimization: true,
                 enableDebugLogging: true,
+                enableStoreReadOptimization: true,
+                enableCodeBlockScrollbars: true,
+                enableUserMessageClamp: true,
             },
             {},
             sendResponse
@@ -138,45 +133,176 @@ describe("core/messages", () => {
         expect(state.settings.enablePruning).toBe(true);
         expect(state.settings.enableOffscreenOptimization).toBe(true);
         expect(state.settings.enableDebugLogging).toBe(true);
+        expect(state.settings.enableStoreReadOptimization).toBe(true);
+        expect(state.settings.enableCodeBlockScrollbars).toBe(true);
+        expect(state.settings.enableUserMessageClamp).toBe(true);
         expect(state.debugLoggingEnabled).toBe(true);
 
         expect(handlers.syncFeatureFlagsFromSettings).toHaveBeenCalledTimes(1);
-        expect(handlers.applySoftPrunedLimitToCurrentState).toHaveBeenCalledTimes(1);
         expect(handlers.setOffscreenOptimizationEnabled).toHaveBeenCalledWith(true);
         expect(handlers.scheduleAutoPrune).toHaveBeenCalledTimes(1);
         expect(handlers.refreshObservedSections).not.toHaveBeenCalled();
         expect(handlers.waitForContainerAndInitialPrune).not.toHaveBeenCalled();
 
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: state.featureFlags.storeReadOptimization,
+            debug: true,
+        });
+
         expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
-    it("returns current popup state", async () => {
+    it("settings-updated prunes immediately when pruning was just enabled", async () => {
         const { stateModule, messagesModule } = await importFreshModules();
         const { state } = stateModule;
 
-        state.hiddenCount = 7;
-        state.replyTiming.pending = true;
-        state.replyTiming.lastDurationMs = 987;
-        state.debugLoggingEnabled = true;
+        state.didInitialPrune = false;
+        state.featureFlags.pruning = false;
+        state.settings.enablePruning = false;
 
-        const { listener } = setupRuntimeHandlers(messagesModule);
+        const syncFeatureFlagsFromSettings = createFeatureFlagSyncMock(state);
+
+        const { handlers, listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings,
+        });
+
         const sendResponse = vi.fn();
 
         const returned = listener(
-            { action: "get-popup-state" },
+            {
+                action: "settings-updated",
+                historyKeptExchanges: 3,
+                autoPrune: true,
+                enablePruning: true,
+            },
             {},
             sendResponse
         );
 
         expect(returned).toBe(true);
-        expect(sendResponse).toHaveBeenCalledWith({
-            ok: true,
-            hiddenExchanges: 3,
-            hiddenSections: 7,
-            lastReplyDurationMs: 987,
-            replyPending: true,
-            debugLoggingEnabled: true,
+        expect(state.featureFlags.pruning).toBe(true);
+        expect(state.didInitialPrune).toBe(true);
+        expect(handlers.pruneOldSections).toHaveBeenCalledWith(3);
+        expect(handlers.refreshObservedSections).toHaveBeenCalledTimes(2);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+
+    it("settings-updated refreshes observed sections when auto-prune is disabled", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { handlers, listener } = setupRuntimeHandlers(messagesModule);
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            {
+                action: "settings-updated",
+                autoPrune: false,
+                enablePruning: true,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(handlers.scheduleAutoPrune).not.toHaveBeenCalled();
+        expect(handlers.pruneOldSections).not.toHaveBeenCalled();
+        expect(handlers.refreshObservedSections).toHaveBeenCalledTimes(2);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+
+    it("handles debug-log-state", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { listener } = setupRuntimeHandlers(messagesModule);
+        const sendResponse = vi.fn();
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+        globalThis.__THREAD_OPTIMIZER_DEBUG__ = {
+            getState: vi.fn(() => ({ ok: true })),
+        };
+
+        const returned = listener(
+            { action: "debug-log-state" },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(logSpy).toHaveBeenCalled();
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+
+        delete globalThis.__THREAD_OPTIMIZER_DEBUG__;
+        logSpy.mockRestore();
+    });
+
+    it("handles debug-log-buckets", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { listener } = setupRuntimeHandlers(messagesModule);
+        const sendResponse = vi.fn();
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+        globalThis.__THREAD_OPTIMIZER_DEBUG__ = {
+            getBuckets: vi.fn(() => ({ buckets: [] })),
+        };
+
+        const returned = listener(
+            { action: "debug-log-buckets" },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(logSpy).toHaveBeenCalled();
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+
+        delete globalThis.__THREAD_OPTIMIZER_DEBUG__;
+        logSpy.mockRestore();
+    });
+
+    it("handles debug-log-logical", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { listener } = setupRuntimeHandlers(messagesModule);
+        const sendResponse = vi.fn();
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+        globalThis.__THREAD_OPTIMIZER_DEBUG__ = {
+            getLogicalSections: vi.fn(() => []),
+        };
+
+        const returned = listener(
+            { action: "debug-log-logical" },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(logSpy).toHaveBeenCalled();
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+
+        delete globalThis.__THREAD_OPTIMIZER_DEBUG__;
+        logSpy.mockRestore();
+    });
+
+    it("requests a store-performance debug log through the page bridge", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { listener } = setupRuntimeHandlers(messagesModule);
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            { action: "log-debug-store-performance" },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:log-store-performance",
         });
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
     it("returns an unknown-action error for unsupported actions", async () => {
@@ -260,8 +386,6 @@ describe("core/messages", () => {
         const { listener } = setupRuntimeHandlers(messagesModule, {
             syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
         });
-
-        expect(listener).toBeDefined();
 
         const sendResponse = vi.fn();
 

@@ -1,12 +1,20 @@
 import {
+    state,
     OFFSCREEN_OPT_ATTR,
-    CODE_BLOCK_OFFSCREEN_OPT_ATTR,
 } from "../core/state.js";
 import { getConversationScrollContainer } from "../core/dom.js";
 
 export const DEFAULT_INTRINSIC_HEIGHT = 100;
 
+export function isOffscreenOptimizationEnabled() {
+    return state.featureFlags.offscreenOptimization === true;
+}
+
 export function getCurrentObserverRoot() {
+    if (!isOffscreenOptimizationEnabled()) {
+        return null;
+    }
+
     return getConversationScrollContainer() ?? null;
 }
 
@@ -24,20 +32,27 @@ function measureElementHeight(element) {
 
 /**
  * Section height is cached so content-visibility can reserve layout space
- * while old conversation turns are skipped by the browser.
+ * while older still-mounted conversation turns are skipped by the browser.
  */
 export function getStoredMeasuredHeight(section) {
-    const existing = Number(section.dataset.threadOptimizerHeight);
+    const existing = Number(section?.dataset?.threadOptimizerHeight);
 
     return existing > 0 ? existing : null;
 }
 
 export function setMeasuredHeight(section, height) {
+    if (!(section instanceof HTMLElement)) {
+        return normalizeMeasuredHeight(height);
+    }
+
     const rounded = normalizeMeasuredHeight(height);
 
     section.dataset.threadOptimizerHeight = String(rounded);
 
-    if (section.getAttribute(OFFSCREEN_OPT_ATTR) === "true") {
+    if (
+        isOffscreenOptimizationEnabled() &&
+        section.getAttribute(OFFSCREEN_OPT_ATTR) === "true"
+    ) {
         section.style.containIntrinsicSize = `auto ${rounded}px`;
     }
 
@@ -45,6 +60,10 @@ export function setMeasuredHeight(section, height) {
 }
 
 export function ensureMeasuredHeight(section) {
+    if (!(section instanceof HTMLElement)) {
+        return DEFAULT_INTRINSIC_HEIGHT;
+    }
+
     return (
         getStoredMeasuredHeight(section) ??
         setMeasuredHeight(section, measureElementHeight(section))
@@ -52,50 +71,45 @@ export function ensureMeasuredHeight(section) {
 }
 
 export function invalidateMeasuredHeight(section) {
+    if (!(section instanceof HTMLElement)) {
+        return;
+    }
+
     delete section.dataset.threadOptimizerHeight;
 }
 
+export function applyOffscreenOptimization(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    if (!isOffscreenOptimizationEnabled()) {
+        clearOffscreenOptimization(section);
+        return false;
+    }
+
+    const height = ensureMeasuredHeight(section);
+
+    section.setAttribute(OFFSCREEN_OPT_ATTR, "true");
+    section.style.contentVisibility = "auto";
+    section.style.containIntrinsicSize = `auto ${height}px`;
+
+    return true;
+}
+
 export function clearOffscreenOptimization(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    const hadOptimization =
+        section.getAttribute(OFFSCREEN_OPT_ATTR) === "true" ||
+        section.style.contentVisibility ||
+        section.style.containIntrinsicSize;
+
     section.style.contentVisibility = "";
     section.style.containIntrinsicSize = "";
     section.removeAttribute(OFFSCREEN_OPT_ATTR);
-}
 
-/**
- * Code block height is tracked separately from section height because large
- * <pre> nodes can be detached/restored independently.
- */
-export function getStoredCodeBlockHeight(pre) {
-    const existing = Number(pre.dataset.threadOptimizerCodeHeight);
-
-    return existing > 0 ? existing : null;
-}
-
-export function setCodeBlockHeight(pre, height) {
-    const rounded = normalizeMeasuredHeight(height);
-
-    pre.dataset.threadOptimizerCodeHeight = String(rounded);
-
-    if (pre.getAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR) === "true") {
-        pre.style.containIntrinsicSize = `auto ${rounded}px`;
-    }
-
-    return rounded;
-}
-
-export function ensureCodeBlockHeight(pre) {
-    return (
-        getStoredCodeBlockHeight(pre) ??
-        setCodeBlockHeight(pre, measureElementHeight(pre))
-    );
-}
-
-export function invalidateCodeBlockHeight(pre) {
-    delete pre.dataset.threadOptimizerCodeHeight;
-}
-
-export function clearCodeBlockOffscreenOptimization(pre) {
-    pre.style.contentVisibility = "";
-    pre.style.containIntrinsicSize = "";
-    pre.removeAttribute(CODE_BLOCK_OFFSCREEN_OPT_ATTR);
+    return Boolean(hadOptimization);
 }

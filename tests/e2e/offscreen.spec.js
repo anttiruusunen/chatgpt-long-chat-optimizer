@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { loadOptimizerFixture } from "./helpers/fixtureDriver.js";
 
-test("offscreen: fixture keeps assistant sections available (pruned view)", async ({ page }) => {
+test("offscreen: fixture keeps latest assistant available after hard pruning", async ({ page }) => {
     const fixture = await loadOptimizerFixture(page);
 
     await expect(fixture.assistants()).toHaveCount(1);
-    await expect(fixture.prunePlaceholder()).toBeVisible();
+    await fixture.expectPrunedToLatestExchange();
 });
 
 test("offscreen: only latest assistant is marked live", async ({ page }) => {

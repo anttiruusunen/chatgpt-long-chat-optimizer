@@ -4,7 +4,6 @@ import {
     getConversationContainer,
     invalidateConversationDomCache,
 } from "./dom.js";
-import { removePlaceholder } from "../pruning/pruneUi.js";
 import {
     handleReplyStreamingStarted,
     setOffscreenOptimizationEnabled,
@@ -22,7 +21,6 @@ import {
     installReplyTimingListeners,
     ensureReplyCompletionPoll,
 } from "../streaming/replyTiming.js";
-import { disconnectSentinelObservers } from "../pruning/sentinelObservers.js";
 import {
     ensureQolStyles,
     syncCodeBlockScrollbarStyles,
@@ -144,10 +142,7 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 }
 
 /**
- * Clears per-conversation pruning state before a new thread is initialized.
- *
- * Soft-pruned nodes belong to a specific conversation DOM. Keeping them across
- * navigation can restore/prune nodes into the wrong thread.
+ * Clears per-conversation lifecycle state before a new thread is initialized.
  */
 function resetConversationLifecycleForNavigation() {
     clearPendingReplySettledPrune();
@@ -155,31 +150,7 @@ function resetConversationLifecycleForNavigation() {
     invalidateConversationDomCache();
     clearPendingAutoPrune();
 
-    removePlaceholder();
-    state.placeholder = null;
-
-    state.softPrunedSections = [];
-    state.hiddenCount = 0;
-    state.totalHiddenCount = 0;
-    state.hardEvictedCount = 0;
     state.didInitialPrune = false;
-
-    if (state.topRestoreSentinel?.isConnected) {
-        state.topRestoreSentinel.remove();
-    }
-
-    if (state.bottomPruneSentinel?.isConnected) {
-        state.bottomPruneSentinel.remove();
-    }
-
-    state.topRestoreSentinel = null;
-    state.bottomPruneSentinel = null;
-    state.isTopRestoreScheduled = false;
-    state.isBottomPruneScheduled = false;
-    state.isTopRestoreArmed = true;
-    state.isBottomPruneArmed = true;
-
-    disconnectSentinelObservers();
 
     debugLog("Index: reset conversation lifecycle state for navigation");
 }
@@ -261,8 +232,6 @@ const pruneController = createPruneController({
 });
 
 const {
-    applySoftPrunedLimitToCurrentState,
-    restoreAllSections,
     pruneOldSections,
     runInitialPrune,
     bootstrapInitialPruneFromObservedMutation,
@@ -434,10 +403,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         featureFlags: state.featureFlags,
     });
 
-    if (historyKeptChanged) {
-        applySoftPrunedLimitToCurrentState();
-    }
-
     if (offscreenFlagChanged) {
         setOffscreenOptimizationEnabled(state.featureFlags.offscreenOptimization);
     }
@@ -452,7 +417,9 @@ ext.storage.onChanged.addListener((changes, areaName) => {
                 waitForContainerAndInitialPrune();
             }
         } else {
-            scheduleAutoPrune();
+            scheduleAutoPrune(
+                historyKeptChanged ? "history-kept-changed" : "storage-changed"
+            );
         }
     } else {
         clearPendingReplySettledPrune();
@@ -468,11 +435,9 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
 registerRuntimeMessageHandlers({
     pruneOldSections,
-    restoreAllSections,
     scheduleAutoPrune,
     waitForContainerAndInitialPrune,
     refreshObservedSections: scheduleRefreshPostPruneState,
-    applySoftPrunedLimitToCurrentState,
     setOffscreenOptimizationEnabled,
     syncFeatureFlagsFromSettings,
 });

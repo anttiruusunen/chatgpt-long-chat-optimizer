@@ -3,62 +3,107 @@ import { loadFixtureWithOptimizer } from "./loadFixtureWithOptimizer.js";
 
 const E2E_BRIDGE_TOKEN = "0123456789abcdef0123456789abcdef";
 
-async function installReactPruneBridgeMock(page) {
+async function installStorePruneBridgeMock(page) {
     await page.evaluate((token) => {
         window.THREAD_OPTIMIZER_BRIDGE_TOKEN =
             window.THREAD_OPTIMIZER_BRIDGE_TOKEN || token;
 
-        if (window.__threadOptimizerE2EReactPruneMockInstalled) {
+        if (window.__threadOptimizerE2EStorePruneMockInstalled) {
             return;
         }
 
-        window.__threadOptimizerE2EReactPruneMockInstalled = true;
+        window.__threadOptimizerE2EStorePruneMockInstalled = true;
 
-        const originalPostMessage = window.postMessage.bind(window);
+        window.__threadOptimizerChatStoreBridge = {
+            __installed: true,
+            __version: "e2e-store-prune-mock",
+            __knownPruningEnabled: true,
+            __knownHistoryKeptExchanges: 1,
+            __knownPrunedTurnCount: 0,
 
-        function removeByMessageIds(messageIds) {
-            let removedCount = 0;
+            hasStore() {
+                return true;
+            },
 
-            for (const messageId of messageIds) {
-                const section = Array.from(
-                    document.querySelectorAll("section[data-message-id]")
-                ).find(
-                    (candidate) =>
-                        candidate.getAttribute("data-message-id") === messageId
+            setKnownPruningState({
+                enabled,
+                prunedTurnCount,
+                historyKeptExchanges,
+            } = {}) {
+                this.__knownPruningEnabled = Boolean(enabled);
+
+                if (Number.isFinite(Number(prunedTurnCount))) {
+                    this.__knownPrunedTurnCount = Math.max(
+                        0,
+                        Number(prunedTurnCount)
+                    );
+                }
+
+                if (Number.isFinite(Number(historyKeptExchanges))) {
+                    this.__knownHistoryKeptExchanges = Math.max(
+                        1,
+                        Math.floor(Number(historyKeptExchanges))
+                    );
+                }
+
+                return {
+                    ok: true,
+                    enabled: this.__knownPruningEnabled,
+                    prunedTurnCount: this.__knownPrunedTurnCount,
+                    historyKeptExchanges: this.__knownHistoryKeptExchanges,
+                };
+            },
+
+            pruneStoreHistory({
+                historyKeptExchanges = this.__knownHistoryKeptExchanges || 1,
+                reason = "e2e-store-prune",
+            } = {}) {
+                const keepExchanges = Math.max(
+                    1,
+                    Math.floor(Number(historyKeptExchanges) || 1)
                 );
 
-                if (section?.isConnected) {
+                const keepSections = keepExchanges * 2;
+                const sections = Array.from(
+                    document.querySelectorAll("section[data-turn]")
+                );
+
+                const removable = sections.slice(
+                    0,
+                    Math.max(0, sections.length - keepSections)
+                );
+
+                for (const section of removable) {
                     section.remove();
-                    removedCount += 1;
                 }
-            }
 
-            return removedCount;
-        }
+                this.__knownPrunedTurnCount += removable.length;
 
-        function removeOldestFallback(messageIds) {
-            const requestedCount = Array.isArray(messageIds)
-                ? messageIds.length
-                : 0;
+                return {
+                    ok: true,
+                    reason,
+                    historyKeptExchanges: keepExchanges,
+                    requestedDeleteCount: removable.length,
+                    deletedCount: removable.length,
+                    failedCount: 0,
+                    deleted: removable.map((section) => ({
+                        text: section.textContent || "",
+                    })),
+                    failed: [],
+                };
+            },
 
-            if (requestedCount <= 0) {
-                return 0;
-            }
+            getPerformanceSnapshot() {
+                return {
+                    e2eMock: true,
+                    remainingTurns: document.querySelectorAll(
+                        "section[data-turn]"
+                    ).length,
+                };
+            },
+        };
 
-            const sections = Array.from(
-                document.querySelectorAll("section[data-turn]")
-            );
-
-            const keepCount = 2;
-            const removableCount = Math.max(0, sections.length - keepCount);
-            const removeCount = Math.min(requestedCount, removableCount);
-
-            for (let i = 0; i < removeCount; i += 1) {
-                sections[i]?.remove();
-            }
-
-            return removeCount;
-        }
+        const originalPostMessage = window.postMessage.bind(window);
 
         window.postMessage = function patchedPostMessage(
             message,
@@ -67,20 +112,40 @@ async function installReactPruneBridgeMock(page) {
         ) {
             if (
                 message?.source === "thread-optimizer" &&
-                message?.token === window.THREAD_OPTIMIZER_BRIDGE_TOKEN &&
-                message?.type === "thread-optimizer:prune-react-message-ids"
+                message?.token === window.THREAD_OPTIMIZER_BRIDGE_TOKEN
             ) {
-                const messageIds = Array.isArray(message.messageIds)
-                    ? message.messageIds
-                    : [];
-
-                const removedCount = removeByMessageIds(messageIds);
-
-                if (removedCount === 0) {
-                    removeOldestFallback(messageIds);
+                if (message.type === "thread-optimizer:set-pruning-state") {
+                    window.__threadOptimizerChatStoreBridge.setKnownPruningState({
+                        enabled: message.enabled,
+                        prunedTurnCount: message.prunedTurnCount,
+                        historyKeptExchanges: message.historyKeptExchanges,
+                    });
+                    return;
                 }
 
-                return;
+                if (message.type === "thread-optimizer:prune-store-history") {
+                    window.__threadOptimizerChatStoreBridge.pruneStoreHistory({
+                        historyKeptExchanges: message.historyKeptExchanges,
+                        reason: message.reason,
+                    });
+                    return;
+                }
+
+                if (message.type === "thread-optimizer:log-store-performance") {
+                    console.log(
+                        "[Thread Optimizer E2E bridge mock] store performance",
+                        window.__threadOptimizerChatStoreBridge.getPerformanceSnapshot()
+                    );
+                    return;
+                }
+
+                if (
+                    message.type ===
+                        "thread-optimizer:set-store-read-optimization" ||
+                    message.type === "thread-optimizer:visible-messages-ready"
+                ) {
+                    return;
+                }
             }
 
             return originalPostMessage(message, targetOrigin, transfer);
@@ -89,8 +154,23 @@ async function installReactPruneBridgeMock(page) {
 }
 
 export async function loadOptimizerFixture(page, options = {}) {
-    await loadFixtureWithOptimizer(page, options);
-    await installReactPruneBridgeMock(page);
+    const {
+        settings = {},
+        beforeOptimizerLoad,
+        ...restOptions
+    } = options;
+
+    await loadFixtureWithOptimizer(page, {
+        ...restOptions,
+        settings: {
+            historyKeptExchanges: 1,
+            ...settings,
+        },
+        beforeOptimizerLoad: async (page) => {
+            await beforeOptimizerLoad?.(page);
+            await installStorePruneBridgeMock(page);
+        },
+    });
 
     return {
         turns: () => page.locator("section[data-turn]"),
@@ -150,7 +230,6 @@ export async function loadOptimizerFixture(page, options = {}) {
 
         async expectPrunedToLatestExchange() {
             await expect(this.turns()).toHaveCount(2);
-            await expect(this.prunePlaceholder()).toBeVisible();
         },
 
         async expectLatestAssistantVisible() {

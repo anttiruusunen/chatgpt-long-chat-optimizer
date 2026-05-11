@@ -8,46 +8,12 @@ import {
 let conversationSectionsMock = [];
 let isReplyStreamingMock = false;
 
-const ensurePlaceholderStateMock = vi.fn();
-const removePlaceholderMock = vi.fn();
-const ensureTopRestoreSentinelStateMock = vi.fn();
-const ensureBottomPruneSentinelStateMock = vi.fn();
 const ensureSectionCssOffscreenModeMock = vi.fn();
 const scheduleOffscreenRefreshMock = vi.fn();
-const disconnectSentinelObserversMock = vi.fn();
-const invalidateSentinelObserversForRootChangeMock = vi.fn();
-const refreshTopRestoreSentinelObservationMock = vi.fn();
-const refreshBottomPruneSentinelObservationMock = vi.fn();
 const syncCssVisibilityWindowMock = vi.fn();
-
-const originalIntersectionObserver = globalThis.IntersectionObserver;
-
-class FakeIntersectionObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-}
 
 vi.mock("../../src/content/core/dom.js", () => ({
     getConversationSections: vi.fn(() => conversationSectionsMock),
-}));
-
-vi.mock("../../src/content/pruning/pruneUi.js", () => ({
-    ensurePlaceholderState: vi.fn((...args) =>
-        ensurePlaceholderStateMock(...args)
-    ),
-    removePlaceholder: vi.fn((...args) =>
-        removePlaceholderMock(...args)
-    ),
-}));
-
-vi.mock("../../src/content/pruning/pruneSentinels.js", () => ({
-    ensureTopRestoreSentinelState: vi.fn((...args) =>
-        ensureTopRestoreSentinelStateMock(...args)
-    ),
-    ensureBottomPruneSentinelState: vi.fn((...args) =>
-        ensureBottomPruneSentinelStateMock(...args)
-    ),
 }));
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
@@ -61,21 +27,6 @@ vi.mock("../../src/content/offscreen/offscreen.js", () => ({
 
 vi.mock("../../src/content/streaming/replyTiming.js", () => ({
     isReplyStreaming: vi.fn(() => isReplyStreamingMock),
-}));
-
-vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
-    disconnectSentinelObservers: vi.fn((...args) =>
-        disconnectSentinelObserversMock(...args)
-    ),
-    invalidateSentinelObserversForRootChange: vi.fn((...args) =>
-        invalidateSentinelObserversForRootChangeMock(...args)
-    ),
-    refreshTopRestoreSentinelObservation: vi.fn((...args) =>
-        refreshTopRestoreSentinelObservationMock(...args)
-    ),
-    refreshBottomPruneSentinelObservation: vi.fn((...args) =>
-        refreshBottomPruneSentinelObservationMock(...args)
-    ),
 }));
 
 vi.mock("../../src/content/pruning/cssVisibilityWindow.js", () => ({
@@ -113,18 +64,9 @@ describe("conversationMaintenance", () => {
         isReplyStreamingMock = false;
 
         state.featureFlags.offscreenOptimization = true;
-        state.hiddenCount = 2;
 
-        ensurePlaceholderStateMock.mockReset();
-        removePlaceholderMock.mockReset();
-        ensureTopRestoreSentinelStateMock.mockReset();
-        ensureBottomPruneSentinelStateMock.mockReset();
         ensureSectionCssOffscreenModeMock.mockReset();
         scheduleOffscreenRefreshMock.mockReset();
-        disconnectSentinelObserversMock.mockReset();
-        invalidateSentinelObserversForRootChangeMock.mockReset();
-        refreshTopRestoreSentinelObservationMock.mockReset();
-        refreshBottomPruneSentinelObservationMock.mockReset();
         syncCssVisibilityWindowMock.mockReset();
 
         globalThis.requestAnimationFrame = (callback) => {
@@ -136,15 +78,12 @@ describe("conversationMaintenance", () => {
             ensureObserverAttached: vi.fn(() => true),
             withDomMutationGuard: (fn) => fn(),
         });
-
-        globalThis.IntersectionObserver = FakeIntersectionObserver;
     });
 
     afterEach(() => {
         resetDomWriteBatchForTests();
         resetConversationMaintenanceForTests();
         globalThis.requestAnimationFrame = originalRAF;
-        globalThis.IntersectionObserver = originalIntersectionObserver;
     });
 
     it("coalesces conversation chrome sync requests into one DOM write batch", () => {
@@ -160,36 +99,22 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
-        expect(ensurePlaceholderStateMock).toHaveBeenCalledTimes(1);
-        expect(ensurePlaceholderStateMock).toHaveBeenCalledWith(
-            conversationSectionsMock[0]
-        );
-
-        expect(ensureTopRestoreSentinelStateMock).toHaveBeenCalledTimes(1);
-        expect(ensureTopRestoreSentinelStateMock).toHaveBeenCalledWith(
-            conversationSectionsMock[0]
-        );
-
-        expect(ensureBottomPruneSentinelStateMock).toHaveBeenCalledTimes(1);
-        expect(ensureBottomPruneSentinelStateMock).toHaveBeenCalledWith(
-            conversationSectionsMock[1]
-        );
-
         expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
-    it("removes the placeholder when there are no hidden sections", () => {
-        state.hiddenCount = 0;
+    it("syncs CSS visibility even when there are no sections", () => {
+        conversationSectionsMock = [];
 
         scheduleConversationChromeSync({
-            reason: "no-hidden",
+            reason: "empty",
+            forceCss: true,
         });
 
         flushDomWriteBatchNow();
 
-        expect(removePlaceholderMock).toHaveBeenCalledTimes(1);
-        expect(ensurePlaceholderStateMock).not.toHaveBeenCalled();
+        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
     it("defers CSS visibility sync during streaming and flushes it after settling", () => {
@@ -209,38 +134,37 @@ describe("conversationMaintenance", () => {
         expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
     });
 
-    it("refreshes sentinels and offscreen state during post-prune refresh", () => {
+    it("does not defer forced CSS visibility sync during streaming", () => {
+        isReplyStreamingMock = true;
+
+        scheduleConversationChromeSync({
+            reason: "forced-streaming",
+            forceCss: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes offscreen state during post-prune refresh", () => {
         scheduleRefreshPostPruneState();
         flushDomWriteBatchNow();
 
-        expect(invalidateSentinelObserversForRootChangeMock).toHaveBeenCalledTimes(1);
         expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
-        expect(refreshTopRestoreSentinelObservationMock).toHaveBeenCalledTimes(1);
-        expect(refreshBottomPruneSentinelObservationMock).toHaveBeenCalledTimes(1);
     });
 
-    it("uses minimal post-prune refresh while streaming", () => {
+    it("uses the same offscreen refresh path while streaming", () => {
         isReplyStreamingMock = true;
 
         scheduleRefreshPostPruneState();
         flushDomWriteBatchNow();
 
-        expect(disconnectSentinelObserversMock).toHaveBeenCalledTimes(1);
         expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
-        expect(refreshTopRestoreSentinelObservationMock).not.toHaveBeenCalled();
-        expect(refreshBottomPruneSentinelObservationMock).not.toHaveBeenCalled();
     });
 
     it("delays post-prune refresh when requested", () => {
         vi.useFakeTimers();
-
-        const ensureObserverAttached = vi.fn();
-        const withDomMutationGuard = vi.fn((fn) => fn());
-
-        configureConversationMaintenance({
-            ensureObserverAttached,
-            withDomMutationGuard,
-        });
 
         scheduleRefreshPostPruneState({
             delayMs: 500,
@@ -248,14 +172,14 @@ describe("conversationMaintenance", () => {
         });
 
         vi.advanceTimersByTime(499);
+        flushDomWriteBatchNow();
 
-        expect(ensureObserverAttached).not.toHaveBeenCalled();
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
 
         vi.advanceTimersByTime(1);
+        flushDomWriteBatchNow();
 
-        expect(ensureObserverAttached).not.toHaveBeenCalled();
-
-        vi.runOnlyPendingTimers();
+        expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
 
         vi.useRealTimers();
     });
@@ -271,7 +195,30 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
+        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).not.toHaveBeenCalled();
+
+        scheduleRefreshPostPruneState();
+        flushDomWriteBatchNow();
+
         expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+    });
+
+    it("clears delayed post-prune refresh timers during reset", () => {
+        vi.useFakeTimers();
+
+        scheduleRefreshPostPruneState({
+            delayMs: 500,
+            reason: "delayed",
+        });
+
+        resetConversationMaintenanceForTests();
+
+        vi.advanceTimersByTime(500);
+        flushDomWriteBatchNow();
+
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+
+        vi.useRealTimers();
     });
 });

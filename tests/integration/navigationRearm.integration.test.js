@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-    dispatchClick,
-} from "../utils/domEvents.js";
+import { dispatchClick } from "../utils/domEvents.js";
 
 const mockRefs = vi.hoisted(() => ({
     registeredHandlers: null,
@@ -46,28 +44,17 @@ vi.mock("../../src/content/core/messages.js", () => ({
 
 vi.mock("../../src/content/pruning/prune.js", () => ({
     pruneOldSections: vi.fn(() => []),
-    restoreAllSections: vi.fn(() => []),
     runInitialPrune: mockRefs.runInitialPruneBase,
-    enforceSoftPrunedLimit: vi.fn(),
 }));
 
 vi.mock("../../src/content/pruning/pruneUi.js", () => ({
-    ensurePlaceholderState: vi.fn(),
-    removePlaceholder: vi.fn(),
     installStartupPruneMask: vi.fn(),
     removeStartupPruneMask: vi.fn(),
 }));
 
-vi.mock("../../src/content/pruning/pruneSentinels.js", () => ({
-    ensureTopRestoreSentinelState: vi.fn(),
-    ensureBottomPruneSentinelState: vi.fn(),
-}));
-
-vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
-    invalidateSentinelObserversForRootChange: vi.fn(),
-    refreshTopRestoreSentinelObservation: vi.fn(),
-    refreshBottomPruneSentinelObservation: vi.fn(),
-    disconnectSentinelObservers: vi.fn(),
+vi.mock("../../src/content/pruning/cssVisibilityWindow.js", () => ({
+    clearCssVisibilityWindow: vi.fn(),
+    syncCssVisibilityWindow: vi.fn(),
 }));
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
@@ -91,7 +78,7 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
 }));
 
 function createConversationContainer({ anchorId = "4" } = {}) {
-    const root = document.createElement("div");
+    const root = document.createElement("main");
     const wrapper = document.createElement("div");
     const container = document.createElement("div");
 
@@ -103,9 +90,11 @@ function createConversationContainer({ anchorId = "4" } = {}) {
         const section = document.createElement("section");
         section.setAttribute("data-testid", `conversation-turn-${i}`);
         section.setAttribute("data-turn", i % 2 === 0 ? "assistant" : "user");
+
         if (String(i) === anchorId) {
             section.setAttribute("data-scroll-anchor", "true");
         }
+
         section.textContent = `section-${i}`;
         container.appendChild(section);
     }
@@ -126,6 +115,21 @@ async function flush() {
 async function resetNavigationWatcher() {
     const navigationModule = await import("../../src/content/core/navigation.js");
     navigationModule.resetConversationNavigationWatcherForTests();
+}
+
+async function flushNavigationRearmTimeout() {
+    vi.runOnlyPendingTimers();
+    await flush();
+
+    vi.advanceTimersByTime(2500);
+    await flush();
+
+    vi.runOnlyPendingTimers();
+    await flush();
+}
+
+function navigateTo(path) {
+    history.pushState({}, "", path);
 }
 
 describe("navigation rearm integration", () => {
@@ -160,8 +164,10 @@ describe("navigation rearm integration", () => {
     afterEach(async () => {
         vi.useRealTimers();
         await resetNavigationWatcher();
+
         globalThis.requestAnimationFrame = originalRAF;
         globalThis.cancelAnimationFrame = originalCAF;
+
         document.body.innerHTML = "";
         document.head.innerHTML = "";
         history.replaceState({}, "", "/");
@@ -169,6 +175,7 @@ describe("navigation rearm integration", () => {
 
     it("reruns initial prune after a route change", async () => {
         createConversationContainer();
+
         await import("../../src/content/core/index.js");
         await flush();
 
@@ -176,15 +183,16 @@ describe("navigation rearm integration", () => {
 
         replaceConversationDom();
 
-        history.pushState({}, "", "/c/chat-2");
+        navigateTo("/c/chat-2");
         vi.runAllTimers();
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
-    it("waits for a fresh container before rearming initial prune from a sidebar click hint", async () => {
+    it("rearms initial prune from a sidebar click hint after navigation", async () => {
         createConversationContainer();
+
         await import("../../src/content/core/index.js");
         await flush();
 
@@ -196,22 +204,23 @@ describe("navigation rearm integration", () => {
         document.body.appendChild(link);
 
         dispatchClick(link);
-
-        vi.advanceTimersByTime(150);
-        await flush();
-
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
-
-        replaceConversationDom();
+        navigateTo("/c/chat-from-sidebar");
 
         vi.advanceTimersByTime(150);
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+
+        replaceConversationDom();
+
+        await flushNavigationRearmTimeout();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
-    it("waits for a fresh container before rearming from a Recents conversation link without data-sidebar-item", async () => {
+    it("rearms from a Recents conversation link without data-sidebar-item after navigation", async () => {
         createConversationContainer();
+
         await import("../../src/content/core/index.js");
         await flush();
 
@@ -223,20 +232,13 @@ describe("navigation rearm integration", () => {
         document.body.appendChild(link);
 
         dispatchClick(link);
-
-        vi.advanceTimersByTime(150);
-        await flush();
-
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
-
-        replaceConversationDom();
+        navigateTo("/c/chat-from-recents");
 
         vi.advanceTimersByTime(150);
         await flush();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
 
-        // ✅ NEW ASSERTION: ensure delayed refresh option was passed
         expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
             expect.any(Element),
             expect.any(Object),
@@ -245,10 +247,17 @@ describe("navigation rearm integration", () => {
                 postPruneRefreshDelayMs: 500,
             })
         );
+
+        replaceConversationDom();
+
+        await flushNavigationRearmTimeout();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
     it("does not double-prune from the follow-up rearm after a Recents conversation link click", async () => {
         createConversationContainer();
+
         await import("../../src/content/core/index.js");
         await flush();
 
@@ -260,16 +269,16 @@ describe("navigation rearm integration", () => {
         document.body.appendChild(link);
 
         dispatchClick(link);
+        navigateTo("/c/chat-from-recents-followup");
 
         vi.advanceTimersByTime(150);
         await flush();
 
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
 
         replaceConversationDom();
 
-        vi.advanceTimersByTime(150);
-        await flush();
+        await flushNavigationRearmTimeout();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
 
@@ -281,6 +290,7 @@ describe("navigation rearm integration", () => {
 
     it("does not rearm initial prune from a non-conversation link click", async () => {
         createConversationContainer();
+
         await import("../../src/content/core/index.js");
         await flush();
 

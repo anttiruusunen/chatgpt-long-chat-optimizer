@@ -1,24 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushAsyncWork } from "../utils/async.js";
-import {
-    buildConversation,
-} from "../utils/conversationDom.js";
+import { buildConversation } from "../utils/conversationDom.js";
 
 const mockRefs = vi.hoisted(() => ({
     registeredHandlers: null,
     storageListener: null,
     replySettledListener: null,
     isReplyStreamingValue: false,
+
     pruneOldSectionsBase: vi.fn((historyKeptExchanges, options = {}) => {
-        const allSections = Array.from(
+        const sections = Array.from(
             document.querySelectorAll('section[data-testid^="conversation-turn-"]')
         );
-        const visibleSections = allSections.filter(
-            (section) => !section.hasAttribute("data-thread-optimizer-unpruneable")
-        );
-        const sectionsToRemove = visibleSections.slice(
+
+        const keepCount = 2;
+        const sectionsToRemove = sections.slice(
             0,
-            Math.max(0, visibleSections.length - 2)
+            Math.max(0, sections.length - keepCount)
         );
 
         for (const section of sectionsToRemove) {
@@ -26,21 +24,19 @@ const mockRefs = vi.hoisted(() => ({
         }
 
         return {
+            visibleSectionsChanged: sectionsToRemove.length > 0,
+            placeholderChanged: false,
             historyKeptExchanges,
             options,
             removedSections: sectionsToRemove,
         };
     }),
-    restoreAllSectionsBase: vi.fn(() => []),
+
     runInitialPruneBase: vi.fn(() => {}),
-    enforceSoftPrunedLimit: vi.fn(() => {}),
     attachObserverToContainerBase: vi.fn(() => {}),
     ensureObserverAttachedBase: vi.fn(() => true),
     waitForContainerAndInitialPruneBase: vi.fn(() => {}),
-    createObserverDeps: vi.fn(({ scheduleAutoPrune, getDidInitialPrune }) => ({
-        scheduleAutoPrune,
-        getDidInitialPrune,
-    })),
+    createObserverDeps: vi.fn((deps) => deps),
 }));
 
 vi.mock("../../src/shared/ext.js", () => ({
@@ -63,8 +59,11 @@ vi.mock("../../src/shared/ext.js", () => ({
         historyKeptExchanges: 10,
         autoPrune: true,
         enablePruning: true,
-        enableOffscreenOptimization: false,
+        enableOffscreenOptimization: true,
         enableDebugLogging: false,
+        enableStoreReadOptimization: false,
+        enableCodeBlockScrollbars: true,
+        enableUserMessageClamp: true,
     })),
 }));
 
@@ -76,28 +75,18 @@ vi.mock("../../src/content/core/messages.js", () => ({
 
 vi.mock("../../src/content/pruning/prune.js", () => ({
     pruneOldSections: mockRefs.pruneOldSectionsBase,
-    restoreAllSections: mockRefs.restoreAllSectionsBase,
     runInitialPrune: mockRefs.runInitialPruneBase,
-    enforceSoftPrunedLimit: mockRefs.enforceSoftPrunedLimit,
 }));
 
 vi.mock("../../src/content/pruning/pruneUi.js", () => ({
-    ensurePlaceholderState: vi.fn(),
-    removePlaceholder: vi.fn(),
+    hideContainer: vi.fn((container) => {
+        if (container) container.style.visibility = "hidden";
+    }),
+    revealContainer: vi.fn((container) => {
+        if (container) container.style.visibility = "";
+    }),
     installStartupPruneMask: vi.fn(),
     removeStartupPruneMask: vi.fn(),
-}));
-
-vi.mock("../../src/content/pruning/pruneSentinels.js", () => ({
-    ensureTopRestoreSentinelState: vi.fn(),
-    ensureBottomPruneSentinelState: vi.fn(),
-}));
-
-vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
-    invalidateSentinelObserversForRootChange: vi.fn(),
-    refreshTopRestoreSentinelObservation: vi.fn(),
-    refreshBottomPruneSentinelObservation: vi.fn(),
-    disconnectSentinelObservers: vi.fn(),
 }));
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
@@ -137,10 +126,9 @@ describe("cssVisibilityWindow integration", () => {
         mockRefs.storageListener = null;
         mockRefs.replySettledListener = null;
         mockRefs.isReplyStreamingValue = false;
+
         mockRefs.pruneOldSectionsBase.mockClear();
-        mockRefs.restoreAllSectionsBase.mockClear();
         mockRefs.runInitialPruneBase.mockClear();
-        mockRefs.enforceSoftPrunedLimit.mockClear();
         mockRefs.attachObserverToContainerBase.mockClear();
         mockRefs.ensureObserverAttachedBase.mockClear();
         mockRefs.waitForContainerAndInitialPruneBase.mockClear();
@@ -190,7 +178,7 @@ describe("cssVisibilityWindow integration", () => {
         }
     });
 
-    it("marks the same old sections immediately that the delayed prune eventually targets", async () => {
+    it("marks the same old sections immediately that delayed auto-prune eventually removes", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -214,7 +202,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(1);
     });
 
-    it("storage toggle off clears all out-of-window markers", async () => {
+    it("offscreen optimization toggle off clears all out-of-window markers", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -227,12 +215,13 @@ describe("cssVisibilityWindow integration", () => {
 
         mockRefs.storageListener(
             {
-                enablePruning: {
+                enableOffscreenOptimization: {
                     newValue: false,
                 },
             },
             "sync"
         );
+
         await flushAsyncWork();
 
         for (const section of sections) {
@@ -240,7 +229,7 @@ describe("cssVisibilityWindow integration", () => {
         }
     });
 
-    it("storage toggle back on reapplies correct visibility markers", async () => {
+    it("offscreen optimization toggle back on reapplies correct visibility markers", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -251,22 +240,24 @@ describe("cssVisibilityWindow integration", () => {
 
         mockRefs.storageListener(
             {
-                enablePruning: {
+                enableOffscreenOptimization: {
                     newValue: false,
                 },
             },
             "sync"
         );
+
         await flushAsyncWork();
 
         mockRefs.storageListener(
             {
-                enablePruning: {
+                enableOffscreenOptimization: {
                     newValue: true,
                 },
             },
             "sync"
         );
+
         await flushAsyncWork();
 
         expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
@@ -277,7 +268,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
     });
 
-    it("does not schedule CSS visibility updates while DOM mutation guard is active", async () => {
+    it("does not schedule auto-prune while DOM mutation guard is active", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -285,6 +276,7 @@ describe("cssVisibilityWindow integration", () => {
         await flushAsyncWork();
 
         const { state, OUT_OF_WINDOW_ATTR } = stateModule;
+
         state.didInitialPrune = true;
         state.isApplyingDomChanges = true;
 
@@ -334,32 +326,7 @@ describe("cssVisibilityWindow integration", () => {
         expect(mockRefs.pruneOldSectionsBase.mock.calls.length).toBeLessThanOrEqual(1);
     });
 
-    it("restoreAllSections keeps a protected section visible after resync", async () => {
-        const { sections } = buildConversation();
-
-        const stateModule = await import("../../src/content/core/state.js");
-        await import("../../src/content/core/index.js");
-        await flushAsyncWork();
-
-        const { OUT_OF_WINDOW_ATTR, UNPRUNEABLE_ATTR } = stateModule;
-
-        sections[1].setAttribute(UNPRUNEABLE_ATTR, "true");
-        sections[4].setAttribute(OUT_OF_WINDOW_ATTR, "true");
-        sections[5].setAttribute(OUT_OF_WINDOW_ATTR, "true");
-
-        mockRefs.registeredHandlers.restoreAllSections();
-        await flushAsyncWork();
-
-        expect(mockRefs.restoreAllSectionsBase).toHaveBeenCalledTimes(1);
-        expect(sections[1].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-        expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[2].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[3].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[4].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-        expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-    });
-
-    it("prune-now message path triggers immediate CSS hide and real prune", async () => {
+    it("prune-now path triggers immediate CSS hide and real prune", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -368,66 +335,15 @@ describe("cssVisibilityWindow integration", () => {
 
         const { OUT_OF_WINDOW_ATTR } = stateModule;
 
-        const sendResponse = vi.fn();
-        mockRefs.registeredHandlers.pruneOldSections(10, { showPlaceholder: true });
+        mockRefs.registeredHandlers.pruneOldSections(10);
         await flushAsyncWork();
 
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalled();
-        expect(typeof mockRefs.registeredHandlers.pruneOldSections).toBe("function");
         expect(sections[4].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
         expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-
-        sendResponse({ ok: true });
-        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
     });
 
-    it("settings-updated message path can disable and re-enable CSS visibility markers", async () => {
-        const { sections } = buildConversation();
-
-        const stateModule = await import("../../src/content/core/state.js");
-        const messagesModule = await import("../../src/content/core/messages.js");
-        await import("../../src/content/core/index.js");
-        await flushAsyncWork();
-
-        const { state, OUT_OF_WINDOW_ATTR } = stateModule;
-
-        expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-
-        const runtimeListener = messagesModule.registerRuntimeMessageHandlers.mock.calls[0]?.[0];
-        expect(runtimeListener).toBeDefined();
-
-        state.settings.enablePruning = true;
-        state.settings.autoPrune = true;
-
-        mockRefs.storageListener(
-            {
-                enablePruning: {
-                    newValue: false,
-                },
-            },
-            "sync"
-        );
-        await flushAsyncWork();
-
-        for (const section of sections) {
-            expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
-        }
-
-        mockRefs.storageListener(
-            {
-                enablePruning: {
-                    newValue: true,
-                },
-            },
-            "sync"
-        );
-        await flushAsyncWork();
-
-        expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-        expect(sections[1].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-    });
-
-    it("kept sections do not retain stale out-of-window markers after the delayed prune cycle", async () => {
+    it("kept sections do not retain stale out-of-window markers after delayed prune", async () => {
         const { sections } = buildConversation();
 
         const stateModule = await import("../../src/content/core/state.js");
@@ -460,6 +376,7 @@ describe("cssVisibilityWindow integration", () => {
 
         mockRefs.isReplyStreamingValue = true;
         mockRefs.replySettledListener?.();
+
         await flushAsyncWork();
 
         expect(sections[5].hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
@@ -496,6 +413,7 @@ describe("cssVisibilityWindow integration", () => {
             },
             "sync"
         );
+
         await flushAsyncWork();
 
         for (const section of sections) {
@@ -504,6 +422,7 @@ describe("cssVisibilityWindow integration", () => {
 
         mockRefs.isReplyStreamingValue = false;
         mockRefs.replySettledListener();
+
         await flushAsyncWork();
 
         expect(sections[0].getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");

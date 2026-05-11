@@ -1,11 +1,3 @@
-import {
-    PLACEHOLDER_ATTR,
-    TOP_RESTORE_SENTINEL_ATTR,
-    BOTTOM_PRUNE_SENTINEL_ATTR,
-} from "../core/state.js";
-
-const STRUCTURAL_STOP_TAGS = new Set(["MAIN", "BODY", "HTML"]);
-
 let domCacheVersion = 0;
 let scrollContainerCacheVersion = 0;
 
@@ -18,17 +10,12 @@ let cachedSectionsVersion = -1;
 let cachedScrollContainer = null;
 let cachedScrollContainerVersion = -1;
 
-const mountNodeCache = new WeakMap();
-
 /**
  * Invalidates structural DOM caches related to:
  * - conversation container
  * - conversation sections
  *
- * NOTE:
- * This intentionally does NOT invalidate the scroll container cache.
- * Scroll container discovery is expensive (getComputedStyle walk),
- * so it has its own lifecycle and should only be invalidated when needed.
+ * This intentionally does not invalidate the scroll container cache.
  */
 export function invalidateConversationDomCache() {
     domCacheVersion += 1;
@@ -42,9 +29,6 @@ export function invalidateConversationDomCache() {
 
 /**
  * Explicitly invalidates the scroll container cache.
- *
- * This should only be called when layout structure changes in a way that
- * could affect scrollability (e.g. major layout swaps, navigation).
  */
 export function invalidateConversationScrollContainerCache() {
     scrollContainerCacheVersion += 1;
@@ -56,14 +40,6 @@ export function invalidateConversationScrollContainerCache() {
 export function isConversationSection(element) {
     if (!(element instanceof HTMLElement)) return false;
     if (element.tagName !== "SECTION") return false;
-
-    if (
-        element.hasAttribute(PLACEHOLDER_ATTR) ||
-        element.hasAttribute(TOP_RESTORE_SENTINEL_ATTR) ||
-        element.hasAttribute(BOTTOM_PRUNE_SENTINEL_ATTR)
-    ) {
-        return false;
-    }
 
     const testId = element.getAttribute("data-testid") || "";
 
@@ -87,7 +63,7 @@ function getLastConversationSectionInDocument() {
 
 /**
  * ChatGPT marks the current bottom turn with data-scroll-anchor when possible.
- * If that marker is missing, fall back to the last conversation section.
+ * If that marker is missing, fall back to the last mounted conversation section.
  */
 export function getAnchorSection() {
     const anchored = document.querySelector('section[data-scroll-anchor="true"]');
@@ -107,90 +83,11 @@ function getConversationSectionsWithin(root) {
     );
 }
 
-function countConversationSectionsWithin(root) {
-    return getConversationSectionsWithin(root).length;
-}
-
-function hasOnlyCurrentAsElementChild(parent, current) {
-    if (!(parent instanceof HTMLElement) || !(current instanceof Element)) {
-        return false;
-    }
-
-    const elementChildren = Array.from(parent.children);
-
-    return elementChildren.length === 1 && elementChildren[0] === current;
-}
-
-export function getConversationTurnRoot(section) {
-    return getConversationSectionMountNode(section);
-}
-
 /**
- * Returns the DOM node that should be removed/restored for a conversation turn.
+ * Finds a connected ancestor containing the mounted conversation sections.
  *
- * ChatGPT often wraps each <section> in one or more single-child layout nodes.
- * Removing only the section can leave empty wrappers behind, so we climb through
- * safe single-child wrappers until we reach a structural boundary.
- */
-export function getConversationSectionMountNode(section) {
-    if (!isConversationSection(section)) return null;
-
-    const cached = mountNodeCache.get(section);
-    if (cached?.version === domCacheVersion && cached.node?.isConnected) {
-        return cached.node;
-    }
-
-    const explicitWrapper = section.closest("[data-turn-id-container]");
-    if (explicitWrapper instanceof HTMLElement) {
-        mountNodeCache.set(section, {
-            version: domCacheVersion,
-            node: explicitWrapper,
-        });
-
-        return explicitWrapper;
-    }
-
-    let mountNode = section;
-    let current = section;
-
-    while (current.parentElement instanceof HTMLElement) {
-        const parent = current.parentElement;
-
-        if (STRUCTURAL_STOP_TAGS.has(parent.tagName)) break;
-
-        if (
-            parent.hasAttribute(PLACEHOLDER_ATTR) ||
-            parent.hasAttribute(TOP_RESTORE_SENTINEL_ATTR) ||
-            parent.hasAttribute(BOTTOM_PRUNE_SENTINEL_ATTR)
-        ) {
-            break;
-        }
-
-        if (!hasOnlyCurrentAsElementChild(parent, current)) break;
-        if (countConversationSectionsWithin(parent) !== 1) break;
-
-        const grandparent = parent.parentElement;
-        if (grandparent && STRUCTURAL_STOP_TAGS.has(grandparent.tagName)) {
-            break;
-        }
-
-        mountNode = parent;
-        current = parent;
-    }
-
-    mountNodeCache.set(section, {
-        version: domCacheVersion,
-        node: mountNode,
-    });
-
-    return mountNode;
-}
-
-/**
- * Finds the smallest ancestor that contains the visible conversation turns.
- *
- * The container is derived from the current anchor instead of hardcoded
- * selectors so the extension survives ChatGPT DOM reshuffles.
+ * Store pruning owns deletion. This helper only discovers the current mounted
+ * chat DOM so observers/offscreen logic can inspect what React has rendered.
  */
 export function getConversationContainer() {
     if (
@@ -202,28 +99,27 @@ export function getConversationContainer() {
     }
 
     const anchor = getAnchorSection();
-    if (!anchor) return null;
 
-    const anchorMountNode =
-        getConversationSectionMountNode(anchor) ||
-        anchor.parentElement ||
-        anchor;
+    if (!anchor) {
+        cachedContainer = null;
+        cachedContainerVersion = domCacheVersion;
+        return null;
+    }
 
-    let current = anchorMountNode.parentElement;
+    let bestContainer = anchor.parentElement || anchor;
+    let current = bestContainer;
 
     while (current instanceof HTMLElement) {
         const conversationSections = getConversationSectionsWithin(current);
 
         if (conversationSections.length > 1) {
-            cachedContainer = current;
-            cachedContainerVersion = domCacheVersion;
-            return current;
+            bestContainer = current;
         }
 
         current = current.parentElement;
     }
 
-    cachedContainer = anchorMountNode.parentElement || null;
+    cachedContainer = bestContainer;
     cachedContainerVersion = domCacheVersion;
 
     return cachedContainer;
@@ -239,7 +135,12 @@ export function getConversationSections() {
     }
 
     const container = getConversationContainer();
-    if (!container) return [];
+
+    if (!container) {
+        cachedSections = [];
+        cachedSectionsVersion = domCacheVersion;
+        return cachedSections;
+    }
 
     cachedSections = getConversationSectionsWithin(container);
     cachedSectionsVersion = domCacheVersion;
@@ -248,20 +149,25 @@ export function getConversationSections() {
 }
 
 /**
- * Returns the most recent sections relative to the current scroll anchor.
- *
- * This is used by pruning so "recent" follows ChatGPT's anchor when it exists,
- * rather than blindly using the physical end of the DOM.
+ * Returns the most recent mounted sections relative to the current scroll anchor.
  */
 export function getRecentSections(sectionsToKeep) {
     const sections = getConversationSections();
+
     if (sections.length === 0) return [];
+
+    const safeSectionsToKeep = Math.max(
+        0,
+        Math.floor(Number(sectionsToKeep) || 0)
+    );
+
+    if (safeSectionsToKeep <= 0) return [];
 
     const anchor = getAnchorSection();
     const anchorIndex = anchor ? sections.indexOf(anchor) : -1;
 
     const endIndex = anchorIndex >= 0 ? anchorIndex + 1 : sections.length;
-    const startIndex = Math.max(0, endIndex - sectionsToKeep);
+    const startIndex = Math.max(0, endIndex - safeSectionsToKeep);
 
     return sections.slice(startIndex, endIndex);
 }
@@ -280,14 +186,6 @@ export function getLatestAssistantSection() {
 
 /**
  * Finds the scrollable ancestor for the conversation.
- *
- * Falls back to the document scroller because ChatGPT's scroll container can
- * change between layouts, logged-out states, and test fixtures.
- *
- * IMPORTANT:
- * This cache is independent from DOM mutation invalidation.
- * We avoid clearing it during normal DOM writes to prevent repeated
- * getComputedStyle() walks causing layout thrash.
  */
 export function getConversationScrollContainer() {
     if (
@@ -302,6 +200,7 @@ export function getConversationScrollContainer() {
         document.scrollingElement || document.documentElement;
 
     const container = getConversationContainer();
+
     if (!container) {
         cachedScrollContainer = fallbackScrollContainer;
         cachedScrollContainerVersion = scrollContainerCacheVersion;

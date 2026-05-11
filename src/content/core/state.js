@@ -1,13 +1,6 @@
 export const STATE_KEY = "__threadOptimizerState";
 
-export const PRUNED_ATTR = "data-thread-optimizer-pruned";
-export const PLACEHOLDER_ATTR = "data-thread-optimizer-placeholder";
 export const OFFSCREEN_OPT_ATTR = "data-thread-optimizer-offscreen-opt";
-export const TOP_RESTORE_SENTINEL_ATTR =
-    "data-thread-optimizer-top-restore-sentinel";
-export const BOTTOM_PRUNE_SENTINEL_ATTR =
-    "data-thread-optimizer-bottom-prune-sentinel";
-export const UNPRUNEABLE_ATTR = "data-thread-optimizer-unpruneable";
 export const OUT_OF_WINDOW_ATTR = "data-thread-optimizer-out-of-window";
 
 export const DEFAULT_SETTINGS = {
@@ -43,25 +36,6 @@ function createDefaultReplyTimingState() {
 
 function createDefaultState() {
     return {
-        softPrunedSections: [],
-        hiddenCount: 0,
-        totalHiddenCount: 0,
-        hardEvictedCount: 0,
-
-        placeholder: null,
-
-        topRestoreSentinel: null,
-        topRestoreObserver: null,
-        topRestoreObserverRoot: null,
-        isTopRestoreScheduled: false,
-        isTopRestoreArmed: true,
-
-        bottomPruneSentinel: null,
-        bottomPruneObserver: null,
-        bottomPruneObserverRoot: null,
-        isBottomPruneScheduled: false,
-        isBottomPruneArmed: true,
-
         observer: null,
         observedContainer: null,
         initObserver: null,
@@ -105,12 +79,6 @@ function ensureBooleanProperty(name, fallbackValue = false) {
     }
 }
 
-function ensureNumberProperty(name, fallbackValue = 0) {
-    if (typeof state[name] !== "number") {
-        state[name] = fallbackValue;
-    }
-}
-
 function removeLegacyCodeBlockOptimizationState() {
     delete state.codeBlockRefreshTimer;
     delete state.isCodeBlockRefreshScheduled;
@@ -123,31 +91,54 @@ function removeLegacyCodeBlockOptimizationState() {
     delete state.nextDetachedCodeBlockId;
 }
 
-function migrateLegacyState() {
-    removeLegacyCodeBlockOptimizationState();
+function removeLegacySoftPruningState() {
+    delete state.softPrunedSections;
+    delete state.hiddenCount;
+    delete state.totalHiddenCount;
+    delete state.hardEvictedCount;
+
+    delete state.placeholder;
+
+    delete state.topRestoreSentinel;
+    delete state.topRestoreObserver;
+    delete state.topRestoreObserverRoot;
+    delete state.isTopRestoreScheduled;
+    delete state.isTopRestoreArmed;
+
+    delete state.bottomPruneSentinel;
+    delete state.bottomPruneObserver;
+    delete state.bottomPruneObserverRoot;
+    delete state.isBottomPruneScheduled;
+    delete state.isBottomPruneArmed;
+
+    delete state.deferredReactPruneSections;
+
+    delete state.scrollIntentContainer;
+    delete state.scrollIntentEventTarget;
+    delete state.scrollIntentLastTop;
+    delete state.topEdgeKeyAccum;
+    delete state.bottomEdgeKeyAccum;
 }
 
-function normalizePruningState() {
-    ensureNumberProperty("totalHiddenCount", Number(state.hiddenCount) || 0);
+function migrateLegacyState() {
+    removeLegacyCodeBlockOptimizationState();
+    removeLegacySoftPruningState();
+}
 
-    if (typeof state.hardEvictedCount !== "number") {
-        state.hardEvictedCount = Math.max(
-            0,
-            (Number(state.totalHiddenCount) || 0) -
-                state.softPrunedSections.length
-        );
-    }
+function normalizeRuntimeState() {
+    ensureProperty("observer", null);
+    ensureProperty("observedContainer", null);
+    ensureProperty("initObserver", null);
+    ensureProperty("initPollTimer", null);
+
+    ensureProperty("debounceTimer", null);
+    ensureProperty("offscreenRefreshTimer", null);
 
     ensureBooleanProperty("isAutoPruneScheduled");
-    ensureBooleanProperty("isTopRestoreScheduled");
-    ensureBooleanProperty("isBottomPruneScheduled");
-    ensureBooleanProperty("isTopRestoreArmed", true);
-    ensureBooleanProperty("isBottomPruneArmed", true);
+    ensureBooleanProperty("isOffscreenRefreshScheduled");
+    ensureBooleanProperty("isApplyingDomChanges");
 
-    ensureProperty("topRestoreObserverRoot", null);
-    ensureProperty("bottomPruneObserverRoot", null);
-    ensureProperty("offscreenRefreshTimer", null);
-    ensureProperty("initPollTimer", null);
+    ensureProperty("offscreenLiveSection", null);
 }
 
 function normalizeReplyTimingState() {
@@ -164,39 +155,33 @@ function normalizeReplyTimingState() {
 }
 
 function normalizeSettingsAndFlags() {
-    const {
-        ...existingSettings
-    } = state.settings && typeof state.settings === "object"
-        ? state.settings
-        : {};
+    const existingSettings =
+        state.settings && typeof state.settings === "object"
+            ? state.settings
+            : {};
 
     state.settings = {
         ...DEFAULT_SETTINGS,
         ...existingSettings,
     };
 
-    const {
-        ...existingFeatureFlags
-    } = state.featureFlags && typeof state.featureFlags === "object"
-        ? state.featureFlags
-        : {};
+    const existingFeatureFlags =
+        state.featureFlags && typeof state.featureFlags === "object"
+            ? state.featureFlags
+            : {};
 
     state.featureFlags = {
         ...createDefaultFeatureFlags(),
         ...existingFeatureFlags,
     };
 
-    ensureBooleanProperty("debugLoggingEnabled", DEFAULT_SETTINGS.enableDebugLogging);
-}
-
-function normalizeMiscState() {
-    ensureBooleanProperty("isOffscreenRefreshScheduled");
-    ensureBooleanProperty("isApplyingDomChanges");
-    ensureProperty("offscreenLiveSection", null);
+    ensureBooleanProperty(
+        "debugLoggingEnabled",
+        DEFAULT_SETTINGS.enableDebugLogging
+    );
 }
 
 migrateLegacyState();
-normalizePruningState();
+normalizeRuntimeState();
 normalizeReplyTimingState();
 normalizeSettingsAndFlags();
-normalizeMiscState();

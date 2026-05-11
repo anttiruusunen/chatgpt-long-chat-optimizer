@@ -41,17 +41,17 @@ test("streaming mutation burst does not exceed budget", async ({ page }) => {
 });
 
 test("optimizer reduces DOM size significantly", async ({ page }) => {
-    await loadOptimizerFixture(page);
+    const fixture = await loadOptimizerFixture(page);
 
-    const counts = await page.evaluate(() => {
-        return {
-            total: document.querySelectorAll("section").length,
-            visible: document.querySelectorAll("section[data-turn]").length,
-        };
-    });
+    const counts = await page.evaluate(() => ({
+        visible: document.querySelectorAll("section[data-turn]").length,
+        fixtureTotal: 12,
+    }));
 
-    expect(counts.visible).toBeLessThan(counts.total);
+    expect(counts.visible).toBeLessThan(counts.fixtureTotal);
     expect(counts.visible).toBeLessThanOrEqual(2);
+
+    await fixture.expectPrunedToLatestExchange();
 });
 
 test("large conversation remains performant after pruning", async ({ page }) => {

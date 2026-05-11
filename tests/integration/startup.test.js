@@ -31,6 +31,7 @@ vi.mock("../../src/content/streaming/replyTiming.js", async () => {
     const actual = await vi.importActual(
         "../../src/content/streaming/replyTiming.js"
     );
+
     return {
         ...actual,
         installReplyTimingListeners: vi.fn(),
@@ -189,7 +190,7 @@ describe("startup integration", () => {
     });
 
     it(
-        "initializes, attaches, and prunes on startup",
+        "initializes, attaches, and marks older mounted sections out of window on startup",
         async () => {
             buildConversation({
                 exchangeCount: 6,
@@ -197,16 +198,35 @@ describe("startup integration", () => {
                 latestAssistantFinished: true,
             });
 
+            const stateModule = await import("../../src/content/core/state.js");
             await import("../../src/content/core/index.js");
             await flush();
 
-            const visibleSections = document.querySelectorAll("section[data-turn]");
-            expect(visibleSections.length).toBeLessThan(12);
+            const { OUT_OF_WINDOW_ATTR } = stateModule;
 
-            const placeholder = document.querySelector(
-                '[data-thread-optimizer-placeholder="true"]'
+            const sections = Array.from(
+                document.querySelectorAll("section[data-turn]")
             );
-            expect(placeholder).not.toBeNull();
+
+            expect(sections).toHaveLength(12);
+
+            const outOfWindowSections = sections.filter((section) =>
+                section.hasAttribute(OUT_OF_WINDOW_ATTR)
+            );
+
+            expect(outOfWindowSections).toHaveLength(10);
+
+            for (const section of sections.slice(0, 10)) {
+                expect(section.getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
+            }
+
+            for (const section of sections.slice(-2)) {
+                expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
+            }
+
+            expect(
+                document.querySelector('[data-thread-optimizer-placeholder="true"]')
+            ).toBeNull();
         },
         15000
     );
@@ -239,11 +259,6 @@ describe("startup integration", () => {
         await flush();
 
         const latestAssistant = domModule.getLatestAssistantSection();
-        const remainingPre = latestAssistant?.querySelector("pre");
-        const processed =
-            latestAssistant?.getAttribute(
-                "data-thread-optimizer-codeblocks-processed"
-            ) === "true";
 
         expect(latestAssistant).not.toBeNull();
     });
@@ -259,10 +274,12 @@ describe("startup integration", () => {
         const assistantSignalsModule = await import(
             "../../src/content/streaming/assistantSignals.js"
         );
+
         await import("../../src/content/core/index.js");
         await flush();
 
         const latestAssistant = domModule.getLatestAssistantSection();
+
         expect(latestAssistant).not.toBeNull();
         expect(
             assistantSignalsModule.hasResponseActions(latestAssistant)

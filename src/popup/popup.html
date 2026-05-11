@@ -15,34 +15,6 @@
             font-size: 16px;
         }
 
-        .summary {
-            margin-bottom: 14px;
-            padding: 10px 12px;
-            border: 1px solid rgba(0, 0, 0, 0.08);
-            border-radius: 10px;
-            background: rgba(0, 0, 0, 0.02);
-        }
-
-        .summaryRow {
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 6px;
-            font-size: 13px;
-        }
-
-        .summaryRow:last-child {
-            margin-bottom: 0;
-        }
-
-        .summaryLabel {
-            opacity: 0.75;
-        }
-
-        .summaryValue {
-            font-weight: 600;
-        }
-
         .setting {
             margin-bottom: 14px;
         }
@@ -156,18 +128,6 @@
 </head>
 <body>
     <h3>Thread Optimizer</h3>
-
-    <div class="summary">
-        <div class="summaryRow">
-            <span class="summaryLabel">Hidden messages</span>
-            <span id="hiddenMessagesValue" class="summaryValue">—</span>
-        </div>
-        <div class="summaryRow">
-            <span class="summaryLabel">Latest reply time</span>
-            <span id="lastReplyTimeValue" class="summaryValue">—</span>
-        </div>
-    </div>
-
     <div class="setting">
         <label class="label" for="historyKeptExchanges">Chat history kept</label>
         <div class="controlRow">
@@ -181,8 +141,7 @@
             >×</button>
         </div>
         <div class="hint">
-            How many recent exchanges stay recoverable. The newest exchange remains visible,
-            older recoverable exchanges stay in memory, and anything beyond this limit is removed permanently.
+            How many recent exchanges stay in the active chat. Older exchanges are pruned from the ChatGPT chat.
             Clear to disable auto-pruning.
         </div>
     </div>

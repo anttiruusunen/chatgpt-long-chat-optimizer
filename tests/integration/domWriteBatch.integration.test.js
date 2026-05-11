@@ -5,8 +5,6 @@ const mockRefs = vi.hoisted(() => ({
     replyTimingHandlers: null,
     ensurePlaceholderState: vi.fn(),
     removePlaceholder: vi.fn(),
-    ensureTopRestoreSentinelState: vi.fn(),
-    ensureBottomPruneSentinelState: vi.fn(),
     scheduleOffscreenRefresh: vi.fn(),
     syncCssVisibilityWindow: vi.fn(() => []),
     clearCssVisibilityWindow: vi.fn(),
@@ -61,11 +59,6 @@ vi.mock("../../src/content/pruning/pruneUi.js", () => ({
     removePlaceholder: mockRefs.removePlaceholder,
     installStartupPruneMask: vi.fn(),
     removeStartupPruneMask: vi.fn(),
-}));
-
-vi.mock("../../src/content/pruning/pruneSentinels.js", () => ({
-    ensureTopRestoreSentinelState: mockRefs.ensureTopRestoreSentinelState,
-    ensureBottomPruneSentinelState: mockRefs.ensureBottomPruneSentinelState,
 }));
 
 vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
@@ -144,8 +137,6 @@ describe("dom write batch integration", () => {
         mockRefs.replyTimingHandlers = null;
         mockRefs.ensurePlaceholderState.mockClear();
         mockRefs.removePlaceholder.mockClear();
-        mockRefs.ensureTopRestoreSentinelState.mockClear();
-        mockRefs.ensureBottomPruneSentinelState.mockClear();
         mockRefs.scheduleOffscreenRefresh.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
         mockRefs.clearCssVisibilityWindow.mockClear();
@@ -175,8 +166,6 @@ describe("dom write batch integration", () => {
 
         mockRefs.ensurePlaceholderState.mockClear();
         mockRefs.removePlaceholder.mockClear();
-        mockRefs.ensureTopRestoreSentinelState.mockClear();
-        mockRefs.ensureBottomPruneSentinelState.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
 
         mockRefs.replyTimingHandlers.onReplySettled?.();
@@ -184,15 +173,12 @@ describe("dom write batch integration", () => {
         mockRefs.replyTimingHandlers.onReplySettled?.();
 
         expect(mockRefs.ensurePlaceholderState).toHaveBeenCalledTimes(0);
-        expect(mockRefs.ensureTopRestoreSentinelState).toHaveBeenCalledTimes(0);
         expect(mockRefs.syncCssVisibilityWindow).toHaveBeenCalledTimes(0);
 
         await flushMicrotasks();
 
         expect(mockRefs.ensurePlaceholderState.mock.calls.length).toBeLessThanOrEqual(1);
         expect(mockRefs.removePlaceholder.mock.calls.length).toBeLessThanOrEqual(1);
-        expect(mockRefs.ensureTopRestoreSentinelState).toHaveBeenCalledTimes(1);
-        expect(mockRefs.ensureBottomPruneSentinelState).toHaveBeenCalledTimes(1);
         expect(mockRefs.syncCssVisibilityWindow).toHaveBeenCalledTimes(1);
     });
 });

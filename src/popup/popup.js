@@ -15,7 +15,6 @@ const DEFAULT_SETTINGS = {
     enableUserMessageClamp: true,
 };
 
-const POLL_INTERVAL_MS = 500;
 const STATUS_TIMEOUT_MS = 2000;
 
 const elements = {
@@ -27,8 +26,6 @@ const elements = {
     enableDebugLogging: document.getElementById("enableDebugLogging"),
     enableStoreReadOptimization: document.getElementById("enableStoreReadOptimization"),
     enableUserMessageClamp: document.getElementById("enableUserMessageClamp"),
-    hiddenMessagesValue: document.getElementById("hiddenMessagesValue"),
-    lastReplyTimeValue: document.getElementById("lastReplyTimeValue"),
     debugSection: document.getElementById("debugSection"),
     logDebugState: document.getElementById("logDebugState"),
     logDebugBuckets: document.getElementById("logDebugBuckets"),
@@ -37,7 +34,6 @@ const elements = {
     status: document.getElementById("status"),
 };
 
-let popupStatePollTimer = null;
 let statusTimer = null;
 
 function assertRequiredElements() {
@@ -89,22 +85,6 @@ function normalizePositiveInt(value) {
     return rounded >= 1 ? rounded : null;
 }
 
-function formatDuration(ms) {
-    if (!ms || ms <= 0) {
-        return "Not yet";
-    }
-
-    const totalSeconds = ms / 1000;
-
-    if (totalSeconds < 10) return `${totalSeconds.toFixed(2)}s`;
-    if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
-
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = Math.round(totalSeconds % 60);
-
-    return `${minutes}m ${seconds}s`;
-}
-
 function updateFieldStates() {
     const historyDisabled = elements.historyKeptExchanges.value === "";
 
@@ -119,23 +99,6 @@ function updateFieldStates() {
 
 function updateDebugVisibility() {
     elements.debugSection.hidden = !elements.enableDebugLogging.checked;
-}
-
-function updatePopupStateView(popupState) {
-    if (!popupState) {
-        elements.hiddenMessagesValue.textContent = "—";
-        elements.lastReplyTimeValue.textContent = "—";
-        return;
-    }
-
-    elements.hiddenMessagesValue.textContent =
-        popupState.hiddenSections != null
-            ? String(popupState.hiddenSections)
-            : "0";
-
-    elements.lastReplyTimeValue.textContent = popupState.replyPending
-        ? "Running…"
-        : formatDuration(popupState.lastReplyDurationMs || 0);
 }
 
 async function getActiveTabId() {
@@ -167,43 +130,6 @@ async function sendToActiveTab(message) {
             error: error?.message || "Content script unavailable",
         };
     }
-}
-
-async function refreshPopupState({ silent = false } = {}) {
-    const response = await sendToActiveTab({ action: "get-popup-state" });
-
-    if (!response?.ok) {
-        updatePopupStateView(null);
-
-        if (!silent) {
-            setStatus(response?.error || "Could not read page state");
-        }
-
-        return;
-    }
-
-    updatePopupStateView(response);
-}
-
-function startPopupStatePolling() {
-    if (popupStatePollTimer) {
-        return;
-    }
-
-    popupStatePollTimer = setInterval(() => {
-        refreshPopupState({ silent: true }).catch((error) => {
-            console.debug("[Thread Optimizer popup] polling failed", error);
-        });
-    }, POLL_INTERVAL_MS);
-}
-
-function stopPopupStatePolling() {
-    if (!popupStatePollTimer) {
-        return;
-    }
-
-    clearInterval(popupStatePollTimer);
-    popupStatePollTimer = null;
 }
 
 async function loadSettings() {
@@ -293,8 +219,6 @@ async function saveSettings() {
     updateFieldStates();
     updateDebugVisibility();
 
-    await refreshPopupState({ silent: true });
-
     setStatus("Saved");
 }
 
@@ -359,34 +283,19 @@ function bindEvents() {
     bindEvent(elements.logDebugStorePerformance, "click", () =>
         sendDebugAction("log-debug-store-performance", "Logged store cache")
     );
-
-    window.addEventListener("focus", () => {
-        refreshPopupState({ silent: true }).catch((error) => {
-            console.debug("[Thread Optimizer popup] focus refresh failed", error);
-        });
-    });
-
-    window.addEventListener("blur", stopPopupStatePolling);
-    window.addEventListener("beforeunload", stopPopupStatePolling);
 }
 
 async function init() {
     assertRequiredElements();
     bindEvents();
 
-    updatePopupStateView(null);
-
     await loadSettings();
-    await refreshPopupState({ silent: true });
-
-    startPopupStatePolling();
 }
 
 init().catch((error) => {
     console.error("[Thread Optimizer popup] failed to initialize", error);
 
     try {
-        updatePopupStateView(null);
         setPersistentError(error?.message || "Failed to initialize popup");
     } catch {
         // Avoid throwing from the crash handler itself.

@@ -3,9 +3,7 @@ import { getConversationContainer } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import {
     pruneOldSections as pruneOldSectionsBase,
-    restoreAllSections as restoreAllSectionsBase,
     runInitialPrune as runInitialPruneBase,
-    enforceSoftPrunedLimit,
 } from "./prune.js";
 import {
     installStartupPruneMask,
@@ -21,6 +19,10 @@ import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
 const SECTIONS_PER_EXCHANGE = 2;
 const AUTO_PRUNE_DEBOUNCE_MS = 300;
 
+function getSafeHistoryKeptExchanges(value) {
+    return Math.max(1, Math.floor(Number(value) || 1));
+}
+
 export function createPruneController({
     ensureObserverAttached,
     waitForContainerAndInitialPrune,
@@ -29,12 +31,9 @@ export function createPruneController({
     let isBootstrapInitialPruneScheduled = false;
 
     function getStartupMaskVisibleSectionsLimit() {
-        const safeExchanges = Math.max(
-            1,
-            Number(state.settings.historyKeptExchanges) || 1
-        );
-
-        return safeExchanges * SECTIONS_PER_EXCHANGE;
+        return getSafeHistoryKeptExchanges(
+            state.settings.historyKeptExchanges
+        ) * SECTIONS_PER_EXCHANGE;
     }
 
     function syncAfterPrune(reason) {
@@ -46,55 +45,20 @@ export function createPruneController({
         syncPruningStateToPageBridge();
     }
 
-    /**
-     * Re-applies the recoverable soft-prune buffer after settings changes.
-     *
-     * Lowering historyKeptExchanges can turn previously recoverable soft-pruned
-     * sections into hard-evicted sections.
-     */
-    function applySoftPrunedLimitToCurrentState() {
-        withDomMutationGuard(() => {
-            enforceSoftPrunedLimit();
-
-            debugLog("Prune controller: applied soft-pruned limit counts", {
-                totalHiddenCount: state.hiddenCount,
-                softPrunedSections: state.softPrunedSections.length,
-                hardEvictedCount: state.hardEvictedCount,
-                historyKeptExchanges: state.settings.historyKeptExchanges,
-            });
-        });
-
-        scheduleConversationChromeSync({
-            reason: "apply-soft-pruned-limit",
-            includeStreaming: true,
-        });
-    }
-
-    function restoreAllSections() {
-        clearCssVisibilityWindow();
-
-        const result = restoreAllSectionsBase({
-            ensureObserverAttached,
-            withDomMutationGuard,
-            refreshObservedSections: scheduleRefreshPostPruneState,
-        });
-
-        syncAfterPrune("restore-all-sections");
-
-        return result;
-    }
-
     function pruneOldSections(
-        historyKeptExchanges = state.settings.historyKeptExchanges,
-        options = {}
+        historyKeptExchanges = state.settings.historyKeptExchanges
     ) {
         clearCssVisibilityWindow();
 
-        const result = pruneOldSectionsBase(historyKeptExchanges, options, {
-            ensureObserverAttached,
-            withDomMutationGuard,
-            refreshObservedSections: scheduleRefreshPostPruneState,
-        });
+        const result = pruneOldSectionsBase(
+            getSafeHistoryKeptExchanges(historyKeptExchanges),
+            {},
+            {
+                ensureObserverAttached,
+                withDomMutationGuard,
+                refreshObservedSections: scheduleRefreshPostPruneState,
+            }
+        );
 
         syncAfterPrune("prune-old-sections");
 
@@ -195,19 +159,21 @@ export function createPruneController({
     }
 
     /**
-     * Debounces pruning after ChatGPT adds/removes conversation turns.
+     * Debounces store-native pruning after ChatGPT adds/removes conversation turns.
      *
      * This avoids pruning while React is still completing a burst of DOM
      * mutations, and skips if our own mutation guard is active.
      */
-    function scheduleAutoPrune() {
+    function scheduleAutoPrune(reason = "auto-prune") {
         if (!state.featureFlags.pruning) return;
         if (!state.settings.autoPrune) return;
         if (!state.didInitialPrune) return;
         if (state.isApplyingDomChanges) return;
 
         if (state.isAutoPruneScheduled) {
-            debugLog("Prune controller: skipped duplicate auto-prune schedule");
+            debugLog("Prune controller: skipped duplicate auto-prune schedule", {
+                reason,
+            });
             return;
         }
 
@@ -221,21 +187,21 @@ export function createPruneController({
             try {
                 if (!state.featureFlags.pruning || !state.settings.autoPrune) {
                     debugLog(
-                        "Prune controller: skipped auto-prune because feature is disabled"
+                        "Prune controller: skipped auto-prune because feature is disabled",
+                        { reason }
                     );
                     return;
                 }
 
                 if (state.isApplyingDomChanges) {
                     debugLog(
-                        "Prune controller: skipped auto-prune because DOM guard is active"
+                        "Prune controller: skipped auto-prune because DOM guard is active",
+                        { reason }
                     );
                     return;
                 }
 
-                pruneOldSections(state.settings.historyKeptExchanges, {
-                    showPlaceholder: true,
-                });
+                pruneOldSections(state.settings.historyKeptExchanges);
             } finally {
                 state.isAutoPruneScheduled = false;
                 state.debounceTimer = null;
@@ -247,13 +213,12 @@ export function createPruneController({
         }, AUTO_PRUNE_DEBOUNCE_MS);
 
         debugLog("Prune controller: scheduled auto-prune", {
+            reason,
             historyKeptExchanges: state.settings.historyKeptExchanges,
         });
     }
 
     return {
-        applySoftPrunedLimitToCurrentState,
-        restoreAllSections,
         pruneOldSections,
         runInitialPrune,
         bootstrapInitialPruneFromObservedMutation,

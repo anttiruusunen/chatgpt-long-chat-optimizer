@@ -4,6 +4,13 @@ import { postThreadOptimizerBridgeMessage } from "../bridge/chatStoreBridgeClien
 const BRIDGE_SYNC_RETRY_DELAY_MS = 200;
 const STORE_READ_OPTIMIZATION_MAX_SYNC_MS = 5000;
 
+function getHistoryKeptExchangesForBridge() {
+    return Math.max(
+        1,
+        Math.floor(Number(state.settings?.historyKeptExchanges) || 1)
+    );
+}
+
 /**
  * Sends current pruning state to the page bridge once it is installed.
  *
@@ -21,13 +28,7 @@ export function syncPruningStateToPageBridge(retries = 10) {
         postThreadOptimizerBridgeMessage({
             type: "thread-optimizer:set-pruning-state",
             enabled: state.featureFlags.pruning === true,
-            prunedTurnCount: state.featureFlags.pruning
-                ? state.hiddenCount || 0
-                : 0,
-            historyKeptExchanges: Math.max(
-                1,
-                Math.floor(Number(state.settings?.historyKeptExchanges) || 1)
-            ),
+            historyKeptExchanges: getHistoryKeptExchangesForBridge(),
         });
 
         return;

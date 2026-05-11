@@ -2,24 +2,10 @@ import { state } from "./state.js";
 import { getConversationSections } from "./dom.js";
 import { debugLog } from "./logger.js";
 import {
-    ensurePlaceholderState,
-    removePlaceholder,
-} from "../pruning/pruneUi.js";
-import {
-    ensureTopRestoreSentinelState,
-    ensureBottomPruneSentinelState,
-} from "../pruning/pruneSentinels.js";
-import {
     ensureSectionCssOffscreenMode,
     scheduleOffscreenRefresh,
 } from "../offscreen/offscreen.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
-import {
-    invalidateSentinelObserversForRootChange,
-    refreshTopRestoreSentinelObservation,
-    refreshBottomPruneSentinelObservation,
-    disconnectSentinelObservers,
-} from "../pruning/sentinelObservers.js";
 import { syncCssVisibilityWindow } from "../pruning/cssVisibilityWindow.js";
 import {
     registerUiPipelineTask,
@@ -81,9 +67,9 @@ function getMaintenanceDeps() {
 /**
  * Coalesces all conversation-maintenance work into the shared UI pipeline.
  *
- * Pruning, placeholder updates, sentinel updates, offscreen refreshes and CSS
- * visibility syncs can all be requested by different subsystems in the same
- * tick. Running them as one batch avoids unnecessary DOM churn.
+ * Pruning, CSS visibility syncs, and offscreen refreshes can all be requested
+ * by different subsystems in the same tick. Running them as one batch avoids
+ * unnecessary DOM churn.
  */
 function scheduleConversationMaintenance(reason = "unknown") {
     pendingMaintenanceReasons.add(reason);
@@ -146,11 +132,7 @@ export function flushDeferredCssVisibilityWindowSync(reason = "reply-settled") {
 }
 
 /**
- * Refreshes secondary pruning state after visible sections change.
- *
- * During streaming we keep this intentionally minimal: sentinel observers can
- * fire aggressively while the latest assistant is changing, so we disconnect
- * them and only refresh offscreen state.
+ * Refreshes secondary rendering state after visible sections change.
  */
 function flushPostPruneState() {
     if (!isOffscreenRefreshEnabled()) {
@@ -158,29 +140,9 @@ function flushPostPruneState() {
         return;
     }
 
-    if (isReplyStreaming()) {
-        disconnectSentinelObservers();
-        scheduleOffscreenRefresh();
-
-        debugLog("Maintenance: flushed minimal streaming-mode refresh");
-        return;
-    }
-
     scheduleOffscreenRefresh();
 
-    if (typeof IntersectionObserver !== "function") {
-        debugLog("Maintenance: skipped sentinel observer refresh because IntersectionObserver is unavailable");
-        return;
-    }
-
-    invalidateSentinelObserversForRootChange();
-
-    const deps = getMaintenanceDeps();
-
-    refreshTopRestoreSentinelObservation(deps);
-    refreshBottomPruneSentinelObservation(deps);
-
-    debugLog("Maintenance: flushed batched post-prune refresh");
+    debugLog("Maintenance: flushed post-prune offscreen refresh");
 }
 
 function collectConversationChromeSnapshot() {
@@ -188,16 +150,15 @@ function collectConversationChromeSnapshot() {
 
     return {
         visibleSections,
-        firstVisibleSection: visibleSections[0] ?? null,
-        lastVisibleSection: visibleSections[visibleSections.length - 1] ?? null,
         visibleSectionCount: visibleSections.length,
-        hiddenCount: state.hiddenCount,
     };
 }
 
 /**
- * Applies conversation chrome around the current visible window:
- * placeholder, restore/prune sentinels, CSS visibility, and offscreen markers.
+ * Applies rendering helpers around the current visible conversation window.
+ *
+ * This no longer manages hidden-count placeholders, restore sentinels, prune
+ * sentinels, or DOM-side soft pruning. Store-native pruning owns history now.
  */
 function applyConversationChromeSnapshot(
     snapshot,
@@ -207,22 +168,6 @@ function applyConversationChromeSnapshot(
         reasons = [],
     } = {}
 ) {
-    const {
-        firstVisibleSection,
-        lastVisibleSection,
-        visibleSectionCount,
-        hiddenCount,
-    } = snapshot;
-
-    if (hiddenCount > 0 && firstVisibleSection) {
-        ensurePlaceholderState(firstVisibleSection);
-    } else {
-        removePlaceholder();
-    }
-
-    ensureTopRestoreSentinelState(firstVisibleSection);
-    ensureBottomPruneSentinelState(lastVisibleSection);
-
     requestCssVisibilityWindowSync({
         force: forceCss,
         reason: reasons.join(",") || "conversation-chrome-sync",
@@ -234,8 +179,7 @@ function applyConversationChromeSnapshot(
 
     debugLog("Maintenance: flushed conversation chrome sync batch", {
         reasons,
-        visibleSections: visibleSectionCount,
-        hiddenCount,
+        visibleSections: snapshot.visibleSectionCount,
         forceCss,
         includeStreaming,
     });
@@ -261,10 +205,6 @@ function flushConversationChromeSync() {
 
 /**
  * Runs the coalesced maintenance batch.
- *
- * Chrome sync can itself require post-prune refreshes because sentinels,
- * placeholders, and offscreen state all depend on the same visible-window
- * snapshot.
  */
 function flushConversationMaintenance() {
     isConversationMaintenanceScheduled = false;

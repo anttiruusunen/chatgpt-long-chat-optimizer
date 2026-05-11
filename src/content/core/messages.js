@@ -13,10 +13,6 @@ function getBooleanMessageSetting(message, key, fallback) {
         : fallback;
 }
 
-function getHiddenExchangesCount() {
-    return Math.floor((Number(state.hiddenCount) || 0) / 2);
-}
-
 function postToPageBridge(type, payload = {}) {
     return postThreadOptimizerBridgeMessage({
         type,
@@ -24,11 +20,18 @@ function postToPageBridge(type, payload = {}) {
     });
 }
 
+function getSafeHistoryKeptExchanges(value, fallback) {
+    return Math.max(
+        1,
+        Math.floor(Number(value) || Number(fallback) || 1)
+    );
+}
+
 function applySettingsFromMessage(message) {
     if (Object.prototype.hasOwnProperty.call(message, "historyKeptExchanges")) {
-        state.settings.historyKeptExchanges = Math.max(
-            1,
-            Number(message.historyKeptExchanges) || state.settings.historyKeptExchanges
+        state.settings.historyKeptExchanges = getSafeHistoryKeptExchanges(
+            message.historyKeptExchanges,
+            state.settings.historyKeptExchanges
         );
     }
 
@@ -75,6 +78,21 @@ function applySettingsFromMessage(message) {
     );
 }
 
+function syncPageBridgeRuntimeState() {
+    postToPageBridge("thread-optimizer:set-pruning-state", {
+        enabled: state.featureFlags.pruning === true,
+        historyKeptExchanges: getSafeHistoryKeptExchanges(
+            state.settings.historyKeptExchanges,
+            1
+        ),
+    });
+
+    postToPageBridge("thread-optimizer:set-store-read-optimization", {
+        enabled: state.featureFlags.storeReadOptimization,
+        debug: state.debugLoggingEnabled,
+    });
+}
+
 /**
  * Runtime messages are the popup/debug control plane.
  *
@@ -83,43 +101,29 @@ function applySettingsFromMessage(message) {
  */
 export function registerRuntimeMessageHandlers({
     pruneOldSections,
-    restoreAllSections,
     scheduleAutoPrune,
     waitForContainerAndInitialPrune,
     refreshObservedSections,
-    applySoftPrunedLimitToCurrentState,
     setOffscreenOptimizationEnabled,
     syncFeatureFlagsFromSettings,
 }) {
     ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
             if (message.action === "prune-now") {
-                const historyKeptExchanges = Math.max(
-                    1,
-                    Number(message.historyKeptExchanges) ||
-                        state.settings.historyKeptExchanges
+                const historyKeptExchanges = getSafeHistoryKeptExchanges(
+                    message.historyKeptExchanges,
+                    state.settings.historyKeptExchanges
                 );
 
                 state.settings.historyKeptExchanges = historyKeptExchanges;
 
-                pruneOldSections(historyKeptExchanges, {
-                    showPlaceholder: true,
-                });
+                pruneOldSections(historyKeptExchanges);
 
                 state.didInitialPrune = true;
 
                 debugLog("Messages: handled prune-now", {
                     historyKeptExchanges,
                 });
-
-                sendResponse({ ok: true });
-                return true;
-            }
-
-            if (message.action === "restore-all") {
-                restoreAllSections();
-
-                debugLog("Messages: handled restore-all");
 
                 sendResponse({ ok: true });
                 return true;
@@ -146,12 +150,7 @@ export function registerRuntimeMessageHandlers({
                     !previousPruningEnabled &&
                     state.featureFlags.pruning;
 
-                postToPageBridge("thread-optimizer:set-store-read-optimization", {
-                    enabled: state.featureFlags.storeReadOptimization,
-                    debug: state.debugLoggingEnabled,
-                });
-
-                applySoftPrunedLimitToCurrentState();
+                syncPageBridgeRuntimeState();
 
                 if (
                     previousOffscreenEnabled !==
@@ -171,15 +170,12 @@ export function registerRuntimeMessageHandlers({
                     ) {
                         // Runtime enable can happen after the DOM is already mounted,
                         // so prune directly instead of waiting for startup observers.
-                        pruneOldSections(
-                            state.settings.historyKeptExchanges,
-                            { showPlaceholder: true }
-                        );
+                        pruneOldSections(state.settings.historyKeptExchanges);
 
                         state.didInitialPrune = true;
                         refreshObservedSections();
                     } else {
-                        scheduleAutoPrune();
+                        scheduleAutoPrune("settings-updated");
                     }
                 } else {
                     refreshObservedSections();
@@ -193,18 +189,6 @@ export function registerRuntimeMessageHandlers({
                 });
 
                 sendResponse({ ok: true });
-                return true;
-            }
-
-            if (message.action === "get-popup-state") {
-                sendResponse({
-                    ok: true,
-                    hiddenExchanges: getHiddenExchangesCount(),
-                    hiddenSections: state.hiddenCount,
-                    lastReplyDurationMs: state.replyTiming.lastDurationMs || 0,
-                    replyPending: Boolean(state.replyTiming.pending),
-                    debugLoggingEnabled: Boolean(state.debugLoggingEnabled),
-                });
                 return true;
             }
 

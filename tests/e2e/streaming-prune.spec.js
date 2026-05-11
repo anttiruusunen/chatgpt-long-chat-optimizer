@@ -45,8 +45,12 @@ test("startup prune preserves latest user-only pending turn", async ({ page }) =
                 const conversation = document.getElementById("conversation");
 
                 const pendingUser = document.createElement("section");
+
                 pendingUser.setAttribute("data-turn", "user");
-                pendingUser.setAttribute("data-testid", "conversation-turn-pending-user");
+                pendingUser.setAttribute(
+                    "data-testid",
+                    "conversation-turn-pending-user"
+                );
                 pendingUser.textContent = "latest user message without assistant yet";
 
                 conversation.appendChild(pendingUser);
