@@ -241,10 +241,9 @@ describe("navigation rearm integration", () => {
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
             expect.any(Element),
-            expect.any(Object),
             expect.objectContaining({
-                useStartupMask: false,
-                postPruneRefreshDelayMs: 500,
+                pruneOldSections: expect.any(Function),
+                refreshObservedSections: expect.any(Function),
             })
         );
 

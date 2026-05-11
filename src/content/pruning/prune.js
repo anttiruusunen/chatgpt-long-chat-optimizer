@@ -11,10 +11,6 @@ import {
     isIncompleteAssistantSection,
 } from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
-import {
-    hideContainer,
-    revealContainer,
-} from "./pruneUi.js";
 
 function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
@@ -41,10 +37,7 @@ function getLatestAssistantPruneDeferralReason(sections) {
 function normalizeHistoryKeptExchanges(
     historyKeptExchanges = state.settings.historyKeptExchanges
 ) {
-    return Math.max(
-        1,
-        Math.floor(Number(historyKeptExchanges) || 1)
-    );
+    return Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
 }
 
 /**
@@ -170,38 +163,26 @@ export function pruneOldSections(
 }
 
 /**
- * Runs startup prune behind an optional temporary mask.
+ * Runs the startup prune without a visual mask.
  *
- * The mask prevents old turns from flashing during page load. We do not build
- * placeholder/sentinel UI anymore; after the store prune request we simply
- * reveal the container and refresh the observed sections.
+ * This intentionally leaves the conversation interactive while the page bridge
+ * discovers the store and performs store-native hard pruning.
  */
 export function runInitialPrune(
     container,
     {
         pruneOldSections,
         refreshObservedSections,
-        installStartupPruneMask,
-        removeStartupPruneMask,
-    },
-    {
-        useStartupMask = true,
     } = {}
 ) {
     if (!state.featureFlags.pruning) return;
-
     if (!state.settings.autoPrune || state.didInitialPrune) {
         return;
     }
 
-    if (useStartupMask) {
-        installStartupPruneMask?.();
-        hideContainer(container);
-    }
-
     requestAnimationFrame(() => {
         try {
-            const result = pruneOldSections(
+            const result = pruneOldSections?.(
                 state.settings.historyKeptExchanges,
                 {
                     reason: "initial-prune",
@@ -211,7 +192,6 @@ export function runInitialPrune(
             if (result?.initialPruneDeferred) {
                 debugLog("Prune: initial prune deferred", {
                     reason: result.reason,
-                    useStartupMask,
                 });
 
                 refreshObservedSections?.();
@@ -222,31 +202,26 @@ export function runInitialPrune(
 
             debugLog("Prune: initial prune completed", {
                 ...result,
-                useStartupMask,
             });
 
-            refreshObservedSections?.();
+            if (!result?.visibleSectionsChanged) {
+                refreshObservedSections?.();
+            }
         } catch (error) {
             console.error("[Thread Optimizer] Initial prune failed", error);
         } finally {
-            if (!useStartupMask) {
-                refreshObservedSections?.();
-                return;
-            }
-
             requestAnimationFrame(() => {
-                revealContainer(container);
+                const latestContainer = getConversationContainer();
 
-                requestAnimationFrame(() => {
-                    const latestContainer = getConversationContainer();
+                if (!latestContainer) {
+                    return;
+                }
 
-                    refreshObservedSections?.();
-                    removeStartupPruneMask?.();
+                refreshObservedSections?.();
 
-                    debugLog("Prune: post-initial stabilization refresh completed", {
-                        hasContainer: Boolean(latestContainer),
-                        useStartupMask,
-                    });
+                debugLog("Prune: post-initial stabilization refresh completed", {
+                    hasContainer: Boolean(latestContainer),
+                    hadInitialContainer: container instanceof Element,
                 });
             });
         }

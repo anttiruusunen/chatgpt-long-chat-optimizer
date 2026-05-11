@@ -5,10 +5,6 @@ import {
     pruneOldSections as pruneOldSectionsBase,
     runInitialPrune as runInitialPruneBase,
 } from "./prune.js";
-import {
-    installStartupPruneMask,
-    removeStartupPruneMask,
-} from "./pruneUi.js";
 import { clearCssVisibilityWindow } from "./cssVisibilityWindow.js";
 import {
     scheduleConversationChromeSync,
@@ -16,7 +12,6 @@ import {
 } from "../core/conversationMaintenance.js";
 import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
 
-const SECTIONS_PER_EXCHANGE = 2;
 const AUTO_PRUNE_DEBOUNCE_MS = 300;
 
 function getSafeHistoryKeptExchanges(value) {
@@ -30,12 +25,6 @@ export function createPruneController({
 }) {
     let isBootstrapInitialPruneScheduled = false;
 
-    function getStartupMaskVisibleSectionsLimit() {
-        return getSafeHistoryKeptExchanges(
-            state.settings.historyKeptExchanges
-        ) * SECTIONS_PER_EXCHANGE;
-    }
-
     function syncAfterPrune(reason) {
         scheduleConversationChromeSync({
             reason,
@@ -46,19 +35,25 @@ export function createPruneController({
     }
 
     function pruneOldSections(
-        historyKeptExchanges = state.settings.historyKeptExchanges
+        historyKeptExchanges = state.settings.historyKeptExchanges,
+        options = {}
     ) {
         clearCssVisibilityWindow();
 
-        const result = pruneOldSectionsBase(
-            getSafeHistoryKeptExchanges(historyKeptExchanges),
-            {},
-            {
-                ensureObserverAttached,
-                withDomMutationGuard,
-                refreshObservedSections: scheduleRefreshPostPruneState,
-            }
-        );
+        const runPrune = () =>
+            pruneOldSectionsBase(
+                getSafeHistoryKeptExchanges(historyKeptExchanges),
+                options,
+                {
+                    ensureObserverAttached,
+                    refreshObservedSections: scheduleRefreshPostPruneState,
+                }
+            );
+
+        const result =
+            typeof withDomMutationGuard === "function"
+                ? withDomMutationGuard(runPrune)
+                : runPrune();
 
         syncAfterPrune("prune-old-sections");
 
@@ -66,39 +61,19 @@ export function createPruneController({
     }
 
     function runInitialPrune(container, options = {}) {
-        const {
-            useStartupMask = true,
-            postPruneRefreshDelayMs = 0,
-        } = options;
+        const { postPruneRefreshDelayMs = 0 } = options;
 
-        return runInitialPruneBase(
-            container,
-            {
-                pruneOldSections,
-                refreshObservedSections: () =>
-                    scheduleRefreshPostPruneState({
-                        delayMs: postPruneRefreshDelayMs,
-                        reason: useStartupMask
-                            ? "initial-prune-refresh"
-                            : "navigation-initial-prune-refresh",
-                    }),
-                installStartupPruneMask: useStartupMask
-                    ? () => {
-                        installStartupPruneMask(
-                            container,
-                            getStartupMaskVisibleSectionsLimit()
-                        );
-                    }
-                    : null,
-                removeStartupPruneMask: useStartupMask
-                    ? removeStartupPruneMask
-                    : null,
-            },
-            {
-                useStartupMask,
-                postPruneRefreshDelayMs,
-            }
-        );
+        return runInitialPruneBase(container, {
+            pruneOldSections,
+            refreshObservedSections: () =>
+                scheduleRefreshPostPruneState({
+                    delayMs: postPruneRefreshDelayMs,
+                    reason:
+                        postPruneRefreshDelayMs > 0
+                            ? "navigation-initial-prune-refresh"
+                            : "initial-prune-refresh",
+                }),
+        });
     }
 
     /**
@@ -201,7 +176,9 @@ export function createPruneController({
                     return;
                 }
 
-                pruneOldSections(state.settings.historyKeptExchanges);
+                pruneOldSections(state.settings.historyKeptExchanges, {
+                    reason,
+                });
             } finally {
                 state.isAutoPruneScheduled = false;
                 state.debounceTimer = null;

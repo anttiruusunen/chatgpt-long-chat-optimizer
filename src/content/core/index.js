@@ -45,12 +45,10 @@ import {
 import { createPruneController } from "../pruning/pruneController.js";
 
 const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
+const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
 
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
-
-const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
-
 let pendingReplySettledPruneTimer = null;
 
 function clearPendingReplySettledPrune() {
@@ -126,7 +124,6 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
             ensureObserverAttached();
 
             runInitialPrune(container, {
-                useStartupMask: false,
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
                 ...options,
             });
@@ -170,20 +167,16 @@ function rearmInitialPruneForNavigation(reason) {
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (isLinkNavigationReason(reason)) {
-            waitForFreshContainerAndInitialPrune(previousContainer, {
-                useStartupMask: false,
-            });
+            waitForFreshContainerAndInitialPrune(previousContainer);
             return;
         }
 
         if (hasContainer) {
             runInitialPrune(getConversationContainer(), {
-                useStartupMask: false,
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         } else {
             waitForContainerAndInitialPrune({
-                useStartupMask: false,
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         }
