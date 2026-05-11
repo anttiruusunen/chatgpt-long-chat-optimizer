@@ -1204,50 +1204,6 @@
         }
     }
 
-    function getStoreNodesArray(store) {
-        const nodes = store?.nodes;
-
-        if (nodes instanceof Map) {
-            return Array.from(nodes.values());
-        }
-
-        if (Array.isArray(nodes)) {
-            return nodes;
-        }
-
-        if (nodes && typeof nodes === "object") {
-            return Object.values(nodes);
-        }
-
-        return [];
-    }
-
-    function getBranchForkProtectedNodeIds(store) {
-        const protectedIds = new Set();
-        const nodes = getStoreNodesArray(store);
-
-        for (const node of nodes) {
-            if (!node?.id || !Array.isArray(node.children)) {
-                continue;
-            }
-
-            if (node.children.length <= 1) {
-                continue;
-            }
-
-            protectedIds.add(node.id);
-
-            for (const childId of node.children) {
-                if (childId) {
-                    protectedIds.add(childId);
-                }
-            }
-        }
-
-        return protectedIds;
-    }
-
-
     function getNodeDirectFresh(store, nodeId) {
         if (!store || !nodeId) return null;
 
@@ -1510,6 +1466,320 @@
         };
     }
 
+    function nudgeComposerReactState({
+        reason = "store-prune-refresh",
+        removeDelayMs = 80,
+    } = {}) {
+        const result = {
+            ok: false,
+            reason,
+            attempted: [],
+        };
+
+        const selectors = [
+            '#prompt-textarea',
+            '[data-testid="composer"] textarea',
+            '[data-testid="composer"] [contenteditable="true"]',
+            'textarea',
+            '[contenteditable="true"]',
+        ];
+
+        let composer = null;
+
+        for (const selector of selectors) {
+            const candidate = document.querySelector(selector);
+
+            if (
+                candidate instanceof HTMLTextAreaElement ||
+                candidate instanceof HTMLInputElement ||
+                candidate?.isContentEditable
+            ) {
+                composer = candidate;
+                break;
+            }
+        }
+
+        if (!composer) {
+            result.attempted.push({
+                method: "find-composer",
+                ok: false,
+                reason: "composer not found",
+            });
+
+            return result;
+        }
+
+        const space = " ";
+
+        function fireKeyboard(target, type, key = " ") {
+            target.dispatchEvent(new KeyboardEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                key,
+                code: "Space",
+                keyCode: 32,
+                which: 32,
+            }));
+        }
+
+        function fireBeforeInput(target, inputType, data) {
+            target.dispatchEvent(new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType,
+                data,
+            }));
+        }
+
+        function fireInput(target, inputType, data) {
+            target.dispatchEvent(new InputEvent("input", {
+                bubbles: true,
+                cancelable: true,
+                inputType,
+                data,
+            }));
+        }
+
+        function fireChange(target) {
+            target.dispatchEvent(new Event("change", {
+                bubbles: true,
+                cancelable: true,
+            }));
+        }
+
+        try {
+            composer.focus?.({ preventScroll: true });
+        } catch { }
+
+        if (
+            composer instanceof HTMLTextAreaElement ||
+            composer instanceof HTMLInputElement
+        ) {
+            try {
+                const originalValue = composer.value;
+                const originalSelectionStart = composer.selectionStart;
+                const originalSelectionEnd = composer.selectionEnd;
+                const originalScrollTop = composer.scrollTop;
+
+                const valueSetter = Object.getOwnPropertyDescriptor(
+                    Object.getPrototypeOf(composer),
+                    "value"
+                )?.set;
+
+                if (typeof valueSetter !== "function") {
+                    throw new Error("native value setter unavailable");
+                }
+
+                fireKeyboard(composer, "keydown", " ");
+                fireBeforeInput(composer, "insertText", space);
+
+                valueSetter.call(composer, originalValue + space);
+
+                fireInput(composer, "insertText", space);
+                fireKeyboard(composer, "keyup", " ");
+
+                window.setTimeout(() => {
+                    try {
+                        fireKeyboard(composer, "keydown", "Backspace");
+                        fireBeforeInput(composer, "deleteContentBackward", null);
+
+                        valueSetter.call(composer, originalValue);
+
+                        fireInput(composer, "deleteContentBackward", null);
+                        fireKeyboard(composer, "keyup", "Backspace");
+                        fireChange(composer);
+
+                        try {
+                            if (
+                                Number.isFinite(originalSelectionStart) &&
+                                Number.isFinite(originalSelectionEnd)
+                            ) {
+                                composer.setSelectionRange(
+                                    originalSelectionStart,
+                                    originalSelectionEnd
+                                );
+                            }
+
+                            composer.scrollTop = originalScrollTop;
+                        } catch { }
+                    } catch (error) {
+                        console.debug("[thread-optimizer bridge] composer space removal failed", {
+                            reason,
+                            error: String(error?.message || error),
+                        });
+                    }
+                }, removeDelayMs);
+
+                result.ok = true;
+                result.attempted.push({
+                    method: "textarea-real-space-roundtrip",
+                    ok: true,
+                    removeDelayMs,
+                });
+
+                return result;
+            } catch (error) {
+                result.attempted.push({
+                    method: "textarea-real-space-roundtrip",
+                    ok: false,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        if (composer?.isContentEditable) {
+            try {
+                const originalHtml = composer.innerHTML;
+                const originalText = composer.textContent || "";
+
+                fireKeyboard(composer, "keydown", " ");
+                fireBeforeInput(composer, "insertText", space);
+
+                composer.textContent = originalText + space;
+
+                fireInput(composer, "insertText", space);
+                fireKeyboard(composer, "keyup", " ");
+
+                window.setTimeout(() => {
+                    try {
+                        fireKeyboard(composer, "keydown", "Backspace");
+                        fireBeforeInput(composer, "deleteContentBackward", null);
+
+                        composer.innerHTML = originalHtml;
+
+                        fireInput(composer, "deleteContentBackward", null);
+                        fireKeyboard(composer, "keyup", "Backspace");
+                        fireChange(composer);
+                    } catch (error) {
+                        console.debug("[thread-optimizer bridge] contenteditable space removal failed", {
+                            reason,
+                            error: String(error?.message || error),
+                        });
+                    }
+                }, removeDelayMs);
+
+                result.ok = true;
+                result.attempted.push({
+                    method: "contenteditable-real-space-roundtrip",
+                    ok: true,
+                    removeDelayMs,
+                });
+
+                return result;
+            } catch (error) {
+                result.attempted.push({
+                    method: "contenteditable-real-space-roundtrip",
+                    ok: false,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        return result;
+    }
+
+    function requestStoreBackedConversationRefresh(store, {
+        reason = "store-prune-refresh",
+        currentLeafId = null,
+    } = {}) {
+        const result = {
+            ok: false,
+            reason,
+            attempted: [],
+        };
+
+        if (!store) {
+            result.reason = "store unavailable";
+            return result;
+        }
+
+        const leafId =
+            currentLeafId ||
+            getStoreCurrentLeafId(store);
+
+        /*
+        * The goal is not to change conversation state.
+        * The goal is to hit a real store setter that React already listens to.
+        * Typing causes a React render; this tries to cause the store-side equivalent.
+        */
+        if (leafId && typeof store.setCurrentLeafId === "function") {
+            try {
+                store.setCurrentLeafId(leafId);
+
+                result.ok = true;
+                result.attempted.push({
+                    method: "setCurrentLeafId",
+                    ok: true,
+                    leafId,
+                });
+            } catch (error) {
+                result.attempted.push({
+                    method: "setCurrentLeafId",
+                    ok: false,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        if (typeof store.getBranch === "function") {
+            try {
+                store.getBranch(leafId);
+
+                result.attempted.push({
+                    method: "getBranch",
+                    ok: true,
+                    leafId,
+                });
+            } catch (error) {
+                result.attempted.push({
+                    method: "getBranch",
+                    ok: false,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        /*
+        * Last-resort browser-level signal. This does not mutate DOM and does not
+        * fake typing; it just gives any app listeners a harmless wake-up event.
+        */
+        try {
+            window.dispatchEvent(new CustomEvent("thread-optimizer:store-pruned", {
+                detail: {
+                    reason,
+                    currentLeafId: leafId,
+                },
+            }));
+
+            result.attempted.push({
+                method: "window.dispatchEvent",
+                ok: true,
+            });
+        } catch (error) {
+            result.attempted.push({
+                method: "window.dispatchEvent",
+                ok: false,
+                message: String(error?.message || error),
+            });
+        }
+
+        const composerNudgeResult = nudgeComposerReactState({
+            reason,
+        });
+
+        result.attempted.push({
+            method: "nudgeComposerReactState",
+            ok: composerNudgeResult.ok,
+            result: composerNudgeResult,
+        });
+
+        if (composerNudgeResult.ok) {
+            result.ok = true;
+        }
+
+        return result;
+    }
+
     const bridge = {
         __installed: true,
         __version: CONFIG.bridgeVersion,
@@ -1535,6 +1805,13 @@
 
         __knownPruningEnabled: false,
         __knownPrunedTurnCount: 0,
+        __knownHistoryKeptExchanges: 1,
+
+        __pendingStoreHistoryPrune: null,
+        __pendingStoreHistoryPruneScheduled: false,
+
+        __startupStorePruneScheduled: false,
+        __startupStorePruneCompletedForStore: null,
 
         __storeReadOptimizationRequested: true,
         __storeReadOptimizationDebug: false,
@@ -1747,6 +2024,201 @@
             ]);
         },
 
+        queueStoreHistoryPrune({
+            historyKeptExchanges = 1,
+            reason = "queued-store-prune",
+        } = {}) {
+            const keepCount = Math.max(
+                1,
+                Math.floor(Number(historyKeptExchanges) || 1)
+            );
+
+            this.__pendingStoreHistoryPrune = {
+                historyKeptExchanges: keepCount,
+                reason,
+                queuedAt: Date.now(),
+            };
+
+            console.debug("[thread-optimizer bridge] queued store history prune", {
+                reason,
+                historyKeptExchanges: keepCount,
+                hasStore: Boolean(this.__store),
+                pruningEnabled: this.__knownPruningEnabled,
+            });
+
+            return {
+                ok: true,
+                queued: true,
+                historyKeptExchanges: keepCount,
+                reason,
+            };
+        },
+
+        flushPendingStoreHistoryPrune(reason = "flush-pending-store-prune") {
+            if (this.__pendingStoreHistoryPruneScheduled) {
+                return {
+                    ok: true,
+                    flushed: false,
+                    reason: "flush already scheduled",
+                };
+            }
+
+            if (!this.__pendingStoreHistoryPrune) {
+                return {
+                    ok: true,
+                    flushed: false,
+                    reason: "no pending store history prune",
+                };
+            }
+
+            if (!this.__store) {
+                return {
+                    ok: false,
+                    flushed: false,
+                    reason: "store not registered",
+                };
+            }
+
+            this.__pendingStoreHistoryPruneScheduled = true;
+
+            window.setTimeout(() => {
+                this.__pendingStoreHistoryPruneScheduled = false;
+
+                const pending = this.__pendingStoreHistoryPrune;
+
+                if (!pending) {
+                    return;
+                }
+
+                if (!this.__store) {
+                    console.debug("[thread-optimizer bridge] kept pending store prune because store disappeared", {
+                        reason,
+                        pending,
+                    });
+                    return;
+                }
+
+                if (!this.__knownPruningEnabled) {
+                    console.debug("[thread-optimizer bridge] dropped pending store prune because pruning is disabled", {
+                        reason,
+                        pending,
+                    });
+
+                    this.__pendingStoreHistoryPrune = null;
+                    return;
+                }
+
+                this.__pendingStoreHistoryPrune = null;
+
+                const result = this.pruneStoreHistory({
+                    historyKeptExchanges: pending.historyKeptExchanges,
+                    reason: `${pending.reason}:${reason}`,
+                });
+
+                this.__lastStoreHistoryPruneResult = result;
+
+                console.debug("[thread-optimizer bridge] flushed pending store history prune", {
+                    reason,
+                    pending,
+                    ok: result?.ok,
+                    historyKeptExchanges: result?.historyKeptExchanges,
+                    currentLeafId: result?.currentLeafId,
+                    branchNodeCount: result?.branchNodeCount,
+                    requestedDeleteCount: result?.deleteNodeIds?.length || 0,
+                    deletedCount: result?.deleted?.length || 0,
+                    failedCount: result?.failed?.length || 0,
+                });
+            }, 0);
+
+            return {
+                ok: true,
+                flushed: false,
+                scheduled: true,
+                reason,
+                pending: this.__pendingStoreHistoryPrune,
+            };
+        },
+
+        scheduleStartupStorePrune(reason = "store-registered") {
+            if (!this.__knownPruningEnabled) {
+                console.debug("[thread-optimizer bridge] skipped startup store prune because pruning is disabled", {
+                    reason,
+                    historyKeptExchanges: this.__knownHistoryKeptExchanges,
+                });
+
+                return {
+                    ok: true,
+                    scheduled: false,
+                    reason: "pruning disabled",
+                };
+            }
+
+            if (!this.__store) {
+                return {
+                    ok: false,
+                    scheduled: false,
+                    reason: "store not registered",
+                };
+            }
+
+            if (this.__startupStorePruneScheduled) {
+                return {
+                    ok: true,
+                    scheduled: false,
+                    reason: "startup store prune already scheduled",
+                };
+            }
+
+            if (this.__startupStorePruneCompletedForStore === this.__store) {
+                return {
+                    ok: true,
+                    scheduled: false,
+                    reason: "startup store prune already completed for this store",
+                };
+            }
+
+            this.__startupStorePruneScheduled = true;
+
+            window.setTimeout(() => {
+                this.__startupStorePruneScheduled = false;
+
+                if (!this.__knownPruningEnabled || !this.__store) {
+                    console.debug("[thread-optimizer bridge] canceled startup store prune", {
+                        reason,
+                        pruningEnabled: this.__knownPruningEnabled,
+                        hasStore: Boolean(this.__store),
+                    });
+                    return;
+                }
+
+                const result = this.pruneStoreHistory({
+                    historyKeptExchanges: this.__knownHistoryKeptExchanges,
+                    reason: `startup:${reason}`,
+                });
+
+                this.__startupStorePruneCompletedForStore = this.__store;
+                this.__lastStoreHistoryPruneResult = result;
+
+                console.debug("[thread-optimizer bridge] startup store prune completed", {
+                    reason,
+                    ok: result?.ok,
+                    historyKeptExchanges: result?.historyKeptExchanges,
+                    currentLeafId: result?.currentLeafId,
+                    branchNodeCount: result?.branchNodeCount,
+                    requestedDeleteCount: result?.deleteNodeIds?.length || 0,
+                    deletedCount: result?.deleted?.length || 0,
+                    failedCount: result?.failed?.length || 0,
+                });
+            }, 0);
+
+            return {
+                ok: true,
+                scheduled: true,
+                reason,
+                historyKeptExchanges: this.__knownHistoryKeptExchanges,
+            };
+        },
+
         registerStore(store, meta = null) {
             const validation = validateStoreCandidate(store);
 
@@ -1814,6 +2286,9 @@
                     console.log("[thread-optimizer bridge] re-applied store read optimization after store registration", result);
                 }
             }
+
+            this.flushPendingStoreHistoryPrune?.("registerStore");
+            this.scheduleStartupStorePrune?.("registerStore");
 
             return true;
         },
@@ -2083,6 +2558,18 @@
 
             if (result.deleted.length > 0) {
                 this.clearFullTopologyCaches?.("store-prune-complete");
+
+                window.setTimeout(() => {
+                    result.refreshResult = requestStoreBackedConversationRefresh(store, {
+                        reason: "store-prune-complete",
+                        currentLeafId,
+                    });
+
+                    console.debug("[thread-optimizer bridge] delayed store prune refresh completed", {
+                        reason,
+                        refreshResult: result.refreshResult,
+                    });
+                }, 100);
             }
 
             console.debug("[thread-optimizer bridge] store prune completed", {
@@ -2092,6 +2579,7 @@
                 requestedDeleteCount: deleteNodeIds.length,
                 deletedCount: result.deletedCount,
                 failedCount: result.failedCount,
+                refreshResult: result.refreshResult,
                 deletedSamples: result.deleted.slice(0, 20),
                 failedSamples: result.failed.slice(0, 20),
             });
@@ -2157,17 +2645,29 @@
             };
         },
 
-        setKnownPruningState({ enabled, prunedTurnCount } = {}) {
+        setKnownPruningState({
+            enabled,
+            prunedTurnCount,
+            historyKeptExchanges,
+        } = {}) {
             this.__knownPruningEnabled = Boolean(enabled);
 
             if (Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0) {
                 this.__knownPrunedTurnCount = prunedTurnCount;
             }
 
+            if (
+                Number.isFinite(historyKeptExchanges) &&
+                historyKeptExchanges >= 1
+            ) {
+                this.__knownHistoryKeptExchanges = Math.floor(historyKeptExchanges);
+            }
+
             return {
                 ok: true,
                 enabled: this.__knownPruningEnabled,
                 prunedTurnCount: this.__knownPrunedTurnCount,
+                historyKeptExchanges: this.__knownHistoryKeptExchanges,
                 visibleTurnCount: getVisibleConversationTurnCount(),
                 estimatedTurnCount: getEstimatedConversationTurnCount(),
                 minimumNodeCount: getExpectedMinimumStoreNodeCount(),
@@ -4377,24 +4877,6 @@
             Object.getPrototypeOf(value) === Object.prototype;
     }
 
-    function normalizeBridgeMessageId(messageId) {
-        if (typeof messageId !== "string") {
-            return null;
-        }
-
-        const normalized = messageId.trim();
-
-        if (!normalized) {
-            return null;
-        }
-
-        if (normalized.length > 300) {
-            return null;
-        }
-
-        return normalized;
-    }
-
     function isValidBridgeMessageEnvelope(event) {
         if (event.source !== window) return false;
         if (event.origin !== window.location.origin) return false;
@@ -4413,6 +4895,7 @@
         switch (data.type) {
             case "thread-optimizer:set-pruning-state": {
                 const prunedTurnCount = Number(data.prunedTurnCount);
+                const historyKeptExchanges = Number(data.historyKeptExchanges);
 
                 return {
                     ok: true,
@@ -4422,6 +4905,10 @@
                             Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0
                                 ? prunedTurnCount
                                 : 0,
+                        historyKeptExchanges:
+                            Number.isFinite(historyKeptExchanges) && historyKeptExchanges >= 1
+                                ? Math.floor(historyKeptExchanges)
+                                : 1,
                     },
                 };
             }
@@ -4500,12 +4987,31 @@
                 bridge.setKnownPruningState({
                     enabled: payload.enabled,
                     prunedTurnCount: payload.prunedTurnCount,
+                    historyKeptExchanges: payload.historyKeptExchanges,
                 });
+
+                bridge.flushPendingStoreHistoryPrune?.("pruning-state-updated");
+                bridge.scheduleStartupStorePrune?.("pruning-state-updated");
 
                 return;
             }
 
             if (data.type === "thread-optimizer:prune-store-history") {
+                if (!bridge.__store) {
+                    const queued = bridge.queueStoreHistoryPrune({
+                        historyKeptExchanges: payload.historyKeptExchanges,
+                        reason: payload.reason,
+                    });
+
+                    console.debug("[thread-optimizer bridge] queued store prune bridge request because store is unavailable", {
+                        ok: queued.ok,
+                        historyKeptExchanges: queued.historyKeptExchanges,
+                        reason: queued.reason,
+                    });
+
+                    return;
+                }
+
                 const result = bridge.pruneStoreHistory({
                     historyKeptExchanges: payload.historyKeptExchanges,
                     reason: payload.reason,
@@ -4580,6 +5086,11 @@
         bridge.__visibleMessagesVerificationDone = false;
         bridge.__visibleMessagesVerificationConversationKey = null;
         bridge.__lastVisibleMessagesVerificationResult = null;
+
+        bridge.__pendingStoreHistoryPrune = null;
+        bridge.__pendingStoreHistoryPruneScheduled = false;
+        bridge.__startupStorePruneScheduled = false;
+        bridge.__startupStorePruneCompletedForStore = null;
     }
 
     function shouldAdvanceStoreEpoch(reason) {

@@ -24,6 +24,10 @@ export function syncPruningStateToPageBridge(retries = 10) {
             prunedTurnCount: state.featureFlags.pruning
                 ? state.hiddenCount || 0
                 : 0,
+            historyKeptExchanges: Math.max(
+                1,
+                Math.floor(Number(state.settings?.historyKeptExchanges) || 1)
+            ),
         });
 
         return;
