@@ -2,66 +2,8 @@ import { debugLog } from "../core/logger";
 import { getChatStorePageBridgeToken } from "./bridgeBootstrap.js";
 
 const RECORD_SOURCE = "thread-optimizer";
-const RECORD_BATCH_TYPE = "thread-optimizer:prune-react-message-ids";
+const STORE_PRUNE_REQUEST_TYPE = "thread-optimizer:prune-store-history";
 const VISIBLE_MESSAGES_READY_TYPE = "thread-optimizer:visible-messages-ready";
-
-const MAX_MESSAGE_ID_LENGTH = 300;
-
-/**
- * Extract a stable ChatGPT message id from a DOM node.
- *
- * The DOM shape is inconsistent:
- * - sometimes the id is on the section itself
- * - sometimes on a nested child
- * - sometimes on a parent wrapper
- *
- * We search in that order to maximize compatibility.
- */
-export function extractMessageId(section) {
-    if (!(section instanceof HTMLElement)) {
-        return null;
-    }
-
-    // 1. direct
-    const direct =
-        section.getAttribute("data-message-id") ||
-        section.dataset.messageId;
-
-    if (direct) return direct;
-
-    // 2. nested
-    const child = section.querySelector("[data-message-id]");
-    if (child instanceof HTMLElement) {
-        const id = child.getAttribute("data-message-id");
-        if (id) return id;
-    }
-
-    // 3. ancestor (critical for some ChatGPT layouts)
-    let parent = section.parentElement;
-    while (parent instanceof HTMLElement) {
-        const id =
-            parent.getAttribute("data-message-id") ||
-            parent.dataset.messageId;
-
-        if (id) return id;
-
-        parent = parent.parentElement;
-    }
-
-    return null;
-}
-
-function normalizeMessageId(messageId) {
-    if (typeof messageId !== "string") return null;
-
-    const normalized = messageId.trim();
-
-    if (!normalized || normalized.length > MAX_MESSAGE_ID_LENGTH) {
-        return null;
-    }
-
-    return normalized;
-}
 
 /**
  * Send a message to the page-context bridge.
@@ -98,39 +40,21 @@ export function postThreadOptimizerBridgeMessage(message) {
     return true;
 }
 
-export function pruneSectionsWithReactStoreBridge(sections, {
+export function requestStoreHistoryPrune({
+    historyKeptExchanges = 1,
     reason = "content-prune",
 } = {}) {
-    const messageIds = [];
-
-    for (const section of sections) {
-        const messageId = normalizeMessageId(extractMessageId(section));
-
-        if (messageId) {
-            messageIds.push(messageId);
-        }
-    }
-
-    const uniqueMessageIds = Array.from(new Set(messageIds));
-
-    if (uniqueMessageIds.length === 0) {
-        return {
-            posted: false,
-            messageIds: [],
-            reason: "no valid message ids found",
-        };
-    }
+    const keepCount = Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
 
     const posted = postThreadOptimizerBridgeMessage({
-        type: RECORD_BATCH_TYPE,
-        messageIds: uniqueMessageIds,
+        type: STORE_PRUNE_REQUEST_TYPE,
+        historyKeptExchanges: keepCount,
         reason,
     });
 
     return {
         posted,
-        messageIds: uniqueMessageIds,
-        count: uniqueMessageIds.length,
+        historyKeptExchanges: keepCount,
         reason: posted ? null : "failed to post bridge message",
     };
 }

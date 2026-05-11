@@ -33,9 +33,12 @@ import {
     preserveScrollAfterReprune,
 } from "./pruneScroll.js";
 import {
-    pruneSectionsWithReactStoreBridge,
+    requestStoreHistoryPrune,
 } from "../bridge/chatStoreBridgeClient.js";
-import { isIncompleteAssistantSection } from "../streaming/assistantSignals.js";
+import {
+    hasAssistantFeedbackState,
+    isIncompleteAssistantSection,
+} from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 
 const VISIBLE_EXCHANGES = 1;
@@ -110,51 +113,47 @@ function refreshPruneChrome({
     return placeholderChanged;
 }
 
-function getLatestIncompleteAssistantSection(sections) {
+function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
 
-    if (
-        latestSection?.getAttribute("data-turn") === "assistant" &&
-        isIncompleteAssistantSection(latestSection)
-    ) {
-        return latestSection;
+    if (latestSection?.getAttribute("data-turn") !== "assistant") {
+        return null;
+    }
+
+    if (isIncompleteAssistantSection(latestSection)) {
+        return "latest-assistant-incomplete";
+    }
+
+    if (hasAssistantFeedbackState(latestSection)) {
+        return "latest-assistant-feedback";
     }
 
     return null;
 }
 
-/**
- * Permanently prunes sections that exceed the recoverable soft-prune buffer.
- *
- * Important:
- * This no longer hard-removes DOM nodes. It sends message ids to the page
- * bridge, which deletes the matching ChatGPT store nodes via deleteNode().
- * React then owns DOM reconciliation.
- */
-function reactPruneSectionsWithBridge(
-    sections,
-    {
-        reason = "react-prune-overflow",
-    } = {}
-) {
-    const candidates = sections.filter(
-        (section) => section instanceof HTMLElement
+function getAssistantFeedbackSections(sections) {
+    return sections.filter(
+        (section) =>
+            section instanceof HTMLElement &&
+            section.getAttribute("data-turn") === "assistant" &&
+            hasAssistantFeedbackState(section)
     );
+}
 
-    if (candidates.length === 0) {
-        return {
-            prunedCount: 0,
-            posted: false,
-            deferred: false,
-            messageIds: [],
-            reason: "no candidate sections",
-        };
-    }
-
+/**
+ * Requests a store-native prune from the page bridge.
+ *
+ * DOM sections are deliberately ignored here. The page-context bridge owns
+ * selecting nodes to delete by traversing the active ChatGPT store branch from
+ * currentLeafId backwards.
+ */
+function requestStorePruneWithBridge({
+    historyKeptExchanges = state.settings.historyKeptExchanges,
+    reason = "store-prune",
+} = {}) {
     if (isReplyStreaming()) {
-        debugLog("Prune: deferred React store pruning during active reply", {
-            sections: sections.length,
-            candidates: candidates.length,
+        debugLog("Prune: deferred store pruning during active reply", {
+            historyKeptExchanges,
             reason,
         });
 
@@ -162,66 +161,52 @@ function reactPruneSectionsWithBridge(
             prunedCount: 0,
             posted: false,
             deferred: true,
-            messageIds: [],
             reason: "reply streaming",
         };
     }
 
-    const result = pruneSectionsWithReactStoreBridge(candidates, {
+    const result = requestStoreHistoryPrune({
+        historyKeptExchanges,
         reason,
     });
 
-    const prunedCount = result?.posted
-        ? result.messageIds?.length || 0
-        : 0;
-
-    debugLog("Prune: sent sections to React store prune", {
-        sections: sections.length,
-        candidates: candidates.length,
-        prunedCount,
-        posted: Boolean(result?.posted),
-        messageIds: result?.messageIds || [],
-        reason: result?.reason || reason,
+    debugLog("Prune: requested store-native history prune", {
+        historyKeptExchanges: result.historyKeptExchanges,
+        posted: Boolean(result.posted),
+        reason: result.reason || reason,
     });
 
     return {
         ...result,
-        prunedCount,
+        prunedCount: 0,
+        deferred: false,
     };
 }
 
 export function enforceSoftPrunedLimit() {
-    const maxSoftPrunedSections = getSoftPrunedSectionsLimit();
+    /*
+     * Store pruning is now authoritative. Do not hard-prune DOM sections from
+     * the content script and do not extract message ids from detached shells.
+     */
+    const staleSoftPrunedCount = state.softPrunedSections.length;
+    const staleDeferredCount = getDeferredReactPruneSections().length;
 
-    if (state.softPrunedSections.length > maxSoftPrunedSections) {
-        const overflowCount =
-            state.softPrunedSections.length - maxSoftPrunedSections;
-        const overflowSections = state.softPrunedSections.splice(0, overflowCount);
-        const pruneResult = reactPruneSectionsWithBridge(overflowSections, {
-            reason: "soft-pruned-overflow",
-        });
+    state.softPrunedSections = [];
+    state.deferredReactPruneSections = [];
+    updateHiddenCounts();
 
-        if (pruneResult.deferred) {
-            state.deferredReactPruneSections = [
-                ...getDeferredReactPruneSections(),
-                ...overflowSections,
-            ];
-        } else {
-            state.hardEvictedCount += pruneResult.prunedCount || 0;
-        }
-
-        debugLog("Prune: React-pruned soft-pruned overflow sections", {
-            overflowCount,
-            softPrunedRemaining: state.softPrunedSections.length,
-            maxSoftPrunedSections,
-            reactPrunedCount: pruneResult.prunedCount || 0,
-            hardEvictedCount: state.hardEvictedCount,
+    if (staleSoftPrunedCount > 0 || staleDeferredCount > 0) {
+        debugLog("Prune: cleared stale DOM-side prune buffers", {
+            staleSoftPrunedCount,
+            staleDeferredCount,
             totalHiddenCount: state.totalHiddenCount,
-            posted: Boolean(pruneResult.posted),
         });
     }
 
-    updateHiddenCounts();
+    return requestStorePruneWithBridge({
+        historyKeptExchanges: state.settings.historyKeptExchanges,
+        reason: "apply-store-pruned-limit",
+    });
 }
 
 export function restoreOneExchangeFromSoftPruned({
@@ -465,153 +450,99 @@ export function pruneOldSections(
     const container = getConversationContainer();
     if (!container) {
         console.warn("[Thread Optimizer] No conversation container found");
-        return { visibleSectionsChanged: false, placeholderChanged: false };
+        return {
+            visibleSectionsChanged: false,
+            placeholderChanged: false,
+            initialPruneDeferred: true,
+            reason: "no-conversation-container",
+        };
     }
 
     const currentVisibleSections = getConversationSections();
     if (!currentVisibleSections.length) {
         console.warn("[Thread Optimizer] No sections available");
-        return { visibleSectionsChanged: false, placeholderChanged: false };
+        return {
+            visibleSectionsChanged: false,
+            placeholderChanged: false,
+            initialPruneDeferred: true,
+            reason: "no-sections",
+        };
     }
 
-    const detachedSoftPrunedSections = state.softPrunedSections.filter(
-        (section) =>
-            section instanceof Element &&
-            !getConversationTurnRoot(section)?.isConnected
-    );
+    const latestAssistantPruneDeferralReason =
+        getLatestAssistantPruneDeferralReason(currentVisibleSections);
 
-    const deferredReactPruneSections = getDeferredReactPruneSections().filter(
-        (section) =>
-            section instanceof Element &&
-            !getConversationTurnRoot(section)?.isConnected
-    );
+    if (latestAssistantPruneDeferralReason) {
+        debugLog("Prune: deferred because latest assistant is unstable", {
+            reason: latestAssistantPruneDeferralReason,
+        });
 
-    const logicalSections = deferredReactPruneSections
-        .concat(detachedSoftPrunedSections, currentVisibleSections);
+        return {
+            visibleSectionsChanged: false,
+            placeholderChanged: false,
+            initialPruneDeferred: true,
+            reason: latestAssistantPruneDeferralReason,
+        };
+    }
 
-    const visibleSectionsLimit = getVisibleSectionsLimit();
-    const softPrunedSectionsLimit =
-        getSoftPrunedSectionsLimit(historyKeptExchanges);
-
-    const latestVisibleSections =
-        currentVisibleSections.slice(-visibleSectionsLimit);
-    const protectedVisibleSections = getProtectedVisibleSections();
-    const incompleteLatestAssistantSection =
-        getLatestIncompleteAssistantSection(currentVisibleSections);
-
-    const targetVisibleSet = new Set([
-        ...latestVisibleSections,
-        ...protectedVisibleSections,
-        ...(incompleteLatestAssistantSection
-            ? [incompleteLatestAssistantSection]
-            : []),
-    ]);
-
-    const pruneableLogicalSections = logicalSections.filter(
-        (section) => !targetVisibleSet.has(section)
-    );
-
-    const evictCutoff = Math.max(
-        0,
-        pruneableLogicalSections.length - softPrunedSectionsLimit
-    );
-
-    const sectionsToReactPruneNow = pruneableLogicalSections.slice(0, evictCutoff);
-    const sectionsToSoftPrune = pruneableLogicalSections.slice(evictCutoff);
-    const sectionsToKeepVisible = logicalSections.filter((section) =>
-        targetVisibleSet.has(section)
-    );
-
-    let visibleSectionsChanged = false;
     let placeholderChanged = false;
+    let visibleSectionsChanged = false;
 
     withDomMutationGuard(() => {
         const previousHiddenCount = state.hiddenCount;
         const previousTotalHiddenCount = state.totalHiddenCount;
         const previousHardEvictedCount = state.hardEvictedCount;
-        const previousSoftPrunedSections = state.softPrunedSections;
+        const staleSoftPrunedCount = state.softPrunedSections.length;
+        const staleDeferredCount = getDeferredReactPruneSections().length;
 
         removePlaceholder();
         removeTopRestoreSentinel();
         removeBottomPruneSentinel();
 
-        const reactPruneResult = reactPruneSectionsWithBridge(
-            sectionsToReactPruneNow,
-            {
-                reason: "prune-old-sections",
-            }
-        );
+        state.softPrunedSections = [];
+        state.deferredReactPruneSections = [];
 
-        const softPrunedCount = softPruneSections(sectionsToSoftPrune);
-
-        const sectionsToRestore = sectionsToKeepVisible.filter((section) => {
-            const turnRoot = getConversationTurnRoot(section);
-            return !turnRoot?.isConnected;
+        const pruneResult = requestStorePruneWithBridge({
+            historyKeptExchanges,
+            reason: "prune-store-history",
         });
 
-        const restoredCount = restoreSoftPrunedSections(
-            sectionsToRestore,
-            container
-        );
-
+        updateHiddenCounts();
         invalidateConversationDomCache();
 
-        if (reactPruneResult.deferred) {
-            state.deferredReactPruneSections = [
-                ...getDeferredReactPruneSections(),
-                ...sectionsToReactPruneNow,
-            ];
-            state.softPrunedSections = [...sectionsToSoftPrune];
-        } else {
-            state.deferredReactPruneSections = [];
-            state.softPrunedSections = [...sectionsToSoftPrune];
-            state.hardEvictedCount += reactPruneResult.prunedCount || 0;
-        }
-
-        updateHiddenCounts();
+        placeholderChanged = refreshPruneChrome({
+            showPlaceholder,
+            refreshObservedSections,
+            visibleSectionsChanged: false,
+        });
 
         const countsChanged =
             state.hiddenCount !== previousHiddenCount ||
             state.totalHiddenCount !== previousTotalHiddenCount ||
             state.hardEvictedCount !== previousHardEvictedCount ||
-            previousSoftPrunedSections.length !== state.softPrunedSections.length ||
-            previousSoftPrunedSections.some(
-                (section, index) => state.softPrunedSections[index] !== section
-            );
+            staleSoftPrunedCount > 0 ||
+            staleDeferredCount > 0;
 
-        visibleSectionsChanged =
-            (reactPruneResult.prunedCount || 0) > 0 ||
-            softPrunedCount > 0 ||
-            restoredCount > 0;
+        visibleSectionsChanged = Boolean(pruneResult.posted);
 
-        placeholderChanged = refreshPruneChrome({
-            showPlaceholder,
-            refreshObservedSections,
-            visibleSectionsChanged,
-        });
-
-        const domChanged = visibleSectionsChanged || placeholderChanged;
-
-        if (!domChanged && !countsChanged) {
+        if (!visibleSectionsChanged && !placeholderChanged && !countsChanged) {
             debugLog("Prune: skipped no-op cycle", {
                 visibleSections: currentVisibleSections.length,
-                protectedVisibleSections: protectedVisibleSections.length,
-                latestVisibleSections: latestVisibleSections.length,
-                softPrunedSections: state.softPrunedSections.length,
                 totalHiddenCount: state.totalHiddenCount,
                 hardEvictedCount: state.hardEvictedCount,
+                historyKeptExchanges,
+                reason: pruneResult.reason,
             });
             return;
         }
 
-        debugLog("Prune: prune cycle completed", {
+        debugLog("Prune: store-native prune cycle completed", {
             visibleSections: currentVisibleSections.length,
-            protectedVisibleSections: protectedVisibleSections.length,
-            latestVisibleSections: latestVisibleSections.length,
-            reactPrunedSections: reactPruneResult.prunedCount || 0,
-            reactPrunePosted: Boolean(reactPruneResult.posted),
-            newlySoftPrunedSections: softPrunedCount,
-            restoredSections: restoredCount,
+            historyKeptExchanges,
+            storePrunePosted: Boolean(pruneResult.posted),
+            deferred: Boolean(pruneResult.deferred),
+            staleSoftPrunedCount,
+            staleDeferredCount,
             totalHiddenCount: state.totalHiddenCount,
             hardEvictedCount: state.hardEvictedCount,
             placeholderChanged,
@@ -659,6 +590,16 @@ export function runInitialPrune(
                 state.settings.historyKeptExchanges,
                 { showPlaceholder: false }
             );
+
+            if (result?.initialPruneDeferred) {
+                debugLog("Prune: initial prune deferred", {
+                    reason: result.reason,
+                    useStartupMask,
+                });
+
+                refreshObservedSections?.();
+                return;
+            }
 
             state.didInitialPrune = true;
 

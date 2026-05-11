@@ -86,3 +86,18 @@ export function getClosestComposerSubmitButton(target) {
         target.closest('button[aria-label="Send"]')
     );
 }
+
+export function hasAssistantFeedbackState(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    const text = section.textContent || "";
+
+    return (
+        Boolean(section.querySelector('[data-testid="paragen-feedback-title"]')) ||
+        Boolean(section.querySelector('[data-paragen-root="true"]')) ||
+        text.includes("You're giving feedback on a new version of ChatGPT") ||
+        text.includes("Which response do you prefer?")
+    );
+}

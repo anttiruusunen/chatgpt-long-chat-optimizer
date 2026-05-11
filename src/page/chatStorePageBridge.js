@@ -118,7 +118,7 @@
 
     const MESSAGE_TYPES = new Set([
         "thread-optimizer:set-pruning-state",
-        "thread-optimizer:prune-react-message-ids",
+        "thread-optimizer:prune-store-history",
         "thread-optimizer:log-store-performance",
         "thread-optimizer:set-store-read-optimization",
         "thread-optimizer:visible-messages-ready",
@@ -1204,6 +1204,312 @@
         }
     }
 
+    function getStoreNodesArray(store) {
+        const nodes = store?.nodes;
+
+        if (nodes instanceof Map) {
+            return Array.from(nodes.values());
+        }
+
+        if (Array.isArray(nodes)) {
+            return nodes;
+        }
+
+        if (nodes && typeof nodes === "object") {
+            return Object.values(nodes);
+        }
+
+        return [];
+    }
+
+    function getBranchForkProtectedNodeIds(store) {
+        const protectedIds = new Set();
+        const nodes = getStoreNodesArray(store);
+
+        for (const node of nodes) {
+            if (!node?.id || !Array.isArray(node.children)) {
+                continue;
+            }
+
+            if (node.children.length <= 1) {
+                continue;
+            }
+
+            protectedIds.add(node.id);
+
+            for (const childId of node.children) {
+                if (childId) {
+                    protectedIds.add(childId);
+                }
+            }
+        }
+
+        return protectedIds;
+    }
+
+
+    function getNodeDirectFresh(store, nodeId) {
+        if (!store || !nodeId) return null;
+
+        const nodes = store.nodes;
+        if (!nodes) return null;
+
+        if (nodes instanceof Map) {
+            return nodes.get(nodeId) ?? null;
+        }
+
+        if (Array.isArray(nodes)) {
+            for (let i = 0; i < nodes.length; i += 1) {
+                const candidate = nodes[i];
+                if (candidate?.id === nodeId) return candidate;
+            }
+
+            return null;
+        }
+
+        if (typeof nodes === "object") {
+            return nodes[nodeId] ?? null;
+        }
+
+        return null;
+    }
+
+    function getStoreRootId(store) {
+        try {
+            const rootId = typeof store?.rootId === "function"
+                ? store.rootId()
+                : store?.rootId;
+
+            return typeof rootId === "string" && rootId ? rootId : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function getNodeParentId(node) {
+        if (!node || typeof node !== "object") return null;
+
+        return (
+            node.parent ||
+            node.parentId ||
+            node.parent_id ||
+            node.parentNodeId ||
+            node.parent_node_id ||
+            node.message?.parent ||
+            node.message?.parentId ||
+            node.message?.parent_id ||
+            node.message?.parentNodeId ||
+            node.message?.parent_node_id ||
+            node.metadata?.parent ||
+            node.metadata?.parentId ||
+            node.metadata?.parent_id ||
+            node.message?.metadata?.parent ||
+            node.message?.metadata?.parentId ||
+            node.message?.metadata?.parent_id ||
+            null
+        );
+    }
+
+    function summarizeStoreNode(node) {
+        if (!node || typeof node !== "object") {
+            return null;
+        }
+
+        return {
+            id: node.id ?? null,
+            parentId: getNodeParentId(node),
+            role:
+                node.message?.author?.role ||
+                node.message?.role ||
+                node.author?.role ||
+                node.role ||
+                null,
+            messageId:
+                node.message?.id ||
+                node.message?.message_id ||
+                node.message?.metadata?.message_id ||
+                null,
+            childCount: Array.isArray(node.children) ? node.children.length : 0,
+            status: node.message?.status ?? node.status ?? null,
+        };
+    }
+
+    function getStoreNodeAuthorRole(node) {
+        if (!node || typeof node !== "object") return null;
+
+        return (
+            node.message?.author?.role ||
+            node.message?.role ||
+            node.author?.role ||
+            node.role ||
+            node.metadata?.author_role ||
+            node.message?.metadata?.author_role ||
+            null
+        );
+    }
+
+    /**
+     * Keeps the newest N exchanges from the active leaf.
+     *
+     * Exchange counting rule:
+     * - Walk newest -> oldest from currentLeafId.
+     * - Keep every node encountered.
+     * - Count an exchange only when a user node is encountered.
+     *
+     * So historyKeptExchanges = 1 keeps:
+     * - latest assistant node
+     * - its parent user node
+     *
+     * If the latest node is a user node while waiting/streaming,
+     * that user node itself counts as the newest exchange.
+     */
+    function collectRecentExchangeKeepNodeIdsFromActiveBranch(
+        store,
+        {
+            historyKeptExchanges = 1,
+            maxDepth = 10000,
+        } = {}
+    ) {
+        const keepNodeIds = new Set();
+        const currentLeafId = getStoreCurrentLeafId(store);
+
+        let keptExchangeCount = 0;
+        let walkedNodeCount = 0;
+        let stopReason = "unknown";
+
+        if (!currentLeafId) {
+            return {
+                keepNodeIds,
+                currentLeafId: null,
+                keptExchangeCount,
+                walkedNodeCount,
+                stopReason: "missing current leaf",
+            };
+        }
+
+        let node = getNodeDirectFresh(store, currentLeafId);
+        const seen = new Set();
+
+        while (node?.id && walkedNodeCount < maxDepth) {
+            if (seen.has(node.id)) {
+                stopReason = "cycle detected";
+                break;
+            }
+
+            seen.add(node.id);
+            keepNodeIds.add(node.id);
+            walkedNodeCount += 1;
+
+            const role = getStoreNodeAuthorRole(node);
+
+            if (role === "user") {
+                keptExchangeCount += 1;
+
+                if (keptExchangeCount >= historyKeptExchanges) {
+                    stopReason = "kept requested exchanges";
+                    break;
+                }
+            }
+
+            const parentId = getNodeParentId(node);
+
+            if (!parentId) {
+                stopReason = "reached root";
+                break;
+            }
+
+            node = getNodeDirectFresh(store, parentId);
+        }
+
+        if (walkedNodeCount >= maxDepth) {
+            stopReason = "max depth reached";
+        }
+
+        return {
+            keepNodeIds,
+            currentLeafId,
+            keptExchangeCount,
+            walkedNodeCount,
+            stopReason,
+        };
+    }
+
+    function getActiveStoreBranchNewestFirst(store, { maxDepth = 10000 } = {}) {
+        const currentLeafId = getStoreCurrentLeafId(store);
+        const nodes = [];
+        const seen = new Set();
+
+        let node = getNodeDirectFresh(store, currentLeafId);
+
+        for (let depth = 0; node?.id && depth < maxDepth; depth += 1) {
+            if (seen.has(node.id)) {
+                break;
+            }
+
+            seen.add(node.id);
+            nodes.push(node);
+
+            const parentId = getNodeParentId(node);
+            if (!parentId) break;
+
+            node = getNodeDirectFresh(store, parentId);
+        }
+
+        return {
+            currentLeafId,
+            nodes,
+            truncated: nodes.length >= maxDepth,
+        };
+    }
+
+    function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } = {}) {
+        const beforeNode = getNodeDirectFresh(store, nodeId);
+        const beforeSummary = summarizeStoreNode(beforeNode);
+
+        if (!beforeNode?.id) {
+            return {
+                ok: false,
+                nodeId,
+                reason: "node not found",
+                beforeSummary,
+                afterSummary: null,
+            };
+        }
+
+        try {
+            store.deleteNode(nodeId);
+        } catch (error) {
+            return {
+                ok: false,
+                nodeId,
+                reason: String(error?.message || error),
+                beforeSummary,
+                afterSummary: summarizeStoreNode(getNodeDirectFresh(store, nodeId)),
+            };
+        }
+
+        const afterNode = getNodeDirectFresh(store, nodeId);
+        const afterSummary = summarizeStoreNode(afterNode);
+
+        if (afterNode?.id) {
+            return {
+                ok: false,
+                nodeId,
+                reason: "node still exists after delete",
+                beforeSummary,
+                afterSummary,
+            };
+        }
+
+        return {
+            ok: true,
+            nodeId,
+            reason,
+            beforeSummary,
+            afterSummary,
+        };
+    }
+
     const bridge = {
         __installed: true,
         __version: CONFIG.bridgeVersion,
@@ -1640,8 +1946,9 @@
             }
         },
 
-        pruneReactMessageIds(messageIds, {
-            reason = "react-prune",
+        pruneStoreHistory({
+            historyKeptExchanges = 1,
+            reason = "store-prune",
         } = {}) {
             const store = this.__store;
 
@@ -1649,106 +1956,145 @@
                 return {
                     ok: false,
                     reason: "store/deleteNode unavailable",
+                    historyKeptExchanges,
+                    currentLeafId: null,
+                    branchNodeCount: 0,
+                    keepNodeIds: [],
+                    deleteNodeIds: [],
                     deleted: [],
                     failed: [],
                 };
             }
 
-            const uniqueIds = Array.from(new Set(
-                Array.isArray(messageIds) ? messageIds.filter(Boolean) : []
-            ));
+            const keepCount = Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
+            const rootId = getStoreRootId(store);
+            const currentLeafId = getStoreCurrentLeafId(store);
+
+            const branch = getActiveStoreBranchNewestFirst(store);
+            const branchNodes = branch.nodes;
+
+            if (!currentLeafId || branchNodes.length === 0) {
+                return {
+                    ok: false,
+                    reason: "active branch unavailable",
+                    historyKeptExchanges: keepCount,
+                    currentLeafId,
+                    branchNodeCount: branchNodes.length,
+                    keepNodeIds: [],
+                    deleteNodeIds: [],
+                    deleted: [],
+                    failed: [],
+                };
+            }
+
+            const keepPlan = collectRecentExchangeKeepNodeIdsFromActiveBranch(store, {
+                historyKeptExchanges: keepCount,
+            });
+
+            const keepNodeIds = keepPlan.keepNodeIds;
+
+            keepNodeIds.add(currentLeafId);
+            if (rootId) keepNodeIds.add(rootId);
+
+            const deleteNodeIds = [];
+            const skipped = [];
+
+            for (const node of branchNodes) {
+                if (!node?.id) continue;
+
+                if (keepNodeIds.has(node.id)) {
+                    skipped.push({ nodeId: node.id, reason: "kept recent exchange/root" });
+                    continue;
+                }
+
+                deleteNodeIds.push(node.id);
+            }
 
             const result = {
                 ok: true,
                 reason,
-                requested: uniqueIds,
+                historyKeptExchanges: keepCount,
+                rootId,
+                currentLeafId,
+                branchNodeCount: branchNodes.length,
+                branchTruncated: branch.truncated,
+                keptExchangeCount: keepPlan.keptExchangeCount,
+                keepWalkedNodeCount: keepPlan.walkedNodeCount,
+                keepStopReason: keepPlan.stopReason,
+                keepNodeIds: Array.from(keepNodeIds),
+                deleteNodeIds,
+                skipped,
                 deleted: [],
                 failed: [],
             };
 
-            this.beginStoreTopologyMutation?.("react-prune");
+            console.debug("[thread-optimizer bridge] store exchange prune plan", {
+                reason,
+                historyKeptExchanges: keepCount,
+                rootId,
+                currentLeafId,
+                branchNodeCount: branchNodes.length,
+                keptExchangeCount: keepPlan.keptExchangeCount,
+                keepWalkedNodeCount: keepPlan.walkedNodeCount,
+                keepStopReason: keepPlan.stopReason,
+                keepCount: keepNodeIds.size,
+                deleteCount: deleteNodeIds.length,
+                keepSamples: Array.from(keepNodeIds).slice(0, 20),
+                deleteSamples: deleteNodeIds.slice(0, 25),
+                newestBranchSamples: branchNodes.slice(0, 12).map(summarizeStoreNode),
+            });
 
-            for (let i = uniqueIds.length - 1; i >= 0; i -= 1) {
-                const inputId = uniqueIds[i];
+            if (deleteNodeIds.length === 0) {
+                return result;
+            }
 
-                try {
-                    const node =
-                        this.__resolveNodeFast?.(inputId) ??
-                        getNodeDirect(store, inputId) ??
-                        store.getNodeIfExists?.(inputId) ??
-                        null;
+            this.beginStoreTopologyMutation?.("store-prune");
 
-                    if (!node?.id) {
-                        result.failed.push({
-                            inputId,
-                            reason: "node not found",
-                        });
-                        continue;
+            const runDeletes = () => {
+                for (let i = deleteNodeIds.length - 1; i >= 0; i -= 1) {
+                    const nodeId = deleteNodeIds[i];
+                    const node = getNodeDirectFresh(store, nodeId);
+
+                    if (node?.id) {
+                        this.clearCachesForDeletedNode?.(node, nodeId);
                     }
 
-                    const currentLeafId =
-                        typeof store.currentLeafId === "function"
-                            ? store.currentLeafId()
-                            : store.currentLeafId;
+                    const deleteResult = deleteStoreNodeFresh(store, nodeId, {
+                        reason,
+                    });
 
-                    if (node.id === currentLeafId) {
-                        result.failed.push({
-                            inputId,
-                            nodeId: node.id,
-                            reason: "refusing to delete current leaf",
-                        });
-                        continue;
+                    if (deleteResult.ok) {
+                        result.deleted.push(deleteResult);
+                    } else {
+                        result.failed.push(deleteResult);
                     }
-
-                    this.clearCachesForDeletedNode?.(node, inputId);
-
-                    this.withOriginalTopologyMethods?.(() => {
-                        store.deleteNode(node.id);
-                    });
-
-                    // Important: purge before verification.
-                    // Otherwise wrapped getNodeIfExists can return the deleted node from cache.
-                    const purgeResult = this.clearCachesForDeletedNode?.(node, inputId);
-
-                    const stillExists = getNodeDirect(store, node.id) ?? null;
-
-                    if (stillExists?.id) {
-                        result.failed.push({
-                            inputId,
-                            nodeId: node.id,
-                            reason: "node still exists after delete",
-                        });
-                        continue;
-                    }
-
-                    result.deleted.push({
-                        inputId,
-                        nodeId: node.id,
-                        purgedCacheEntries: purgeResult?.deletedEntries ?? 0,
-                        purgedAliases: purgeResult?.aliases ?? [],
-                    });
-                } catch (error) {
-                    result.failed.push({
-                        inputId,
-                        reason: String(error?.message || error),
-                    });
                 }
+            };
+
+            if (typeof this.withOriginalTopologyMethods === "function") {
+                this.withOriginalTopologyMethods(runDeletes);
+            } else {
+                runDeletes();
             }
 
             result.deletedCount = result.deleted.length;
             result.failedCount = result.failed.length;
             result.ok = result.failed.length === 0;
 
-            const deletedNodeIds = result.deleted
-                .map((entry) => entry.nodeId)
-                .filter(Boolean);
-
-            if (deletedNodeIds.length > 0) {
-                result.repairResult =
-                    this.repairDeletedNodeReferences?.(deletedNodeIds) ?? null;
-
-                this.clearFullTopologyCaches?.("react-prune-complete");
+            if (result.deleted.length > 0) {
+                this.clearFullTopologyCaches?.("store-prune-complete");
             }
+
+            console.debug("[thread-optimizer bridge] store prune completed", {
+                reason,
+                ok: result.ok,
+                historyKeptExchanges: keepCount,
+                requestedDeleteCount: deleteNodeIds.length,
+                deletedCount: result.deletedCount,
+                failedCount: result.failedCount,
+                deletedSamples: result.deleted.slice(0, 20),
+                failedSamples: result.failed.slice(0, 20),
+            });
 
             return result;
         },
@@ -4080,32 +4426,20 @@
                 };
             }
 
-            case "thread-optimizer:prune-react-message-ids": {
-                const rawIds = Array.isArray(data.messageIds) ? data.messageIds : [];
-
-                const messageIds = Array.from(
-                    new Set(
-                        rawIds
-                            .map(normalizeBridgeMessageId)
-                            .filter(Boolean)
-                    )
-                );
-
-                if (messageIds.length === 0) {
-                    return {
-                        ok: false,
-                        reason: "no valid message ids",
-                    };
-                }
+            case "thread-optimizer:prune-store-history": {
+                const historyKeptExchanges = Number(data.historyKeptExchanges);
 
                 return {
                     ok: true,
                     value: {
-                        messageIds,
+                        historyKeptExchanges:
+                            Number.isFinite(historyKeptExchanges) && historyKeptExchanges >= 1
+                                ? Math.floor(historyKeptExchanges)
+                                : 1,
                         reason:
                             typeof data.reason === "string"
                                 ? data.reason.slice(0, 100)
-                                : "react-prune",
+                                : "store-prune",
                     },
                 };
             }
@@ -4171,14 +4505,23 @@
                 return;
             }
 
-            if (data.type === "thread-optimizer:prune-react-message-ids") {
-                const result = bridge.pruneReactMessageIds(payload.messageIds, {
+            if (data.type === "thread-optimizer:prune-store-history") {
+                const result = bridge.pruneStoreHistory({
+                    historyKeptExchanges: payload.historyKeptExchanges,
                     reason: payload.reason,
                 });
 
-                if (!result.ok) {
-                    console.debug("[thread-optimizer bridge] React prune had failures", result);
-                }
+                console.debug("[thread-optimizer bridge] store prune bridge result", {
+                    ok: result.ok,
+                    reason: result.reason,
+                    historyKeptExchanges: result.historyKeptExchanges,
+                    currentLeafId: result.currentLeafId,
+                    branchNodeCount: result.branchNodeCount,
+                    requestedDeleteCount: result.deleteNodeIds?.length || 0,
+                    deletedCount: result.deleted?.length || 0,
+                    failedCount: result.failed?.length || 0,
+                    result,
+                });
 
                 return;
             }
