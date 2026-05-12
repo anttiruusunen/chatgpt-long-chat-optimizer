@@ -10,6 +10,62 @@ import {
 
 const objectToString = Object.prototype.toString;
 
+const DECISIVE_VISIBLE_STORE_SCORE = 1_000_000;
+
+const HOT_FIBER_FIELDS = [
+    "stateNode",
+    "memoizedState",
+    "memoizedProps",
+    "pendingProps",
+    "updateQueue",
+    "dependencies",
+];
+
+const PRIORITY_GRAPH_KEYS = [
+    "store",
+    "chatStore",
+    "conversationStore",
+    "threadStore",
+    "tree",
+    "nodes",
+    "nodeMap",
+    "__nodeMap",
+    "rootId",
+    "currentLeafId",
+    "getNodeIfExists",
+    "messageIdToExistingNodeId",
+    "getNodeByIdOrMessageId",
+    "deleteNode",
+    "getBranch",
+    "props",
+    "children",
+    "value",
+    "current",
+    "memoizedState",
+    "memoizedProps",
+    "pendingProps",
+    "state",
+];
+
+const SKIPPED_GRAPH_KEYS = new Set([
+    "window",
+    "self",
+    "globalThis",
+    "ownerDocument",
+    "document",
+    "parentNode",
+    "parentElement",
+    "nextSibling",
+    "previousSibling",
+    "committed",
+    "loaded",
+    "userChoice",
+    "finished",
+    "ready",
+    "lost",
+    "return",
+]);
+
 export function shouldSkipObjectGraphValue(value) {
     const type = typeof value;
     if (value === null || (type !== "object" && type !== "function")) return true;
@@ -123,13 +179,98 @@ export function getGraphKeys(value) {
     return keys.concat(Object.getOwnPropertyNames(proto));
 }
 
+function getPrioritizedGraphKeys(value) {
+    const keys = getGraphKeys(value);
+
+    if (keys.length <= 1) {
+        return keys;
+    }
+
+    const seen = new Set();
+    const prioritized = [];
+
+    for (const key of PRIORITY_GRAPH_KEYS) {
+        if (keys.includes(key) && !seen.has(key)) {
+            seen.add(key);
+            prioritized.push(key);
+        }
+    }
+
+    for (const key of keys) {
+        if (!seen.has(key)) {
+            seen.add(key);
+            prioritized.push(key);
+        }
+    }
+
+    return prioritized;
+}
+
+function evaluateStoreCandidate(candidate) {
+    if (!hasAnyStoreMethodName(candidate) || !looksLikeStore(candidate)) {
+        return null;
+    }
+
+    const validation = validateStoreCandidate(candidate);
+
+    if (!validation.ok) {
+        rejectStore(candidate, validation.reason);
+        return null;
+    }
+
+    const scored = scoreStoreCandidate(candidate);
+
+    return {
+        store: candidate,
+        score: scored.score,
+        scored,
+        decisive: scored.score >= DECISIVE_VISIBLE_STORE_SCORE,
+    };
+}
+
+function maybeRecordBest(currentBest, candidateResult) {
+    if (!candidateResult) {
+        return currentBest;
+    }
+
+    if (!currentBest || candidateResult.score > currentBest.score) {
+        return candidateResult;
+    }
+
+    return currentBest;
+}
+
+function shouldReadAccessorKey(key) {
+    return key === "nodes" || key === "rootId" || key === "currentLeafId";
+}
+
+function readGraphChild(current, proto, key) {
+    if (SKIPPED_GRAPH_KEYS.has(key)) {
+        return undefined;
+    }
+
+    try {
+        const descriptor =
+            Object.getOwnPropertyDescriptor(current, key) ||
+            (proto ? Object.getOwnPropertyDescriptor(proto, key) : null);
+
+        if (descriptor?.get && !shouldReadAccessorKey(key)) {
+            return undefined;
+        }
+
+        return current[key];
+    } catch {
+        return undefined;
+    }
+}
+
 export function scanObjectGraphForStore(root, limits, budget = null) {
     const seen = new WeakSet();
     const queue = [root];
-    let visitedObjects = 0;
     const objectBudget = budget ?? { visitedObjects: 0 };
-    let bestStore = null;
-    let bestNodeCount = -1;
+
+    let visitedObjects = 0;
+    let best = null;
 
     for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
         const current = queue[queueIndex];
@@ -143,26 +284,21 @@ export function scanObjectGraphForStore(root, limits, budget = null) {
 
         if (objectBudget.visitedObjects > limits.maxObjects) break;
 
-        if (hasAnyStoreMethodName(current) && looksLikeStore(current)) {
-            const validation = validateStoreCandidate(current);
+        const candidateResult = evaluateStoreCandidate(current);
+        best = maybeRecordBest(best, candidateResult);
 
-            if (validation.ok) {
-                const scored = scoreStoreCandidate(current);
-
-                if (scored.score > bestNodeCount) {
-                    bestStore = current;
-                    bestNodeCount = scored.score;
-                }
-
-                continue;
-            }
-
-            rejectStore(current, validation.reason);
+        if (candidateResult?.decisive) {
+            return {
+                store: candidateResult.store,
+                score: candidateResult.score,
+                decisive: true,
+                visitedObjects,
+            };
         }
 
         let keys;
         try {
-            keys = getGraphKeys(current);
+            keys = getPrioritizedGraphKeys(current);
         } catch {
             continue;
         }
@@ -170,48 +306,7 @@ export function scanObjectGraphForStore(root, limits, budget = null) {
         const proto = Object.getPrototypeOf(current);
 
         for (let i = 0; i < keys.length; i += 1) {
-            const key = keys[i];
-
-            if (key === "return") continue;
-
-            switch (key) {
-                case "window":
-                case "self":
-                case "globalThis":
-                case "ownerDocument":
-                case "document":
-                case "parentNode":
-                case "parentElement":
-                case "nextSibling":
-                case "previousSibling":
-                case "committed":
-                case "loaded":
-                case "userChoice":
-                case "finished":
-                case "ready":
-                case "lost":
-                    continue;
-            }
-
-            let child;
-            try {
-                const descriptor =
-                    Object.getOwnPropertyDescriptor(current, key) ||
-                    (proto ? Object.getOwnPropertyDescriptor(proto, key) : null);
-
-                if (
-                    descriptor?.get &&
-                    key !== "nodes" &&
-                    key !== "rootId" &&
-                    key !== "currentLeafId"
-                ) {
-                    continue;
-                }
-
-                child = current[key];
-            } catch {
-                continue;
-            }
+            const child = readGraphChild(current, proto, keys[i]);
 
             if (isObjectLike(child)) {
                 queue.push(child);
@@ -220,7 +315,9 @@ export function scanObjectGraphForStore(root, limits, budget = null) {
     }
 
     return {
-        store: bestStore,
+        store: best?.store ?? null,
+        score: best?.score ?? -1,
+        decisive: false,
         visitedObjects,
     };
 }
@@ -231,9 +328,7 @@ export function discoverStoreFromFiberRoot(root, limits) {
     const objectBudget = { visitedObjects: 0 };
 
     let visitedFibers = 0;
-    let visitedObjects = 0;
-    let bestStore = null;
-    let bestNodeCount = -1;
+    let best = null;
 
     for (let queueIndex = 0; queueIndex < fiberQueue.length; queueIndex += 1) {
         const fiber = fiberQueue[queueIndex];
@@ -246,7 +341,7 @@ export function discoverStoreFromFiberRoot(root, limits) {
 
         if (visitedFibers > limits.maxFibers) break;
 
-        const candidates = [
+        const directCandidates = [
             fiber,
             fiber.stateNode,
             fiber.memoizedState,
@@ -254,57 +349,56 @@ export function discoverStoreFromFiberRoot(root, limits) {
             fiber.pendingProps,
             fiber.updateQueue,
             fiber.dependencies,
-            fiber.child,
-            fiber.sibling,
         ];
 
-        for (let i = 0; i < candidates.length; i += 1) {
-            const candidate = candidates[i];
+        for (let i = 0; i < directCandidates.length; i += 1) {
+            const candidate = directCandidates[i];
             if (!isObjectLike(candidate)) continue;
 
-            if (hasAnyStoreMethodName(candidate) && looksLikeStore(candidate)) {
-                const validation = validateStoreCandidate(candidate);
+            const candidateResult = evaluateStoreCandidate(candidate);
+            best = maybeRecordBest(best, candidateResult);
 
-                if (validation.ok) {
-                    const scored = scoreStoreCandidate(candidate);
+            if (candidateResult?.decisive) {
+                return {
+                    store: candidateResult.store,
+                    visitedFibers,
+                    visitedObjects: objectBudget.visitedObjects,
+                };
+            }
+        }
 
-                    if (scored.score > bestNodeCount) {
-                        bestStore = candidate;
-                        bestNodeCount = scored.score;
-                    }
+        for (let i = 0; i < HOT_FIBER_FIELDS.length; i += 1) {
+            const candidate = fiber[HOT_FIBER_FIELDS[i]];
+            if (!isObjectLike(candidate)) continue;
 
-                    continue;
-                }
+            const scanned = scanObjectGraphForStore(
+                candidate,
+                limits,
+                objectBudget
+            );
+
+            if (scanned.store) {
+                best = maybeRecordBest(best, {
+                    store: scanned.store,
+                    score: scanned.score,
+                    decisive: scanned.decisive,
+                });
             }
 
-            const shouldDeepScan =
-                candidate === fiber.stateNode ||
-                candidate === fiber.memoizedState ||
-                candidate === fiber.memoizedProps ||
-                candidate === fiber.pendingProps ||
-                candidate === fiber.updateQueue ||
-                candidate === fiber.dependencies;
+            if (scanned.decisive) {
+                return {
+                    store: scanned.store,
+                    visitedFibers,
+                    visitedObjects: objectBudget.visitedObjects,
+                };
+            }
 
-            if (shouldDeepScan) {
-                const scanned = scanObjectGraphForStore(candidate, limits, objectBudget);
-                visitedObjects += scanned.visitedObjects;
-
-                if (scanned.store) {
-                    const scored = scoreStoreCandidate(scanned.store);
-
-                    if (scored.score > bestNodeCount) {
-                        bestStore = scanned.store;
-                        bestNodeCount = scored.score;
-                    }
-                }
-
-                if (objectBudget.visitedObjects > limits.maxObjects) {
-                    return {
-                        store: bestStore,
-                        visitedFibers,
-                        visitedObjects: objectBudget.visitedObjects,
-                    };
-                }
+            if (objectBudget.visitedObjects > limits.maxObjects) {
+                return {
+                    store: best?.store ?? null,
+                    visitedFibers,
+                    visitedObjects: objectBudget.visitedObjects,
+                };
             }
         }
 
@@ -314,9 +408,9 @@ export function discoverStoreFromFiberRoot(root, limits) {
     }
 
     return {
-        store: bestStore,
+        store: best?.store ?? null,
         visitedFibers,
-        visitedObjects,
+        visitedObjects: objectBudget.visitedObjects,
     };
 }
 
