@@ -1,1783 +1,216 @@
+import {
+    GLOBAL_KEY,
+    CONFIG,
+    DISCOVERY_LOG_PREFIX,
+    ENABLE_DEBUG,
+    ENABLE_STORE_PROFILER,
+    ENABLE_BRANCH_CALLSITE_STATS,
+    ENABLE_CACHE_PROFILING,
+    ENABLE_NODE_CALLSITE_STATS,
+    ENABLE_FIND_NODE_CALLSITE_STATS,
+} from "./chatStoreBridge/config.js";
+
+import {
+    getBridgeTokenFromCurrentScript,
+    isTrustedBridgeMessage,
+} from "./chatStoreBridge/protocol.js";
+
+import {
+    clearBridgeSlots,
+    getNodeDirectFresh,
+    getStoreCurrentLeafId,
+    getStoreNodeCount,
+    unavailable,
+} from "./chatStoreBridge/common.js";
+
+import {
+    getStoreMethod,
+    installStoreMethodWrapper,
+    resetFrameCacheStats,
+    requireStore,
+} from "./chatStoreBridge/cacheCore.js";
+
+import {
+    STABLE_CACHE_SLOTS,
+    resetStoreEnhancementSlots,
+} from "./chatStoreBridge/storeEnhancements.js";
+
+import {
+    getVisibleConversationTurnCount,
+    getEstimatedConversationTurnCount,
+    getExpectedMinimumStoreNodeCount,
+} from "./chatStoreBridge/domState.js";
+
+import {
+    candidateStoreCanResolveVisibleNewestNode,
+    getStoreInfo,
+    rejectStore,
+    validateStoreCandidate,
+} from "./chatStoreBridge/storeValidation.js";
+
+import {
+    createDiscoveryLimits,
+    discoverStoreFromFiberRoot,
+    getFiberRoots,
+} from "./chatStoreBridge/discovery.js";
+
+import {
+    collectRecentExchangeKeepNodeIdsFromActiveBranch,
+    deleteStoreNodeFresh,
+    getActiveStoreBranchNewestFirst,
+    getStoreRootId,
+    summarizeStoreNode,
+} from "./chatStoreBridge/storeTopology.js";
+
+import {
+    requestStoreBackedConversationRefresh,
+} from "./chatStoreBridge/refresh.js";
+
+import {
+    createEmptyMethodProfile,
+    normalizeStack,
+} from "./chatStoreBridge/profiling.js";
+
+import {
+    cacheInstallerMethods,
+} from "./chatStoreBridge/cacheInstallers.js";
+
 (() => {
-    const GLOBAL_KEY = "__threadOptimizerChatStoreBridge";
-
-    const CONFIG = {
-        bridgeVersion: 8,
-
-        discovery: {
-            maxFibers: 4000,
-            maxObjects: 15000,
-        },
-
-        flags: {
-            debug: false,
-            cacheProfiling: false,
-            storeProfiler: false,
-            branchCallSites: false,
-            nodeCallSites: false,
-            findNodeCallSites: false,
-
-            messageIdIndexCache: true,
-            existingNodeStableCache: true,
-            branchCache: true,
-            resolvedNodeFrameCache: true,
-            getNodeByIdOrMessageIdCache: true,
-        },
-    };
-
-    const STORE_ENHANCEMENTS = [
-        {
-            key: "messageIdIndex",
-            install: "installMessageIdIndex",
-            uninstall: "uninstallMessageIdIndex",
-            installedFlag: "__messageIdIndexInstalled",
-            slots: [
-                "__messageIdIndexOriginal",
-                "__messageIdIndex",
-                "__messageIdIndexStats",
-            ],
-        },
-        {
-            key: "nodeStableCache",
-            install: "installExistingNodeStableCache",
-            uninstall: "uninstallExistingNodeStableCache",
-            installedFlag: "__existingNodeStableCacheInstalled",
-            slots: [
-                "__existingNodeStableCacheOriginal",
-                "__existingNodeStableCache",
-                "__existingNodeStableCacheStats",
-                "__existingNodeStableCacheApi",
-            ],
-        },
-        {
-            key: "getNodeByIdOrMessageIdCache",
-            install: "installGetNodeByIdOrMessageIdCache",
-            uninstall: "uninstallGetNodeByIdOrMessageIdCache",
-            installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
-            slots: [
-                "__getNodeByIdOrMessageIdCacheOriginal",
-                "__getNodeByIdOrMessageIdCache",
-                "__getNodeByIdOrMessageIdCacheStats",
-            ],
-        },
-        {
-            key: "branchCache",
-            install: "installBranchCache",
-            uninstall: "uninstallBranchCache",
-            installedFlag: "__branchCacheInstalled",
-            slots: [
-                "__branchCacheOriginals",
-                "__branchCache",
-                "__branchCacheStats",
-                "__branchCacheLastInstallResult",
-            ],
-        },
-        {
-            key: "resolvedNodeFrameCache",
-            install: "installResolvedNodeFrameCache",
-            uninstall: "uninstallResolvedNodeFrameCache",
-            installedFlag: "__resolvedNodeFrameCacheInstalled",
-            slots: [
-                "__resolvedNodeFrameCache",
-                "__resolvedNodeFrameCacheStats",
-                "__resolveNodeFast",
-            ],
-        },
-    ];
-
-    function resetStoreEnhancementSlots(bridge) {
-        for (const enhancement of STORE_ENHANCEMENTS) {
-            bridge[enhancement.installedFlag] = false;
-
-            if (Array.isArray(enhancement.slots) && enhancement.slots.length > 0) {
-                clearBridgeSlots(bridge, enhancement.slots);
-            }
-        }
-    }
-
-    function runStoreEnhancementUninstalls(bridge) {
-        const result = {};
-
-        for (let i = STORE_ENHANCEMENTS.length - 1; i >= 0; i -= 1) {
-            const enhancement = STORE_ENHANCEMENTS[i];
-            const uninstall = bridge[enhancement.uninstall];
-
-            result[enhancement.key] =
-                typeof uninstall === "function"
-                    ? uninstall.call(bridge)
-                    : { ok: false, reason: `missing uninstaller: ${enhancement.uninstall}` };
-        }
-
-        return result;
-    }
-
-    const DISCOVERY_LOG_PREFIX = "[thread-optimizer bridge init]";
-
-    const PAGE_SCRIPT_TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
-    const TRUSTED_SOURCE = "thread-optimizer";
-
-    const MESSAGE_TYPES = new Set([
-        "thread-optimizer:set-pruning-state",
-        "thread-optimizer:prune-store-history",
-        "thread-optimizer:log-store-performance",
-        "thread-optimizer:set-store-read-optimization",
-        "thread-optimizer:visible-messages-ready",
-    ]);
-
-    function getBridgeTokenFromCurrentScript() {
-        const script = document.currentScript;
-
-        if (!(script instanceof HTMLScriptElement)) {
-            return null;
-        }
-
-        const token = script.getAttribute(PAGE_SCRIPT_TOKEN_ATTR);
-
-        if (typeof token !== "string") {
-            return null;
-        }
-
-        const normalized = token.trim();
-
-        if (!/^[a-f0-9]{32}$/i.test(normalized)) {
-            return null;
-        }
-
-        return normalized;
-    }
-
     const BRIDGE_TOKEN = getBridgeTokenFromCurrentScript();
 
     if (!BRIDGE_TOKEN) {
-        console.warn("[thread-optimizer bridge] blocked install because bridge token is missing");
+        console.warn(
+            "[thread-optimizer bridge] blocked install because bridge token is missing"
+        );
         return;
     }
-
-    const ENABLE_DEBUG = CONFIG.flags.debug;
-    const ENABLE_STORE_PROFILER = CONFIG.flags.storeProfiler || ENABLE_DEBUG;
-    const ENABLE_BRANCH_CALLSITE_STATS = CONFIG.flags.branchCallSites || ENABLE_DEBUG;
-    const ENABLE_CACHE_PROFILING = CONFIG.flags.cacheProfiling || ENABLE_DEBUG;
-    const ENABLE_NODE_CALLSITE_STATS = CONFIG.flags.nodeCallSites || ENABLE_DEBUG;
-    const ENABLE_FIND_NODE_CALLSITE_STATS = CONFIG.flags.findNodeCallSites || ENABLE_DEBUG;
-    const ENABLE_MESSAGE_ID_INDEX_CACHE =
-        CONFIG.flags.messageIdIndexCache;
-
-    const ENABLE_EXISTING_NODE_STABLE_CACHE =
-        CONFIG.flags.existingNodeStableCache;
-
-    const ENABLE_BRANCH_CACHE =
-        CONFIG.flags.branchCache;
-
-    const ENABLE_RESOLVED_NODE_FRAME_CACHE =
-        CONFIG.flags.resolvedNodeFrameCache;
-
-    const ENABLE_GET_NODE_BY_ID_OR_MESSAGE_ID_CACHE =
-        CONFIG.flags.getNodeByIdOrMessageIdCache;
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
     }
 
-    const CACHE_MISS = Symbol("threadOptimizerCacheMiss");
-
-    function createNodeObjectCache({ store, stats, profiled = false }) {
-        const cache = new Map();
-
-        function get(id) {
-            if (!id) return undefined;
-
-            const cached = cache.get(id);
-
-            if (cached !== undefined) {
-                if (profiled) stats.hits += 1;
-                return cached === CACHE_MISS ? null : cached;
-            }
-
-            if (profiled) stats.misses += 1;
-            return undefined;
-        }
-
-        function set(id, node) {
-            if (!id) return;
-
-            cache.set(id, node === null ? CACHE_MISS : node);
-
-            stats.cached = cache.size;
-
-            if (profiled) {
-                stats.writes += 1;
-                if (node === null) stats.nullWrites += 1;
-            }
-        }
-
-        function resolve(id) {
-            const cached = get(id);
-
-            if (cached !== undefined) {
-                return cached;
-            }
-
-            const node = getNodeDirect(store, id) ?? null;
-
-            set(id, node);
-
-            return node;
-        }
-
-        function clear(reason) {
-            cache.clear();
-            stats.cached = 0;
-            stats.lastClearReason = reason;
-        }
-
-        return {
-            cache,
-            get,
-            set,
-            resolve,
-            clear,
-        };
-    }
-
-    function createPersistentCache({ stats, profiled = false }) {
-        const cache = new Map();
-
-        function clear(reason) {
-            if (cache.size !== 0) {
-                cache.clear();
-                if (profiled && stats && "cached" in stats) stats.cached = 0;
-            }
-        }
-
-        const get = profiled
-            ? function getProfiled(key) {
-                const value = cache.get(key);
-
-                if (value !== undefined) {
-                    stats.hits += 1;
-                    return value === CACHE_MISS ? null : value;
-                }
-
-                stats.misses += 1;
-                return undefined;
-            }
-            : function getProduction(key) {
-                const value = cache.get(key);
-                return value === undefined
-                    ? undefined
-                    : value === CACHE_MISS
-                        ? null
-                        : value;
-            };
-
-        const set = profiled
-            ? function setProfiled(key, value) {
-                cache.set(key, value === null ? CACHE_MISS : value);
-                stats.cached = cache.size;
-            }
-            : function setProduction(key, value) {
-                cache.set(key, value === null ? CACHE_MISS : value);
-            };
-
-        return { get, set, clear, cache };
-    }
-
-    function createCacheStats(profiled, profileStats, productionStats = {}) {
-        return profiled
-            ? {
-                ...profileStats,
-            }
-            : {
-                ...productionStats,
-            };
-    }
-
-    function getVisibleConversationTurnCount() {
-        try {
-            return document.querySelectorAll(
-                'section[data-testid^="conversation-turn-"], section[data-turn]'
-            ).length;
-        } catch {
-            return 0;
-        }
-    }
-
-    function getEstimatedConversationTurnCount() {
-        const visibleTurns = getVisibleConversationTurnCount();
-        const bridge = window[GLOBAL_KEY];
-
-        const pruningEnabled =
-            bridge?.__knownPruningEnabled === true;
-
-        const prunedTurns =
-            pruningEnabled && Number.isFinite(bridge?.__knownPrunedTurnCount)
-                ? bridge.__knownPrunedTurnCount
-                : 0;
-
-        return visibleTurns + prunedTurns;
-    }
-
-    function getExpectedMinimumStoreNodeCount() {
-        const estimatedTurns = getEstimatedConversationTurnCount();
-
-        if (estimatedTurns <= 2) return 1;
-
-        return Math.max(3, Math.floor(estimatedTurns * 0.25));
-    }
-
-    function getNewestVisibleMessageIdFromDom() {
-        const selectors = [
-            "[data-message-id]",
-            "[data-message-author-role][data-message-id]",
-            'article[data-testid^="conversation-turn-"] [data-message-id]',
-            'section[data-testid^="conversation-turn-"] [data-message-id]',
-        ];
-
-        for (const selector of selectors) {
-            const nodes = document.querySelectorAll(selector);
-
-            for (let i = nodes.length - 1; i >= 0; i -= 1) {
-                const value = nodes[i]?.getAttribute?.("data-message-id");
-
-                if (typeof value === "string" && value.trim()) {
-                    return value.trim();
-                }
-            }
-        }
-
-        return null;
-    }
-
-    function getStoreCurrentLeafId(store) {
-        try {
-            return typeof store?.currentLeafId === "function"
-                ? store.currentLeafId()
-                : store?.currentLeafId ?? null;
-        } catch {
-            return null;
-        }
-    }
-
-    function candidateStoreCanResolveVisibleNewestNode(store) {
-        const newestMessageId = getNewestVisibleMessageIdFromDom();
-
-        if (!newestMessageId) {
-            return {
-                ok: false,
-                reason: "no visible message id found",
-                newestMessageId: null,
-                nodeId: null,
-            };
-        }
-
-        try {
-            const nodeId = store.messageIdToExistingNodeId?.call(store, newestMessageId);
-
-            if (!nodeId) {
-                return {
-                    ok: false,
-                    reason: "message id did not resolve",
-                    newestMessageId,
-                    nodeId: null,
-                };
-            }
-
-            const nodeCache = window[GLOBAL_KEY]?.__nodeObjectCacheApi;
-
-            const node = nodeCache
-                ? nodeCache.resolve(nodeId)
-                : getNodeDirect(store, nodeId);
-
-            if (!node) {
-                return {
-                    ok: false,
-                    reason: "resolved node id not found in store",
-                    newestMessageId,
-                    nodeId,
-                };
-            }
-
-            return {
-                ok: true,
-                newestMessageId,
-                nodeId,
-                node,
-            };
-        } catch (error) {
-            return {
-                ok: false,
-                reason: String(error?.message || error),
-                newestMessageId,
-                nodeId: null,
-            };
-        }
-    }
-
-    function scoreStoreCandidate(store) {
-        const nodeCount = getStoreNodeCount(store);
-        const currentLeafId = getStoreCurrentLeafId(store);
-        const hasCurrentLeafNode = Boolean(
-            currentLeafId && getNodeDirect(store, currentLeafId)
-        );
-
-        const visibleNewest = candidateStoreCanResolveVisibleNewestNode(store);
-
-        let score = 0;
-
-        if (visibleNewest.ok) score += 1000000;
-        if (hasCurrentLeafNode) score += 100000;
-        score += Math.min(nodeCount, 50000);
-
-        return {
-            score,
-            nodeCount,
-            currentLeafId,
-            hasCurrentLeafNode,
-            visibleNewest,
-        };
-    }
-
-    function requireStore(bridge) {
-        return bridge.__store || null;
-    }
-
-    function unavailable(reason) {
-        return { ok: false, reason };
-    }
-
-    function alreadyInstalled(stats = null) {
-        return stats
-            ? { ok: true, alreadyInstalled: true, stats }
-            : { ok: true, alreadyInstalled: true };
-    }
-
-    function getStoreMethod(store, methodName) {
-        const method = store?.[methodName];
-        return typeof method === "function" ? method : null;
-    }
-
-    const STABLE_CACHE_SLOTS = [
-        ["__existingNodeStableCache", "__existingNodeStableCacheStats"],
-        ["__getNodeByIdOrMessageIdCache", "__getNodeByIdOrMessageIdCacheStats"],
-        ["__branchCache", "__branchCacheStats"],
-        ["__resolvedNodeFrameCache", "__resolvedNodeFrameCacheStats"],
-    ];
-
-    function getCacheSnapshot(bridge, installedFlag, cacheSlot, statsSlot) {
-        return {
-            installed: Boolean(bridge[installedFlag]),
-            size: bridge[cacheSlot]?.size ?? 0,
-            stats: bridge[statsSlot] ?? null,
-        };
-    }
-
-    function resetFrameCacheStats(stats, cache) {
-        if (!stats) return;
-
-        if ("hits" in stats) stats.hits = 0;
-        if ("misses" in stats) stats.misses = 0;
-
-        stats.cached = cache?.size ?? 0;
-    }
-
-    function smokeTestStoreWrappers(store) {
-        try {
-            const leafId =
-                typeof store.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store.currentLeafId;
-
-            if (!leafId) return true;
-
-            // Critical paths that need to be tested for crashes
-            store.getNodeIfExists?.call(store, leafId);
-            store.getNodeByIdOrMessageId?.call(store, leafId);
-            store.getBranch?.call(store);
-
-            return true;
-        } catch (error) {
-            console.warn(
-                "[thread-optimizer bridge] store wrapper smoke test failed",
-                error
-            );
-            return false;
-        }
-    }
-
-    function validateStoreMethodBinding(store, methodName, original) {
-        if (!store || typeof original !== "function") return false;
-
-        try {
-            if (methodName === "getNodeIfExists") {
-                return typeof store.messageIdToExistingNodeId === "function";
-            }
-
-            if (methodName === "getNodeByIdOrMessageId") {
-                return typeof store.getNodeIfExists === "function";
-            }
-
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    function installStoreMethodWrapper({
-        bridge,
-        methodName,
-        originalSlot,
-        installedFlag,
-        unavailableReason = `${methodName} unavailable`,
-        createWrapper,
-    }) {
-        const store = requireStore(bridge);
-        if (!store) return unavailable("store not registered");
-
-        if (bridge[installedFlag]) {
-            return alreadyInstalled();
-        }
-
-        const original = getStoreMethod(store, methodName);
-        if (!original) return unavailable(unavailableReason);
-
-        if (!validateStoreMethodBinding(store, methodName, original)) {
-            return unavailable(`${methodName} failed install-time validation`);
-        }
-
-        bridge[originalSlot] = {
-            ...(bridge[originalSlot] || {}),
-            [methodName]: original,
-        };
-
-        store[methodName] = createWrapper({
-            store,
-            original,
-            bridge,
-        });
-
-        bridge[installedFlag] = true;
-
-        return {
-            ok: true,
-            installed: true,
-            methods: [methodName],
-        };
-    }
-
-    function uninstallMethodFrameCache({
-        bridge,
-        originalSlot,
-        installedFlag,
-    }) {
-        if (!bridge[installedFlag]) {
-            return { ok: true, alreadyUninstalled: true };
-        }
-
-        const originals = bridge[originalSlot];
-
-        if (bridge.__store && originals) {
-            for (const [name, fn] of Object.entries(originals)) {
-                bridge.__store[name] = fn;
-            }
-        }
-
-        bridge[installedFlag] = false;
-        bridge[originalSlot] = null;
-
-        return { ok: true, uninstalled: true };
-    }
-
-    function clearBridgeSlots(bridge, slots) {
-        for (let i = 0; i < slots.length; i += 1) {
-            bridge[slots[i]] = null;
-        }
-    }
-
-    function isObjectLike(value) {
-        return value !== null && (typeof value === "object" || typeof value === "function");
-    }
-
-    function getNodeDirect(store, nodeId) {
-        if (!store || !nodeId) return null;
-
-        const bridge = window[GLOBAL_KEY];
-        const directIndex = bridge?.__nodeIdDirectIndex;
-
-        if (directIndex instanceof Map) {
-            const indexed = directIndex.get(nodeId);
-            if (indexed !== undefined) return indexed ?? null;
-        }
-
-        const nodes = store.nodes;
-        if (!nodes) return null;
-
-        let node = null;
-
-        if (Array.isArray(nodes)) {
-            if (
-                bridge.__nodeIdDirectIndexSource !== nodes ||
-                !(bridge.__nodeIdDirectIndex instanceof Map)
-            ) {
-                const index = new Map();
-
-                for (let i = 0; i < nodes.length; i += 1) {
-                    const candidate = nodes[i];
-                    if (candidate?.id) index.set(candidate.id, candidate);
-                }
-
-                bridge.__nodeIdDirectIndex = index;
-                bridge.__nodeIdDirectIndexSource = nodes;
-            }
-
-            node = bridge.__nodeIdDirectIndex.get(nodeId) ?? null;
-        } else if (nodes.get) {
-            node = nodes.get(nodeId) ?? null;
-        } else {
-            node = nodes[nodeId] ?? null;
-        }
-
-        if (node && bridge?.__nodeIdDirectIndex instanceof Map) {
-            bridge.__nodeIdDirectIndex.set(nodeId, node);
-        }
-
-        return node;
-    }
-
-    const objectToString = Object.prototype.toString;
-
-    function shouldSkipObjectGraphValue(value) {
-        const type = typeof value;
-        if (value === null || (type !== "object" && type !== "function")) return true;
-
-        try {
-            if (
-                value instanceof Node ||
-                value instanceof Window ||
-                value instanceof Document ||
-                value instanceof Event ||
-                value instanceof EventTarget ||
-                value instanceof Animation ||
-                value instanceof FontFace ||
-                value instanceof ReadableStream ||
-                value instanceof WritableStream ||
-                value instanceof TransformStream ||
-                value instanceof WritableStreamDefaultWriter ||
-                value instanceof ViewTransition
-            ) {
-                return true;
-            }
-        } catch { }
-
-        const tag = objectToString.call(value);
-
+    function shouldAdvanceStoreEpoch(reason) {
         return (
-            tag.includes("Window") ||
-            tag.includes("Document") ||
-            tag.includes("Event") ||
-            tag.includes("Stream") ||
-            tag.includes("Animation") ||
-            tag.includes("Transition") ||
-            tag.includes("FontFace") ||
-            tag.includes("GPU")
+            reason === "topology-mutation" ||
+            reason === "conversation-change" ||
+            reason === "manual"
         );
     }
 
-    function createCurrentLeafIdReader(store) {
-        const currentLeafId = store?.currentLeafId;
-
-        if (typeof currentLeafId === "function") {
-            return function readCurrentLeafIdFromFunction() {
-                return currentLeafId.call(store);
-            };
-        }
-
-        return function readCurrentLeafIdFromValue() {
-            return currentLeafId;
-        };
-    }
-
-    function safeCall(value) {
-        try {
-            return typeof value === "function" ? value() : value;
-        } catch {
-            return null;
-        }
-    }
-
-    function getStoreInfo(store) {
-        if (!store) {
-            return {
-                found: false,
-                nodeCount: null,
-                rootId: null,
-                currentLeafId: null,
-            };
-        }
-
-        let rootId = null;
-        let currentLeafId = null;
-
-        try {
-            rootId = safeCall(store.rootId);
-        } catch { }
-
-        try {
-            currentLeafId = safeCall(store.currentLeafId);
-        } catch { }
-
-        return {
-            found: true,
-            nodeCount: getStoreNodeCount(store),
-            rootId,
-            currentLeafId,
-        };
-    }
-
-    const rejectedStores = new WeakSet();
-    const rejectedStoreReasons = new Map();
-
-    function hasAnyStoreMethodName(value) {
-        return (
-            value &&
-            typeof value === "object" &&
-            (
-                "getNodeIfExists" in value ||
-                "messageIdToExistingNodeId" in value ||
-                "deleteNode" in value
-            )
-        );
-    }
-
-    function looksLikeStore(value) {
-        if (!isObjectLike(value)) return false;
-        if (typeof value === "function") return false;
-        if (rejectedStores.has(value)) return false;
-
-        try {
-            return (
-                typeof value.deleteNode === "function" &&
-                typeof value.getNodeIfExists === "function" &&
-                typeof value.messageIdToExistingNodeId === "function"
-            );
-        } catch {
-            return false;
-        }
-    }
-
-    function rejectStore(store, reason) {
-        const reasonText = String(reason || "unknown");
-
-        // Temporary during page hydration. Do NOT permanently reject this object;
-        // it may become the real hydrated store later.
-        const isTemporaryHydrationReject =
-            reasonText.includes("node count too small");
-
-        if (isObjectLike(store) && !isTemporaryHydrationReject) {
-            rejectedStores.add(store);
-        }
-
-        const reasonKey = reasonText;
-        const previousCount = rejectedStoreReasons.get(reasonKey) || 0;
-        rejectedStoreReasons.set(reasonKey, previousCount + 1);
-
-        if (previousCount > 0) return;
-
-        console.debug("[thread-optimizer bridge] rejected store candidate", {
-            reason,
-            info: getStoreInfo(store),
-        });
-    }
-
-    function getStoreNodeCount(store) {
-        try {
-            const nodes = store.nodes;
-            if (nodes instanceof Map) return nodes.size;
-            if (Array.isArray(nodes)) return nodes.length;
-            if (nodes && typeof nodes === "object") return Object.keys(nodes).length;
-        } catch { }
-
-        return 0;
-    }
-
-    function validateStoreCandidate(store) {
-        if (!looksLikeStore(store)) {
-            return {
-                ok: false,
-                reason: "does not expose required methods",
-            };
-        }
-
-        try {
-            const info = getStoreInfo(store);
-            const nodeCount = getStoreNodeCount(store);
-            const minimumNodeCount = getExpectedMinimumStoreNodeCount();
-
-            if (nodeCount < minimumNodeCount) {
-                return {
-                    ok: false,
-                    reason: `node count too small: ${nodeCount} < ${minimumNodeCount}`,
-                };
-            }
-
-            return {
-                ok: true,
-                info,
-                nodeCount,
-            };
-        } catch (error) {
-            return {
-                ok: false,
-                reason: String(error?.message || error),
-            };
-        }
-    }
-
-    function getFiberRoots() {
-        const roots = [];
-        const seenRoots = new WeakSet();
-
-        const pushRoot = (value) => {
-            if (!isObjectLike(value)) return;
-            if (seenRoots.has(value)) return;
-
-            seenRoots.add(value);
-            roots.push(value);
-        };
-
-        const rootCandidates = [
-            document.querySelector("main"),
-            document.querySelector('[role="main"]'),
-            document.querySelector('[data-testid="conversation"]'),
-            document.querySelector('[data-testid^="conversation-turn-"]')?.closest("main"),
-            document.querySelector("#__next"),
-            document.body,
-        ].filter(Boolean);
-
-        const seenElements = new WeakSet();
-
-        for (const rootEl of rootCandidates) {
-            const all = [rootEl, ...rootEl.querySelectorAll("*")];
-
-            for (let i = 0; i < all.length; i += 1) {
-                const el = all[i];
-
-                if (!el || el.nodeType !== 1) continue;
-                if (seenElements.has(el)) continue;
-                seenElements.add(el);
-
-                const keys = Object.keys(el);
-
-                for (let j = 0; j < keys.length; j += 1) {
-                    const key = keys[j];
-
-                    if (
-                        key.charCodeAt(0) !== 95 ||
-                        (
-                            !key.startsWith("__reactFiber$") &&
-                            !key.startsWith("__reactContainer$") &&
-                            !key.startsWith("__reactInternalInstance$")
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    pushRoot(el[key]);
-                }
-            }
-        }
-
-        return roots;
-    }
-
-    function getGraphKeys(value) {
-        const keys = Object.keys(value);
-
+    function getMutationCacheReason(methodName, args) {
         if (
-            keys.length > 0 ||
-            value == null ||
-            typeof value !== "object"
+            methodName === "addMessageNode" ||
+            methodName === "addOptimisticMessageNode" ||
+            methodName === "prependNode" ||
+            methodName === "prependOptismisticNode"
         ) {
-            return keys;
-        }
-
-        const proto = Object.getPrototypeOf(value);
-        if (!proto || proto === Object.prototype || proto === Array.prototype) {
-            return keys;
-        }
-
-        return keys.concat(Object.getOwnPropertyNames(proto));
-    }
-
-    function scanObjectGraphForStore(root, limits, budget = null) {
-        const seen = new WeakSet();
-        const queue = [root];
-        let visitedObjects = 0;
-        const objectBudget = budget ?? { visitedObjects: 0 };
-        let bestStore = null;
-        let bestNodeCount = -1;
-
-        for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
-            const current = queue[queueIndex];
-
-            if (shouldSkipObjectGraphValue(current)) continue;
-            if (seen.has(current)) continue;
-
-            seen.add(current);
-            visitedObjects += 1;
-            objectBudget.visitedObjects += 1;
-
-            if (objectBudget.visitedObjects > limits.maxObjects) break;
-
-            if (hasAnyStoreMethodName(current) && looksLikeStore(current)) {
-                const validation = validateStoreCandidate(current);
-
-                if (validation.ok) {
-                    const scored = scoreStoreCandidate(current);
-
-                    if (scored.score > bestNodeCount) {
-                        bestStore = current;
-                        bestNodeCount = scored.score;
-                    }
-
-                    continue;
-                }
-
-                rejectStore(current, validation.reason);
-            }
-
-            let keys;
-            try {
-                keys = getGraphKeys(current);
-            } catch {
-                continue;
-            }
-
-            const proto = Object.getPrototypeOf(current);
-
-            for (let i = 0; i < keys.length; i += 1) {
-                const key = keys[i];
-
-                if (key === "return") continue;
-
-                switch (key) {
-                    case "window":
-                    case "self":
-                    case "globalThis":
-                    case "ownerDocument":
-                    case "document":
-                    case "parentNode":
-                    case "parentElement":
-                    case "nextSibling":
-                    case "previousSibling":
-                    case "committed":
-                    case "loaded":
-                    case "userChoice":
-                    case "finished":
-                    case "ready":
-                    case "lost":
-                        continue;
-                }
-
-                let child;
-                try {
-                    const descriptor =
-                        Object.getOwnPropertyDescriptor(current, key) ||
-                        (proto ? Object.getOwnPropertyDescriptor(proto, key) : null);
-
-                    if (
-                        descriptor?.get &&
-                        key !== "nodes" &&
-                        key !== "rootId" &&
-                        key !== "currentLeafId"
-                    ) {
-                        continue;
-                    }
-
-                    child = current[key];
-                } catch {
-                    continue;
-                }
-
-                if (isObjectLike(child)) {
-                    queue.push(child);
-                }
-            }
-        }
-
-        return {
-            store: bestStore,
-            visitedObjects,
-        };
-    }
-
-    function discoverStoreFromFiberRoot(root, limits) {
-        const seenFibers = new WeakSet();
-        const fiberQueue = [root];
-        const objectBudget = { visitedObjects: 0 };
-
-        let visitedFibers = 0;
-        let visitedObjects = 0;
-        let bestStore = null;
-        let bestNodeCount = -1;
-
-        for (let queueIndex = 0; queueIndex < fiberQueue.length; queueIndex += 1) {
-            const fiber = fiberQueue[queueIndex];
-
-            if (!isObjectLike(fiber)) continue;
-            if (seenFibers.has(fiber)) continue;
-
-            seenFibers.add(fiber);
-            visitedFibers += 1;
-
-            if (visitedFibers > limits.maxFibers) break;
-
-            const candidates = [
-                fiber,
-                fiber.stateNode,
-                fiber.memoizedState,
-                fiber.memoizedProps,
-                fiber.pendingProps,
-                fiber.updateQueue,
-                fiber.dependencies,
-                fiber.child,
-                fiber.sibling,
-            ];
-
-            for (let i = 0; i < candidates.length; i += 1) {
-                const candidate = candidates[i];
-                if (!isObjectLike(candidate)) continue;
-
-                if (hasAnyStoreMethodName(candidate) && looksLikeStore(candidate)) {
-                    const validation = validateStoreCandidate(candidate);
-
-                    if (validation.ok) {
-                        const scored = scoreStoreCandidate(candidate);
-
-                        if (scored.score > bestNodeCount) {
-                            bestStore = candidate;
-                            bestNodeCount = scored.score;
-                        }
-
-                        continue;
-                    }
-                }
-
-                const shouldDeepScan =
-                    candidate === fiber.stateNode ||
-                    candidate === fiber.memoizedState ||
-                    candidate === fiber.memoizedProps ||
-                    candidate === fiber.pendingProps ||
-                    candidate === fiber.updateQueue ||
-                    candidate === fiber.dependencies;
-
-                if (shouldDeepScan) {
-                    const scanned = scanObjectGraphForStore(candidate, limits, objectBudget);
-                    visitedObjects += scanned.visitedObjects;
-
-                    if (scanned.store) {
-                        const scored = scoreStoreCandidate(scanned.store);
-
-                        if (scored.score > bestNodeCount) {
-                            bestStore = scanned.store;
-                            bestNodeCount = scored.score;
-                        }
-                    }
-
-                    if (objectBudget.visitedObjects > limits.maxObjects) {
-                        return {
-                            store: bestStore,
-                            visitedFibers,
-                            visitedObjects: objectBudget.visitedObjects,
-                        };
-                    }
-                }
-            }
-
-            if (fiber.child) fiberQueue.push(fiber.child);
-            if (fiber.sibling) fiberQueue.push(fiber.sibling);
-            if (fiber.return) fiberQueue.push(fiber.return);
-        }
-
-        return {
-            store: bestStore,
-            visitedFibers,
-            visitedObjects,
-        };
-    }
-
-    function createEmptyMethodProfile() {
-        return {
-            calls: 0,
-            totalMs: 0,
-            maxMs: 0,
-            lastMs: 0,
-            errors: 0,
-            recentArgs: [],
-        };
-    }
-
-    function normalizeStack(stack) {
-        if (!stack || typeof stack !== "string") {
-            return "unknown";
-        }
-
-        return stack
-            .split("\n")
-            .slice(2, 8)
-            .map((line) =>
-                line
-                    .trim()
-                    .replace(window.location.origin, "")
-                    .replace(/:\d+:\d+/g, ":<line>:<col>")
-            )
-            .join("\n");
-    }
-
-    function resolveNodeCore(bridge, id) {
-        const store = bridge.__store;
-        if (!store || !id) return null;
-
-        const index = bridge.__messageIdIndex;
-        const directIndex = bridge.__nodeIdDirectIndex;
-        const nodeCache = bridge.__nodeObjectCacheApi;
-
-        try {
-            if (index) {
-                const indexedNodeId = index.get(id);
-
-                if (indexedNodeId !== undefined) {
-                    const indexedNode =
-                        directIndex instanceof Map
-                            ? directIndex.get(indexedNodeId)
-                            : undefined;
-
-                    if (indexedNode !== undefined) {
-                        return indexedNode ?? null;
-                    }
-
-                    const node = nodeCache
-                        ? nodeCache.resolve(indexedNodeId)
-                        : getNodeDirect(store, indexedNodeId);
-
-                    if (node && directIndex instanceof Map) {
-                        directIndex.set(indexedNodeId, node);
-                    }
-
-                    return node;
-                }
-            }
-
-            const resolver = store.messageIdToExistingNodeId;
-            if (typeof resolver !== "function") return null;
-
-            const nodeId = resolver.call(store, id);
-            if (!nodeId) return null;
-
-            const node = nodeCache
-                ? nodeCache.resolve(nodeId)
-                : getNodeDirect(store, nodeId);
-
-            if (node) {
-                if (index) {
-                    index.set(id, nodeId);
-                    index.set(nodeId, nodeId);
-
-                    const messageId =
-                        node.message?.id ||
-                        node.message?.message_id ||
-                        node.message?.metadata?.message_id ||
-                        null;
-
-                    if (messageId) {
-                        index.set(messageId, nodeId);
-                    }
-                }
-
-                if (directIndex instanceof Map) {
-                    directIndex.set(nodeId, node);
-                }
-            }
-
-            return node || null;
-        } catch {
-            return null;
-        }
-    }
-
-    function getNodeDirectFresh(store, nodeId) {
-        if (!store || !nodeId) return null;
-
-        const nodes = store.nodes;
-        if (!nodes) return null;
-
-        if (nodes instanceof Map) {
-            return nodes.get(nodeId) ?? null;
-        }
-
-        if (Array.isArray(nodes)) {
-            for (let i = 0; i < nodes.length; i += 1) {
-                const candidate = nodes[i];
-                if (candidate?.id === nodeId) return candidate;
-            }
-
-            return null;
-        }
-
-        if (typeof nodes === "object") {
-            return nodes[nodeId] ?? null;
-        }
-
-        return null;
-    }
-
-    function getStoreRootId(store) {
-        try {
-            const rootId = typeof store?.rootId === "function"
-                ? store.rootId()
-                : store?.rootId;
-
-            return typeof rootId === "string" && rootId ? rootId : null;
-        } catch {
-            return null;
-        }
-    }
-
-    function getNodeParentId(node) {
-        if (!node || typeof node !== "object") return null;
-
-        return (
-            node.parent ||
-            node.parentId ||
-            node.parent_id ||
-            node.parentNodeId ||
-            node.parent_node_id ||
-            node.message?.parent ||
-            node.message?.parentId ||
-            node.message?.parent_id ||
-            node.message?.parentNodeId ||
-            node.message?.parent_node_id ||
-            node.metadata?.parent ||
-            node.metadata?.parentId ||
-            node.metadata?.parent_id ||
-            node.message?.metadata?.parent ||
-            node.message?.metadata?.parentId ||
-            node.message?.metadata?.parent_id ||
-            null
-        );
-    }
-
-    function summarizeStoreNode(node) {
-        if (!node || typeof node !== "object") {
-            return null;
-        }
-
-        return {
-            id: node.id ?? null,
-            parentId: getNodeParentId(node),
-            role:
-                node.message?.author?.role ||
-                node.message?.role ||
-                node.author?.role ||
-                node.role ||
-                null,
-            messageId:
-                node.message?.id ||
-                node.message?.message_id ||
-                node.message?.metadata?.message_id ||
-                null,
-            childCount: Array.isArray(node.children) ? node.children.length : 0,
-            status: node.message?.status ?? node.status ?? null,
-        };
-    }
-
-    function getStoreNodeAuthorRole(node) {
-        if (!node || typeof node !== "object") return null;
-
-        return (
-            node.message?.author?.role ||
-            node.message?.role ||
-            node.author?.role ||
-            node.role ||
-            node.metadata?.author_role ||
-            node.message?.metadata?.author_role ||
-            null
-        );
-    }
-
-    /**
-     * Keeps the newest N exchanges from the active leaf.
-     *
-     * Exchange counting rule:
-     * - Walk newest -> oldest from currentLeafId.
-     * - Keep every node encountered.
-     * - Count an exchange only when a user node is encountered.
-     *
-     * So historyKeptExchanges = 1 keeps:
-     * - latest assistant node
-     * - its parent user node
-     *
-     * If the latest node is a user node while waiting/streaming,
-     * that user node itself counts as the newest exchange.
-     */
-    function collectRecentExchangeKeepNodeIdsFromActiveBranch(
-        store,
-        {
-            historyKeptExchanges = 1,
-            maxDepth = 10000,
-        } = {}
-    ) {
-        const keepNodeIds = new Set();
-        const currentLeafId = getStoreCurrentLeafId(store);
-
-        let keptExchangeCount = 0;
-        let walkedNodeCount = 0;
-        let stopReason = "unknown";
-
-        if (!currentLeafId) {
-            return {
-                keepNodeIds,
-                currentLeafId: null,
-                keptExchangeCount,
-                walkedNodeCount,
-                stopReason: "missing current leaf",
-            };
-        }
-
-        let node = getNodeDirectFresh(store, currentLeafId);
-        const seen = new Set();
-
-        while (node?.id && walkedNodeCount < maxDepth) {
-            if (seen.has(node.id)) {
-                stopReason = "cycle detected";
-                break;
-            }
-
-            seen.add(node.id);
-            keepNodeIds.add(node.id);
-            walkedNodeCount += 1;
-
-            const role = getStoreNodeAuthorRole(node);
+            const message = args?.[1];
+
+            const role = message?.author?.role;
+            const status = message?.status;
+            const metadata = message?.metadata || {};
 
             if (role === "user") {
-                keptExchangeCount += 1;
-
-                if (keptExchangeCount >= historyKeptExchanges) {
-                    stopReason = "kept requested exchanges";
-                    break;
-                }
+                return "topology-mutation";
             }
-
-            const parentId = getNodeParentId(node);
-
-            if (!parentId) {
-                stopReason = "reached root";
-                break;
-            }
-
-            node = getNodeDirectFresh(store, parentId);
-        }
-
-        if (walkedNodeCount >= maxDepth) {
-            stopReason = "max depth reached";
-        }
-
-        return {
-            keepNodeIds,
-            currentLeafId,
-            keptExchangeCount,
-            walkedNodeCount,
-            stopReason,
-        };
-    }
-
-    function getActiveStoreBranchNewestFirst(store, { maxDepth = 10000 } = {}) {
-        const currentLeafId = getStoreCurrentLeafId(store);
-        const nodes = [];
-        const seen = new Set();
-
-        let node = getNodeDirectFresh(store, currentLeafId);
-
-        for (let depth = 0; node?.id && depth < maxDepth; depth += 1) {
-            if (seen.has(node.id)) {
-                break;
-            }
-
-            seen.add(node.id);
-            nodes.push(node);
-
-            const parentId = getNodeParentId(node);
-            if (!parentId) break;
-
-            node = getNodeDirectFresh(store, parentId);
-        }
-
-        return {
-            currentLeafId,
-            nodes,
-            truncated: nodes.length >= maxDepth,
-        };
-    }
-
-    function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } = {}) {
-        const beforeNode = getNodeDirectFresh(store, nodeId);
-        const beforeSummary = summarizeStoreNode(beforeNode);
-
-        if (!beforeNode?.id) {
-            return {
-                ok: false,
-                nodeId,
-                reason: "node not found",
-                beforeSummary,
-                afterSummary: null,
-            };
-        }
-
-        try {
-            store.deleteNode(nodeId);
-        } catch (error) {
-            return {
-                ok: false,
-                nodeId,
-                reason: String(error?.message || error),
-                beforeSummary,
-                afterSummary: summarizeStoreNode(getNodeDirectFresh(store, nodeId)),
-            };
-        }
-
-        const afterNode = getNodeDirectFresh(store, nodeId);
-        const afterSummary = summarizeStoreNode(afterNode);
-
-        if (afterNode?.id) {
-            return {
-                ok: false,
-                nodeId,
-                reason: "node still exists after delete",
-                beforeSummary,
-                afterSummary,
-            };
-        }
-
-        return {
-            ok: true,
-            nodeId,
-            reason,
-            beforeSummary,
-            afterSummary,
-        };
-    }
-
-    function nudgeComposerReactState({
-        reason = "store-prune-refresh",
-        removeDelayMs = 80,
-    } = {}) {
-        const result = {
-            ok: false,
-            reason,
-            attempted: [],
-        };
-
-        const selectors = [
-            '#prompt-textarea',
-            '[data-testid="composer"] textarea',
-            '[data-testid="composer"] [contenteditable="true"]',
-            'textarea',
-            '[contenteditable="true"]',
-        ];
-
-        let composer = null;
-
-        for (const selector of selectors) {
-            const candidate = document.querySelector(selector);
 
             if (
-                candidate instanceof HTMLTextAreaElement ||
-                candidate instanceof HTMLInputElement ||
-                candidate?.isContentEditable
+                role === "assistant" ||
+                role === "tool" ||
+                role === "system" ||
+                status === "in_progress" ||
+                metadata.is_loading_message ||
+                metadata.async_task_id ||
+                metadata.async_completion_id
             ) {
-                composer = candidate;
-                break;
+                return "streaming-mutation";
             }
+
+            return "store-mutation";
         }
-
-        if (!composer) {
-            result.attempted.push({
-                method: "find-composer",
-                ok: false,
-                reason: "composer not found",
-            });
-
-            return result;
-        }
-
-        const space = " ";
-
-        function fireKeyboard(target, type, key = " ") {
-            target.dispatchEvent(new KeyboardEvent(type, {
-                bubbles: true,
-                cancelable: true,
-                key,
-                code: "Space",
-                keyCode: 32,
-                which: 32,
-            }));
-        }
-
-        function fireBeforeInput(target, inputType, data) {
-            target.dispatchEvent(new InputEvent("beforeinput", {
-                bubbles: true,
-                cancelable: true,
-                inputType,
-                data,
-            }));
-        }
-
-        function fireInput(target, inputType, data) {
-            target.dispatchEvent(new InputEvent("input", {
-                bubbles: true,
-                cancelable: true,
-                inputType,
-                data,
-            }));
-        }
-
-        function fireChange(target) {
-            target.dispatchEvent(new Event("change", {
-                bubbles: true,
-                cancelable: true,
-            }));
-        }
-
-        try {
-            composer.focus?.({ preventScroll: true });
-        } catch { }
 
         if (
-            composer instanceof HTMLTextAreaElement ||
-            composer instanceof HTMLInputElement
+            methodName === "deleteNode" ||
+            methodName === "moveNode"
         ) {
-            try {
-                const originalValue = composer.value;
-                const originalSelectionStart = composer.selectionStart;
-                const originalSelectionEnd = composer.selectionEnd;
-                const originalScrollTop = composer.scrollTop;
-
-                const valueSetter = Object.getOwnPropertyDescriptor(
-                    Object.getPrototypeOf(composer),
-                    "value"
-                )?.set;
-
-                if (typeof valueSetter !== "function") {
-                    throw new Error("native value setter unavailable");
-                }
-
-                fireKeyboard(composer, "keydown", " ");
-                fireBeforeInput(composer, "insertText", space);
-
-                valueSetter.call(composer, originalValue + space);
-
-                fireInput(composer, "insertText", space);
-                fireKeyboard(composer, "keyup", " ");
-
-                window.setTimeout(() => {
-                    try {
-                        fireKeyboard(composer, "keydown", "Backspace");
-                        fireBeforeInput(composer, "deleteContentBackward", null);
-
-                        valueSetter.call(composer, originalValue);
-
-                        fireInput(composer, "deleteContentBackward", null);
-                        fireKeyboard(composer, "keyup", "Backspace");
-                        fireChange(composer);
-
-                        try {
-                            if (
-                                Number.isFinite(originalSelectionStart) &&
-                                Number.isFinite(originalSelectionEnd)
-                            ) {
-                                composer.setSelectionRange(
-                                    originalSelectionStart,
-                                    originalSelectionEnd
-                                );
-                            }
-
-                            composer.scrollTop = originalScrollTop;
-                        } catch { }
-                    } catch (error) {
-                        console.debug("[thread-optimizer bridge] composer space removal failed", {
-                            reason,
-                            error: String(error?.message || error),
-                        });
-                    }
-                }, removeDelayMs);
-
-                result.ok = true;
-                result.attempted.push({
-                    method: "textarea-real-space-roundtrip",
-                    ok: true,
-                    removeDelayMs,
-                });
-
-                return result;
-            } catch (error) {
-                result.attempted.push({
-                    method: "textarea-real-space-roundtrip",
-                    ok: false,
-                    message: String(error?.message || error),
-                });
-            }
+            return "topology-mutation";
         }
 
-        if (composer?.isContentEditable) {
-            try {
-                const originalHtml = composer.innerHTML;
-                const originalText = composer.textContent || "";
-
-                fireKeyboard(composer, "keydown", " ");
-                fireBeforeInput(composer, "insertText", space);
-
-                composer.textContent = originalText + space;
-
-                fireInput(composer, "insertText", space);
-                fireKeyboard(composer, "keyup", " ");
-
-                window.setTimeout(() => {
-                    try {
-                        fireKeyboard(composer, "keydown", "Backspace");
-                        fireBeforeInput(composer, "deleteContentBackward", null);
-
-                        composer.innerHTML = originalHtml;
-
-                        fireInput(composer, "deleteContentBackward", null);
-                        fireKeyboard(composer, "keyup", "Backspace");
-                        fireChange(composer);
-                    } catch (error) {
-                        console.debug("[thread-optimizer bridge] contenteditable space removal failed", {
-                            reason,
-                            error: String(error?.message || error),
-                        });
-                    }
-                }, removeDelayMs);
-
-                result.ok = true;
-                result.attempted.push({
-                    method: "contenteditable-real-space-roundtrip",
-                    ok: true,
-                    removeDelayMs,
-                });
-
-                return result;
-            } catch (error) {
-                result.attempted.push({
-                    method: "contenteditable-real-space-roundtrip",
-                    ok: false,
-                    message: String(error?.message || error),
-                });
-            }
-        }
-
-        return result;
+        return "store-mutation";
     }
 
-    function requestStoreBackedConversationRefresh(store, {
-        reason = "store-prune-refresh",
-        currentLeafId = null,
-    } = {}) {
-        const result = {
-            ok: false,
-            reason,
-            attempted: [],
-        };
+    function validateBridgeMessage(data) {
+        switch (data.type) {
+            case "thread-optimizer:set-pruning-state": {
+                const prunedTurnCount = Number(data.prunedTurnCount);
+                const historyKeptExchanges = Number(data.historyKeptExchanges);
 
-        if (!store) {
-            result.reason = "store unavailable";
-            return result;
-        }
-
-        const leafId =
-            currentLeafId ||
-            getStoreCurrentLeafId(store);
-
-        /*
-        * The goal is not to change conversation state.
-        * The goal is to hit a real store setter that React already listens to.
-        * Typing causes a React render; this tries to cause the store-side equivalent.
-        */
-        if (leafId && typeof store.setCurrentLeafId === "function") {
-            try {
-                store.setCurrentLeafId(leafId);
-
-                result.ok = true;
-                result.attempted.push({
-                    method: "setCurrentLeafId",
+                return {
                     ok: true,
-                    leafId,
-                });
-            } catch (error) {
-                result.attempted.push({
-                    method: "setCurrentLeafId",
-                    ok: false,
-                    message: String(error?.message || error),
-                });
+                    value: {
+                        enabled: Boolean(data.enabled),
+                        prunedTurnCount:
+                            Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0
+                                ? prunedTurnCount
+                                : 0,
+                        historyKeptExchanges:
+                            Number.isFinite(historyKeptExchanges) &&
+                            historyKeptExchanges >= 1
+                                ? Math.floor(historyKeptExchanges)
+                                : 1,
+                    },
+                };
             }
-        }
 
-        if (typeof store.getBranch === "function") {
-            try {
-                store.getBranch(leafId);
+            case "thread-optimizer:prune-store-history": {
+                const historyKeptExchanges = Number(data.historyKeptExchanges);
 
-                result.attempted.push({
-                    method: "getBranch",
+                return {
                     ok: true,
-                    leafId,
-                });
-            } catch (error) {
-                result.attempted.push({
-                    method: "getBranch",
-                    ok: false,
-                    message: String(error?.message || error),
-                });
+                    value: {
+                        historyKeptExchanges:
+                            Number.isFinite(historyKeptExchanges) &&
+                            historyKeptExchanges >= 1
+                                ? Math.floor(historyKeptExchanges)
+                                : 1,
+                        reason:
+                            typeof data.reason === "string"
+                                ? data.reason.slice(0, 100)
+                                : "store-prune",
+                    },
+                };
             }
+
+            case "thread-optimizer:log-store-performance": {
+                return {
+                    ok: true,
+                    value: {},
+                };
+            }
+
+            case "thread-optimizer:set-store-read-optimization": {
+                return {
+                    ok: true,
+                    value: {
+                        enabled: Boolean(data.enabled),
+                        debug: Boolean(data.debug),
+                    },
+                };
+            }
+
+            case "thread-optimizer:visible-messages-ready": {
+                return {
+                    ok: true,
+                    value: {},
+                };
+            }
+
+            default:
+                return {
+                    ok: false,
+                    reason: "unknown message type",
+                };
         }
-
-        /*
-        * Last-resort browser-level signal. This does not mutate DOM and does not
-        * fake typing; it just gives any app listeners a harmless wake-up event.
-        */
-        try {
-            window.dispatchEvent(new CustomEvent("thread-optimizer:store-pruned", {
-                detail: {
-                    reason,
-                    currentLeafId: leafId,
-                },
-            }));
-
-            result.attempted.push({
-                method: "window.dispatchEvent",
-                ok: true,
-            });
-        } catch (error) {
-            result.attempted.push({
-                method: "window.dispatchEvent",
-                ok: false,
-                message: String(error?.message || error),
-            });
-        }
-
-        const composerNudgeResult = nudgeComposerReactState({
-            reason,
-        });
-
-        result.attempted.push({
-            method: "nudgeComposerReactState",
-            ok: composerNudgeResult.ok,
-            result: composerNudgeResult,
-        });
-
-        if (composerNudgeResult.ok) {
-            result.ok = true;
-        }
-
-        return result;
     }
 
     const bridge = {
@@ -1846,6 +279,11 @@
         __branchCacheLastInstallResult: null,
         __branchCacheClearScheduled: false,
 
+        __resolvedNodeFrameCacheInstalled: false,
+        __resolvedNodeFrameCache: null,
+        __resolvedNodeFrameCacheStats: null,
+        __resolveNodeFast: null,
+
         __storeValidationFailed: false,
 
         __branchCallSiteStats: null,
@@ -1885,6 +323,8 @@
         __nodeObjectCacheStats: null,
         __nodeObjectCacheApi: null,
 
+        ...cacheInstallerMethods,
+
         status() {
             return {
                 installed: true,
@@ -1902,54 +342,25 @@
                 storeValidationFailed: this.__storeValidationFailed,
                 storeProfilerInstalled: this.__storeProfilerInstalled,
                 methods: {
-                    deleteNode: Boolean(this.__store && typeof this.__store.deleteNode === "function"),
-                    getNodeIfExists: Boolean(this.__store && typeof this.__store.getNodeIfExists === "function"),
-                    messageIdToExistingNodeId: Boolean(
-                        this.__store && typeof this.__store.messageIdToExistingNodeId === "function"
+                    deleteNode: Boolean(
+                        this.__store &&
+                        typeof this.__store.deleteNode === "function"
                     ),
-                    getBranch: Boolean(this.__store && typeof this.__store.getBranch === "function"),
+                    getNodeIfExists: Boolean(
+                        this.__store &&
+                        typeof this.__store.getNodeIfExists === "function"
+                    ),
+                    messageIdToExistingNodeId: Boolean(
+                        this.__store &&
+                        typeof this.__store.messageIdToExistingNodeId === "function"
+                    ),
+                    getBranch: Boolean(
+                        this.__store &&
+                        typeof this.__store.getBranch === "function"
+                    ),
                 },
                 ...getStoreInfo(this.__store),
             };
-        },
-
-        ensureNodeObjectCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return null;
-
-            if (this.__nodeObjectCacheApi) {
-                return this.__nodeObjectCacheApi;
-            }
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    writes: 0,
-                    nullWrites: 0,
-                    cached: 0,
-                    lastClearReason: null,
-                    mode: "profiled:shared-node-object-cache",
-                }
-                : {
-                    cached: 0,
-                    lastClearReason: null,
-                    mode: "production:shared-node-object-cache",
-                };
-
-            const api = createNodeObjectCache({
-                store,
-                stats,
-                profiled,
-            });
-
-            this.__nodeObjectCacheApi = api;
-            this.__nodeObjectCache = api.cache;
-            this.__nodeObjectCacheStats = stats;
-
-            return api;
         },
 
         hasStore() {
@@ -2091,18 +502,24 @@
                 }
 
                 if (!this.__store) {
-                    console.debug("[thread-optimizer bridge] kept pending store prune because store disappeared", {
-                        reason,
-                        pending,
-                    });
+                    console.debug(
+                        "[thread-optimizer bridge] kept pending store prune because store disappeared",
+                        {
+                            reason,
+                            pending,
+                        }
+                    );
                     return;
                 }
 
                 if (!this.__knownPruningEnabled) {
-                    console.debug("[thread-optimizer bridge] dropped pending store prune because pruning is disabled", {
-                        reason,
-                        pending,
-                    });
+                    console.debug(
+                        "[thread-optimizer bridge] dropped pending store prune because pruning is disabled",
+                        {
+                            reason,
+                            pending,
+                        }
+                    );
 
                     this.__pendingStoreHistoryPrune = null;
                     return;
@@ -2141,10 +558,13 @@
 
         scheduleStartupStorePrune(reason = "store-registered") {
             if (!this.__knownPruningEnabled) {
-                console.debug("[thread-optimizer bridge] skipped startup store prune because pruning is disabled", {
-                    reason,
-                    historyKeptExchanges: this.__knownHistoryKeptExchanges,
-                });
+                console.debug(
+                    "[thread-optimizer bridge] skipped startup store prune because pruning is disabled",
+                    {
+                        reason,
+                        historyKeptExchanges: this.__knownHistoryKeptExchanges,
+                    }
+                );
 
                 return {
                     ok: true,
@@ -2224,7 +644,8 @@
 
             if (!validation.ok) {
                 rejectStore(store, validation.reason);
-                this.__lastError = `registerStore rejected candidate: ${validation.reason}`;
+                this.__lastError =
+                    `registerStore rejected candidate: ${validation.reason}`;
                 return false;
             }
 
@@ -2236,7 +657,6 @@
                 return true;
             }
 
-            // Do not replace a hydrated/live store with a smaller bootstrap/root store.
             if (currentStore && nextNodeCount < currentNodeCount) {
                 console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
                     currentNodeCount,
@@ -2245,7 +665,6 @@
                 return false;
             }
 
-            // Critical: fully unwrap the old store before touching the new one.
             this.disableStoreReadOptimization?.({ debug: false });
             this.resetInstalledStoreEnhancements();
 
@@ -2271,19 +690,26 @@
                 });
 
                 if (!result?.ok) {
-                    console.warn("[thread-optimizer bridge] optimization failed after store registration", result);
+                    console.warn(
+                        "[thread-optimizer bridge] optimization failed after store registration",
+                        result
+                    );
 
                     this.disableStoreReadOptimization?.({ debug: false });
                     this.resetInstalledStoreEnhancements();
 
-                    this.__lastError = `optimization failed: ${result?.reason || "unknown"}`;
+                    this.__lastError =
+                        `optimization failed: ${result?.reason || "unknown"}`;
                     this.__storeValidationFailed = true;
 
                     return false;
                 }
 
                 if (this.__storeReadOptimizationDebug) {
-                    console.log("[thread-optimizer bridge] re-applied store read optimization after store registration", result);
+                    console.log(
+                        "[thread-optimizer bridge] re-applied store read optimization after store registration",
+                        result
+                    );
                 }
             }
 
@@ -2296,7 +722,11 @@
         repairDeletedNodeReferences(deletedNodeIds) {
             const store = this.__store;
 
-            if (!store || !Array.isArray(deletedNodeIds) || deletedNodeIds.length === 0) {
+            if (
+                !store ||
+                !Array.isArray(deletedNodeIds) ||
+                deletedNodeIds.length === 0
+            ) {
                 return {
                     ok: true,
                     repairedParents: 0,
@@ -2394,17 +824,28 @@
                 store[methodName] = original;
             };
 
-            temporarilyRestore("messageIdToExistingNodeId", "__messageIdIndexOriginal");
-            temporarilyRestore("getNodeIfExists", "__existingNodeStableCacheOriginal");
-            temporarilyRestore("getNodeByIdOrMessageId", "__getNodeByIdOrMessageIdCacheOriginal");
+            temporarilyRestore(
+                "messageIdToExistingNodeId",
+                "__messageIdIndexOriginal"
+            );
+            temporarilyRestore(
+                "getNodeIfExists",
+                "__existingNodeStableCacheOriginal"
+            );
+            temporarilyRestore(
+                "getNodeByIdOrMessageId",
+                "__getNodeByIdOrMessageIdCacheOriginal"
+            );
 
-            // Branch wrappers should not be involved while topology is changing.
             const branchOriginals = this.__branchCacheOriginals;
             if (branchOriginals) {
                 for (const methodName of ["getBranch"]) {
                     const original = branchOriginals[methodName];
 
-                    if (typeof original === "function" && store[methodName] !== original) {
+                    if (
+                        typeof original === "function" &&
+                        store[methodName] !== original
+                    ) {
                         restore.push([methodName, store[methodName]]);
                         store[methodName] = original;
                     }
@@ -2441,7 +882,10 @@
                 };
             }
 
-            const keepCount = Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
+            const keepCount = Math.max(
+                1,
+                Math.floor(Number(historyKeptExchanges) || 1)
+            );
             const rootId = getStoreRootId(store);
             const currentLeafId = getStoreCurrentLeafId(store);
 
@@ -2478,7 +922,10 @@
                 if (!node?.id) continue;
 
                 if (keepNodeIds.has(node.id)) {
-                    skipped.push({ nodeId: node.id, reason: "kept recent exchange/root" });
+                    skipped.push({
+                        nodeId: node.id,
+                        reason: "kept recent exchange/root",
+                    });
                     continue;
                 }
 
@@ -2516,7 +963,9 @@
                 deleteCount: deleteNodeIds.length,
                 keepSamples: Array.from(keepNodeIds).slice(0, 20),
                 deleteSamples: deleteNodeIds.slice(0, 25),
-                newestBranchSamples: branchNodes.slice(0, 12).map(summarizeStoreNode),
+                newestBranchSamples: branchNodes
+                    .slice(0, 12)
+                    .map(summarizeStoreNode),
             });
 
             if (deleteNodeIds.length === 0) {
@@ -2565,10 +1014,13 @@
                         currentLeafId,
                     });
 
-                    console.debug("[thread-optimizer bridge] delayed store prune refresh completed", {
-                        reason,
-                        refreshResult: result.refreshResult,
-                    });
+                    console.debug(
+                        "[thread-optimizer bridge] delayed store prune refresh completed",
+                        {
+                            reason,
+                            refreshResult: result.refreshResult,
+                        }
+                    );
                 }, 100);
             }
 
@@ -2600,12 +1052,14 @@
             } catch (error) {
                 this.__lastError = String(error?.message || error);
 
-                // Known ChatGPT internal signal issue. Do not warn repeatedly.
                 if (!this.__messageIdResolveWarningShown) {
                     this.__messageIdResolveWarningShown = true;
-                    console.debug("[thread-optimizer bridge] messageId resolver fallback unavailable", {
-                        error: this.__lastError,
-                    });
+                    console.debug(
+                        "[thread-optimizer bridge] messageId resolver fallback unavailable",
+                        {
+                            error: this.__lastError,
+                        }
+                    );
                 }
 
                 return null;
@@ -2697,11 +1151,7 @@
                 this.__anchorCount = roots.length;
 
                 const discoveryRun = this.__discoveryRuns;
-                const limits = {
-                    maxFibers: CONFIG.discovery.maxFibers,
-                    maxObjects: CONFIG.discovery.maxObjects,
-                    maxRoots: 200,
-                };
+                const limits = createDiscoveryLimits();
 
                 let totalVisitedFibers = 0;
                 let totalVisitedObjects = 0;
@@ -2735,7 +1185,11 @@
                 this.__initTiming.lastDiscoveryMs = elapsed;
                 this.__initTiming.firstDiscoveryCompletedAt ??= performance.now();
 
-                if (this.__found || this.__discoveryRuns === 1 || this.__discoveryRuns % 5 === 0) {
+                if (
+                    this.__found ||
+                    this.__discoveryRuns === 1 ||
+                    this.__discoveryRuns % 5 === 0
+                ) {
                     console.log(DISCOVERY_LOG_PREFIX, "discovery completed", {
                         found: this.__found,
                         elapsedMs: Math.round(elapsed * 10) / 10,
@@ -2783,7 +1237,9 @@
                 : { ok: false, reason: "store not registered" };
 
             if (currentCheck.ok) {
-                this.lockStoreDiscovery(`${reason}:current-store-resolves-visible-newest`);
+                this.lockStoreDiscovery(
+                    `${reason}:current-store-resolves-visible-newest`
+                );
 
                 const result = {
                     ok: true,
@@ -2824,7 +1280,9 @@
                 : { ok: false, reason: "store not registered after rediscovery" };
 
             if (nextCheck.ok) {
-                this.lockStoreDiscovery(`${reason}:rediscovered-store-resolves-visible-newest`);
+                this.lockStoreDiscovery(
+                    `${reason}:rediscovered-store-resolves-visible-newest`
+                );
             } else if (nextNodeCount > 1) {
                 this.lockStoreDiscovery(`${reason}:rediscovered-hydrated-store`);
             }
@@ -2847,6 +1305,14 @@
         installStoreProfiler() {
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
+
+            if (!ENABLE_STORE_PROFILER && !this.__storeReadOptimizationDebug) {
+                return {
+                    ok: true,
+                    skipped: true,
+                    reason: "store profiler disabled",
+                };
+            }
 
             if (this.__storeProfilerInstalled) {
                 return {
@@ -2901,7 +1367,9 @@
                 new Set([
                     ...EXPLICIT_PROFILE_METHODS,
                     ...Object.keys(store),
-                    ...Object.getOwnPropertyNames(Object.getPrototypeOf(store) || {}),
+                    ...Object.getOwnPropertyNames(
+                        Object.getPrototypeOf(store) || {}
+                    ),
                 ])
             ).filter((methodName) => {
                 if (EXCLUDED_PROFILE_METHODS.has(methodName)) return false;
@@ -2933,11 +1401,12 @@
                     const startedAt = performance.now();
 
                     if (shouldCaptureCallSite) {
-                        const profile = bridgeRef.__getNodeByIdOrMessageIdCallSites ??= {
-                            total: 0,
-                            callSites: {},
-                            max: 50,
-                        };
+                        const profile =
+                            bridgeRef.__getNodeByIdOrMessageIdCallSites ??= {
+                                total: 0,
+                                callSites: {},
+                                max: 50,
+                            };
 
                         profile.total += 1;
 
@@ -2952,7 +1421,10 @@
 
                             if (keys.length >= profile.max) {
                                 const lowest = keys.reduce((a, b) =>
-                                    profile.callSites[a].calls < profile.callSites[b].calls ? a : b
+                                    profile.callSites[a].calls <
+                                    profile.callSites[b].calls
+                                        ? a
+                                        : b
                                 );
                                 delete profile.callSites[lowest];
                             }
@@ -2968,18 +1440,23 @@
                     try {
                         return original.apply(store, args);
                     } catch (error) {
-                        const methodProfile = bridgeRef.__storeProfile?.methods?.[methodName];
+                        const methodProfile =
+                            bridgeRef.__storeProfile?.methods?.[methodName];
                         if (methodProfile) methodProfile.errors += 1;
                         throw error;
                     } finally {
                         const elapsed = performance.now() - startedAt;
-                        const methodProfile = bridgeRef.__storeProfile?.methods?.[methodName];
+                        const methodProfile =
+                            bridgeRef.__storeProfile?.methods?.[methodName];
 
                         if (methodProfile) {
                             methodProfile.calls += 1;
                             methodProfile.totalMs += elapsed;
                             methodProfile.lastMs = elapsed;
-                            methodProfile.maxMs = Math.max(methodProfile.maxMs, elapsed);
+                            methodProfile.maxMs = Math.max(
+                                methodProfile.maxMs,
+                                elapsed
+                            );
 
                             methodProfile.recentArgs.push(
                                 args.map((arg) => {
@@ -3022,7 +1499,9 @@
             }
 
             if (this.__store) {
-                for (const [methodName, original] of Object.entries(this.__storeProfilerOriginals)) {
+                for (const [methodName, original] of Object.entries(
+                    this.__storeProfilerOriginals
+                )) {
                     this.__store[methodName] = original;
                 }
             }
@@ -3072,7 +1551,9 @@
 
             const methods = {};
 
-            for (const [methodName, profile] of Object.entries(this.__storeProfile.methods)) {
+            for (const [methodName, profile] of Object.entries(
+                this.__storeProfile.methods
+            )) {
                 methods[methodName] = {
                     ...profile,
                     avgMs: profile.calls > 0 ? profile.totalMs / profile.calls : 0,
@@ -3099,537 +1580,9 @@
             };
         },
 
-        installMessageIdIndex({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__messageIdIndexInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.getMessageIdIndexStats(),
-                };
-            }
-
-            const stats = {
-                hits: 0,
-                misses: 0,
-                fallbackHits: 0,
-                activeHits: 0,
-                activeMisses: 0,
-                cached: 0,
-                mode: profiled
-                    ? "profiled:lazy-unbounded-stale-plus-active-epoch"
-                    : "production:lazy-unbounded-stale-plus-active-epoch",
-            };
-
-            const index = new Map();
-
-            this.__messageIdIndex = index;
-            this.__messageIdIndexStats = stats;
-
-            const result = installStoreMethodWrapper({
-                bridge: this,
-                methodName: "messageIdToExistingNodeId",
-                originalSlot: "__messageIdIndexOriginal",
-                installedFlag: "__messageIdIndexInstalled",
-                createWrapper: ({ store, original, bridge }) => {
-                    const getCurrentLeafId = createCurrentLeafIdReader(store);
-
-                    let activeEpoch = -1;
-                    let activeKey = null;
-                    let activeValue = null;
-
-                    function remember(key, value) {
-                        if (!key || !value) return;
-
-                        index.set(key, value);
-
-                        if (value !== key) {
-                            index.set(value, value);
-                        }
-
-                        if (profiled) stats.cached = index.size;
-                    }
-
-                    if (profiled) {
-                        return function lazyMessageIdToExistingNodeIdProfiled(messageId) {
-                            const cached = index.get(messageId);
-
-                            if (cached !== undefined) {
-                                stats.hits += 1;
-                                return cached;
-                            }
-
-                            const currentLeafId = getCurrentLeafId();
-
-                            if (messageId === currentLeafId) {
-                                const epoch = bridge.__storeReadEpoch;
-
-                                if (
-                                    activeEpoch === epoch &&
-                                    activeKey === messageId
-                                ) {
-                                    stats.activeHits += 1;
-                                    return activeValue;
-                                }
-
-                                stats.activeMisses += 1;
-
-                                const result = original.call(store, messageId) ?? null;
-
-                                activeEpoch = epoch;
-                                activeKey = messageId;
-                                activeValue = result;
-
-                                return result;
-                            }
-
-                            stats.misses += 1;
-
-                            const result = original.call(store, messageId) ?? null;
-
-                            if (result) {
-                                stats.fallbackHits += 1;
-                                remember(messageId, result);
-                            }
-
-                            return result;
-                        };
-                    }
-
-                    return function lazyMessageIdToExistingNodeIdProduction(messageId) {
-                        const cached = index.get(messageId);
-                        if (cached !== undefined) return cached;
-
-                        const currentLeafId = getCurrentLeafId();
-
-                        if (messageId === currentLeafId) {
-                            const epoch = bridge.__storeReadEpoch;
-
-                            if (
-                                activeEpoch === epoch &&
-                                activeKey === messageId
-                            ) {
-                                return activeValue;
-                            }
-
-                            const result = original.call(store, messageId) ?? null;
-
-                            activeEpoch = epoch;
-                            activeKey = messageId;
-                            activeValue = result;
-
-                            return result;
-                        }
-
-                        const result = original.call(store, messageId) ?? null;
-
-                        if (result) {
-                            remember(messageId, result);
-                        }
-
-                        return result;
-                    };
-                },
-            });
-
-            return {
-                ...result,
-                indexSize: this.__messageIdIndex?.size ?? 0,
-                profiled,
-            };
-        },
-
-        uninstallMessageIdIndex() {
-            if (!this.__messageIdIndexInstalled) {
-                return {
-                    ok: true,
-                    alreadyUninstalled: true,
-                };
-            }
-
-            const original =
-                typeof this.__messageIdIndexOriginal === "function"
-                    ? this.__messageIdIndexOriginal
-                    : this.__messageIdIndexOriginal?.messageIdToExistingNodeId;
-
-            if (this.__store && typeof original === "function") {
-                this.__store.messageIdToExistingNodeId = original;
-            }
-
-            this.__messageIdIndexInstalled = false;
-            this.__messageIdIndexOriginal = null;
-            this.__messageIdIndex = null;
-            this.__messageIdIndexStats = null;
-
-            return {
-                ok: true,
-                uninstalled: true,
-            };
-        },
-
-        getMessageIdIndexStats() {
-            return {
-                installed: this.__messageIdIndexInstalled,
-                size: this.__messageIdIndex?.size ?? 0,
-                stats: this.__messageIdIndexStats,
-            };
-        },    
-
-        installExistingNodeStableCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__existingNodeStableCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__existingNodeStableCacheStats,
-                };
-            }
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    cached: 0,
-                    activeCached: 0,
-                    normalOriginal: 0,
-                    normalCached: 0,
-                    mode: "profiled:persistent+confirmed-direct-index+live-epoch",
-                }
-                : {
-                    cached: 0,
-                    mode: "production:persistent+confirmed-direct-index+live-epoch",
-                };
-
-            const frameCache = createPersistentCache({
-                stats,
-                profiled,
-            });
-
-            this.__confirmedExistingNodeIds ??= new Set();
-            this.__existingNodeStableCacheApi = frameCache;
-            this.__existingNodeStableCache = frameCache.cache;
-            this.__existingNodeStableCacheStats = stats;
-
-            const result = installStoreMethodWrapper({
-                bridge: this,
-                methodName: "getNodeIfExists",
-                originalSlot: "__existingNodeStableCacheOriginal",
-                installedFlag: "__existingNodeStableCacheInstalled",
-                createWrapper: ({ store, original, bridge }) => {
-                    const get = frameCache.get;
-                    const set = frameCache.set;
-
-                    let activeEpoch = -1;
-                    let activeId = null;
-                    let activeValue = null;
-
-                    if (profiled) {
-                        return function cachedGetNodeIfExistsLiveProfiled(id) {
-                            const epoch = bridge.__storeReadEpoch;
-
-                            if (
-                                activeEpoch === epoch &&
-                                activeId === id
-                            ) {
-                                stats.activeCached += 1;
-                                return activeValue;
-                            }
-
-                            const cached = get(id);
-
-                            if (cached !== undefined) {
-                                stats.normalCached += 1;
-
-                                activeEpoch = epoch;
-                                activeId = id;
-                                activeValue = cached;
-
-                                return cached;
-                            }
-
-                            stats.normalOriginal += 1;
-
-                            const result =
-                                original.call(store, id) ?? null;
-
-                            if (
-                                result !== null &&
-                                result.message?.status !== "in_progress"
-                            ) {
-                                set(id, result);
-                            }
-
-                            activeEpoch = epoch;
-                            activeId = id;
-                            activeValue = result;
-
-                            return result;
-                        };
-                    }
-
-                    return function cachedGetNodeIfExistsLive(id) {
-                        const epoch = bridge.__storeReadEpoch;
-
-                        if (
-                            activeEpoch === epoch &&
-                            activeId === id
-                        ) {
-                            return activeValue;
-                        }
-
-                        const cached = get(id);
-
-                        if (cached !== undefined) {
-                            activeEpoch = epoch;
-                            activeId = id;
-                            activeValue = cached;
-
-                            return cached;
-                        }
-
-                        const result =
-                            original.call(store, id) ?? null;
-
-                        if (
-                            result !== null &&
-                            result.message?.status !== "in_progress"
-                        ) {
-                            set(id, result);
-                        }
-
-                        activeEpoch = epoch;
-                        activeId = id;
-                        activeValue = result;
-
-                        return result;
-                    };
-                },
-            });
-
-            return {
-                ...result,
-                profiled,
-            };
-        },
-
-        uninstallExistingNodeStableCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__existingNodeStableCacheOriginal",
-                installedFlag: "__existingNodeStableCacheInstalled",
-            });
-        },
-
-        getExistingNodeStableCacheStats() {
-            return getCacheSnapshot(
-                this,
-                "__existingNodeStableCacheInstalled",
-                "__existingNodeStableCache",
-                "__existingNodeStableCacheStats"
-            );
-        },
-
-        installGetNodeByIdOrMessageIdCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__getNodeByIdOrMessageIdCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__getNodeByIdOrMessageIdCacheStats,
-                };
-            }
-
-            const original = getStoreMethod(store, "getNodeByIdOrMessageId");
-
-            if (!original) {
-                return unavailable("getNodeByIdOrMessageId unavailable");
-            }
-
-            const nodeCache = this.ensureNodeObjectCache({ profiled });
-
-            const stats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    writes: 0,
-                    nullWrites: 0,
-                    liveBypasses: 0,
-                    inProgressBypasses: 0,
-                    cached: 0,
-                    mode: "profiled:id-alias-cache+shared-node-cache:stable-only",
-                }
-                : {
-                    cached: 0,
-                    mode: "production:id-alias-cache+shared-node-cache:stable-only",
-                };
-
-            const aliasCache = createPersistentCache({
-                stats,
-                profiled,
-            });
-
-            this.__getNodeByIdOrMessageIdCache = aliasCache.cache;
-            this.__getNodeByIdOrMessageIdCacheStats = stats;
-
-            function readCurrentLeafId() {
-                return typeof store.currentLeafId === "function"
-                    ? store.currentLeafId()
-                    : store.currentLeafId;
-            }
-
-            function getCachedNode(id) {
-                const cachedNodeId = aliasCache.get(id);
-
-                if (cachedNodeId === undefined) {
-                    return undefined;
-                }
-
-                if (cachedNodeId === null) {
-                    return null;
-                }
-
-                return nodeCache
-                    ? nodeCache.resolve(cachedNodeId)
-                    : getNodeDirect(store, cachedNodeId);
-            }
-
-            function remember(id, node) {
-                if (!id) return node ?? null;
-
-                if (!node?.id) {
-                    aliasCache.set(id, null);
-
-                    if (profiled) {
-                        stats.writes += 1;
-                        stats.nullWrites += 1;
-                        stats.cached = aliasCache.cache.size;
-                    }
-
-                    return null;
-                }
-
-                if (nodeCache) {
-                    nodeCache.set(node.id, node);
-                }
-
-                aliasCache.set(id, node.id);
-
-                if (node.id !== id) {
-                    aliasCache.set(node.id, node.id);
-                }
-
-                if (profiled) {
-                    stats.writes += 1;
-                    stats.cached = aliasCache.cache.size;
-                }
-
-                return node;
-            }
-
-            const result = installStoreMethodWrapper({
-                bridge: this,
-                methodName: "getNodeByIdOrMessageId",
-                originalSlot: "__getNodeByIdOrMessageIdCacheOriginal",
-                installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
-                createWrapper: ({ store, original }) => {
-                    if (profiled) {
-                        return function cachedGetNodeByIdOrMessageIdProfiled(id) {
-                            if (!id) {
-                                return original.call(store, id) ?? null;
-                            }
-
-                            const currentLeafId = readCurrentLeafId();
-
-                            if (id === currentLeafId) {
-                                stats.liveBypasses += 1;
-                                return original.call(store, id) ?? null;
-                            }
-
-                            const cached = getCachedNode(id);
-
-                            if (cached !== undefined) {
-                                stats.hits += 1;
-                                return cached;
-                            }
-
-                            stats.misses += 1;
-
-                            const result =
-                                original.call(store, id) ?? null;
-
-                            if (result?.message?.status === "in_progress") {
-                                stats.inProgressBypasses += 1;
-                                return result;
-                            }
-
-                            return remember(id, result);
-                        };
-                    }
-
-                    return function cachedGetNodeByIdOrMessageIdProduction(id) {
-                        if (!id) {
-                            return original.call(store, id) ?? null;
-                        }
-
-                        if (id === readCurrentLeafId()) {
-                            return original.call(store, id) ?? null;
-                        }
-
-                        const cached = getCachedNode(id);
-
-                        if (cached !== undefined) {
-                            return cached;
-                        }
-
-                        const result =
-                            original.call(store, id) ?? null;
-
-                        if (result?.message?.status === "in_progress") {
-                            return result;
-                        }
-
-                        return remember(id, result);
-                    };
-                },
-            });
-
-            return {
-                ...result,
-                profiled,
-            };
-        },
-
-        uninstallGetNodeByIdOrMessageIdCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__getNodeByIdOrMessageIdCacheOriginal",
-                installedFlag: "__getNodeByIdOrMessageIdCacheInstalled",
-            });
-        },
-
-        getGetNodeByIdOrMessageIdCacheStats() {
-            return getCacheSnapshot(
-                this,
-                "__getNodeByIdOrMessageIdCacheInstalled",
-                "__getNodeByIdOrMessageIdCache",
-                "__getNodeByIdOrMessageIdCacheStats"
-            );
-        },
-
         recordBranchCallSite(methodName, args) {
             if (!ENABLE_BRANCH_CALLSITE_STATS) return;
+
             const stats = this.__branchCallSiteStats ??= {
                 installed: true,
                 totalCalls: 0,
@@ -3643,7 +1596,7 @@
 
             let stackKey = "stack capture disabled";
 
-            if (ENABLE_BRANCH_CALLSITE_STATS && this.__branchCallSiteCaptureStacks) {
+            if (this.__branchCallSiteCaptureStacks) {
                 stackKey = normalizeStack(new Error().stack);
             }
 
@@ -3652,9 +1605,9 @@
             const argSummary = {
                 firstArg:
                     typeof firstArg === "string" ||
-                        typeof firstArg === "number" ||
-                        typeof firstArg === "boolean" ||
-                        firstArg == null
+                    typeof firstArg === "number" ||
+                    typeof firstArg === "boolean" ||
+                    firstArg == null
                         ? firstArg
                         : typeof firstArg,
                 argCount: args.length,
@@ -3664,7 +1617,8 @@
 
             if (existing) {
                 existing.calls += 1;
-                existing.methods[methodName] = (existing.methods[methodName] || 0) + 1;
+                existing.methods[methodName] =
+                    (existing.methods[methodName] || 0) + 1;
                 existing.lastArgs = argSummary;
                 existing.lastSeenAt = Date.now();
                 return;
@@ -3674,7 +1628,8 @@
 
             if (keys.length >= stats.maxCallSites) {
                 const lowestKey = keys.reduce((lowest, key) => {
-                    return stats.callSites[key].calls < stats.callSites[lowest].calls
+                    return stats.callSites[key].calls <
+                        stats.callSites[lowest].calls
                         ? key
                         : lowest;
                 }, keys[0]);
@@ -3712,6 +1667,7 @@
                     topCallSites: [],
                 };
             }
+
             if (!this.__branchCallSiteStats) {
                 return {
                     installed: false,
@@ -3737,338 +1693,6 @@
             };
         },
 
-        installBranchCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__branchCacheInstalled) {
-                return {
-                    ok: true,
-                    alreadyInstalled: true,
-                    stats: this.__branchCacheStats,
-                };
-            }
-
-            const getBranchOriginal = getStoreMethod(store, "getBranch");
-
-            const originals = {};
-
-            if (getBranchOriginal) {
-                originals.getBranch = getBranchOriginal;
-            }
-
-            if (Object.keys(originals).length === 0) {
-                return { ok: false, reason: "no branch methods available" };
-            }
-
-            const getBranchStats = profiled
-                ? {
-                    hits: 0,
-                    misses: 0,
-                    cached: 0,
-                    mode: "profiled:persistent:getBranch",
-                }
-                : {
-                    mode: "production:persistent:getBranch",
-                };
-
-            const getBranchCache = createPersistentCache({
-                stats: getBranchStats,
-                profiled,
-            });
-
-            this.__branchCache = {
-                getBranch: getBranchCache.cache,
-            };
-
-            this.__branchCacheStats = {
-                getBranch: getBranchStats,
-            };
-
-            this.__branchCacheOriginals = originals;
-
-            const bridgeRef = this;
-
-            if (typeof getBranchOriginal === "function") {
-                const getBranchGet = getBranchCache.get;
-                const getBranchSet = getBranchCache.set;
-                const recordBranchCallSite = ENABLE_BRANCH_CALLSITE_STATS
-                    ? bridgeRef.recordBranchCallSite.bind(bridgeRef)
-                    : null;
-
-                store.getBranch = function cachedGetBranch(id, ...rest) {
-                    if (recordBranchCallSite) {
-                        recordBranchCallSite("getBranch", [id, ...rest]);
-                    }
-
-                    const cached = getBranchGet(id);
-                    if (cached !== undefined) return cached;
-
-                    const result = getBranchOriginal.call(store, id, ...rest);
-
-                    getBranchSet(id, result ?? null);
-                    return result ?? null;
-                };
-            }
-
-            this.__branchCacheInstalled = true;
-
-            const result = {
-                ok: true,
-                installed: true,
-                methods: Object.keys(originals),
-                profiled,
-            };
-
-            this.__branchCacheLastInstallResult = result;
-
-            return result;
-        },
-
-        uninstallBranchCache() {
-            return uninstallMethodFrameCache({
-                bridge: this,
-                originalSlot: "__branchCacheOriginals",
-                installedFlag: "__branchCacheInstalled",
-            });
-        },
-
-        clearBranchCache() {
-            const branchCache = this.__branchCache;
-
-            branchCache?.getBranch?.clear?.();
-
-            if (this.__branchCacheStats?.getBranch && "cached" in this.__branchCacheStats.getBranch) {
-                this.__branchCacheStats.getBranch.cached = 0;
-            }
-
-            return { ok: true };
-        },
-
-        getBranchCacheStats() {
-            return {
-                installed: Boolean(this.__branchCacheInstalled),
-                size: {
-                    getBranch: this.__branchCache?.getBranch?.size ?? 0,
-                },
-                stats: this.__branchCacheStats ?? null,
-                lastInstallResult: this.__branchCacheLastInstallResult ?? null,
-            };
-        },
-
-        installResolvedNodeFrameCache({
-            profiled = ENABLE_CACHE_PROFILING,
-        } = {}) {
-            const store = requireStore(this);
-            if (!store) return unavailable("store not registered");
-
-            if (this.__resolvedNodeFrameCacheInstalled) {
-                return { ok: true, alreadyInstalled: true };
-            }
-
-            const stats = createCacheStats(
-                profiled,
-                {
-                    calls: 0,
-                    hits: 0,
-                    misses: 0,
-
-                    nodeHits: 0,
-                    nullHits: 0,
-                    nodeWrites: 0,
-                    nullWrites: 0,
-                    dualKeyWrites: 0,
-
-                    resolvedNodeIds: 0,
-                    messageIdInputs: 0,
-                    nodeIdInputs: 0,
-                    unknownInputs: 0,
-
-                    cached: 0,
-                    mode: "profiled:persistent-id-alias+shared-node-cache",
-
-                    inputSamples: [],
-                    resultSamples: [],
-                },
-                {
-                    cached: 0,
-                    mode: "production:persistent-id-alias+shared-node-cache",
-                }
-            );
-
-            const aliasCache = createPersistentCache({
-                stats,
-                profiled,
-            });
-
-            const nodeCache = this.ensureNodeObjectCache({ profiled });
-
-            this.__resolvedNodeFrameCache = aliasCache.cache;
-            this.__resolvedNodeFrameCacheStats = stats;
-
-            const bridgeRef = this;
-
-            function classifyInput(id) {
-                if (typeof id === "string") {
-                    if (id.startsWith("client-") || /^[0-9a-f-]{20,}$/i.test(id)) {
-                        return "node";
-                    }
-
-                    return "message";
-                }
-
-                return "unknown";
-            }
-
-            function remember(inputId, node) {
-                if (node?.id) {
-                    if (nodeCache) {
-                        nodeCache.set(node.id, node);
-                    }
-
-                    aliasCache.set(inputId, node.id);
-
-                    if (node.id !== inputId) {
-                        aliasCache.set(node.id, node.id);
-
-                        if (profiled) {
-                            stats.dualKeyWrites += 1;
-                        }
-                    }
-
-                    if (profiled) {
-                        stats.nodeWrites += 1;
-                        stats.resolvedNodeIds += 1;
-                    }
-
-                    return node;
-                }
-
-                aliasCache.set(inputId, null);
-
-                if (profiled) {
-                    stats.nullWrites += 1;
-                }
-
-                return null;
-            }
-
-            function getCachedResolvedNode(id) {
-                const cachedNodeId = aliasCache.get(id);
-
-                if (cachedNodeId === undefined) {
-                    return undefined;
-                }
-
-                if (cachedNodeId === null) {
-                    return null;
-                }
-
-                return nodeCache
-                    ? nodeCache.resolve(cachedNodeId)
-                    : getNodeDirect(store, cachedNodeId);
-            }
-
-            if (profiled) {
-                this.__resolveNodeFast = function resolveNodeFastProfiled(id) {
-                    stats.calls += 1;
-
-                    const inputType = classifyInput(id);
-
-                    if (inputType === "node") {
-                        stats.nodeIdInputs += 1;
-                    } else if (inputType === "message") {
-                        stats.messageIdInputs += 1;
-                    } else {
-                        stats.unknownInputs += 1;
-                    }
-
-                    const cached = getCachedResolvedNode(id);
-
-                    if (cached !== undefined) {
-                        stats.hits += 1;
-
-                        if (cached === null) {
-                            stats.nullHits += 1;
-                        } else {
-                            stats.nodeHits += 1;
-                        }
-
-                        return cached;
-                    }
-
-                    stats.misses += 1;
-
-                    const node = resolveNodeCore(bridgeRef, id);
-
-                    if (stats.inputSamples.length < 20) {
-                        stats.inputSamples.push({
-                            id,
-                            inputType,
-                        });
-                    }
-
-                    if (stats.resultSamples.length < 20) {
-                        stats.resultSamples.push({
-                            input: id,
-                            resultId: node?.id ?? null,
-                            resultType: node ? typeof node : null,
-                            keys: node && typeof node === "object"
-                                ? Object.keys(node).slice(0, 20)
-                                : null,
-                        });
-                    }
-
-                    return remember(id, node);
-                };
-            } else {
-                this.__resolveNodeFast = function resolveNodeFastProduction(id) {
-                    const cached = getCachedResolvedNode(id);
-
-                    if (cached !== undefined) {
-                        return cached;
-                    }
-
-                    const node = resolveNodeCore(bridgeRef, id);
-
-                    return remember(id, node);
-                };
-            }
-
-            this.__resolvedNodeFrameCacheInstalled = true;
-
-            return {
-                ok: true,
-                installed: true,
-                methods: ["resolveNodeFast"],
-                profiled,
-            };
-        },
-
-        uninstallResolvedNodeFrameCache() {
-            if (!this.__resolvedNodeFrameCacheInstalled) {
-                return { ok: true, alreadyUninstalled: true };
-            }
-
-            this.__resolvedNodeFrameCacheInstalled = false;
-            this.__resolvedNodeFrameCache = null;
-            this.__resolvedNodeFrameCacheStats = null;
-            this.__resolveNodeFast = null;
-
-            return { ok: true, uninstalled: true };
-        },
-
-        getResolvedNodeFrameCacheStats() {
-            return getCacheSnapshot(
-                this,
-                "__resolvedNodeFrameCacheInstalled",
-                "__resolvedNodeFrameCache",
-                "__resolvedNodeFrameCacheStats"
-            );
-        },
-
         installFindNodeCallSiteProfiler({
             maxCallSites = 50,
             sampleEvery = 100,
@@ -4078,14 +1702,20 @@
             const store = requireStore(this);
             if (!store) return unavailable("store not registered");
 
+            if (!ENABLE_FIND_NODE_CALLSITE_STATS) {
+                return {
+                    ok: true,
+                    skipped: true,
+                    reason: "findNode call-site profiler disabled",
+                };
+            }
+
             if (this.__findNodeCallSiteProfilerInstalled) {
                 return { ok: true, alreadyInstalled: true };
             }
 
             const original = getStoreMethod(store, "findNode");
             if (!original) return unavailable("findNode unavailable");
-
-            const bridgeRef = this;
 
             const stats = {
                 installedAt: Date.now(),
@@ -4121,7 +1751,9 @@
                         .call(value)
                         .slice(0, predicateSourcePreviewLength);
                 } catch (error) {
-                    return `[[Function#toString failed: ${String(error?.message || error)}]]`;
+                    return `[[Function#toString failed: ${String(
+                        error?.message || error
+                    )}]]`;
                 }
             }
 
@@ -4178,7 +1810,10 @@
 
                         if (keys.length >= maxCallSites) {
                             const lowest = keys.reduce((a, b) =>
-                                stats.callSites[a].calls < stats.callSites[b].calls ? a : b
+                                stats.callSites[a].calls <
+                                stats.callSites[b].calls
+                                    ? a
+                                    : b
                             );
 
                             delete stats.callSites[lowest];
@@ -4236,7 +1871,10 @@
             const stats = this.__findNodeCallSiteProfilerStats;
 
             if (!stats) {
-                return { ok: false, reason: "findNode call-site profiler not installed" };
+                return {
+                    ok: false,
+                    reason: "findNode call-site profiler not installed",
+                };
             }
 
             stats.totalCalls = 0;
@@ -4269,7 +1907,9 @@
                 maxPredicateSourcesPerSite: stats.maxPredicateSourcesPerSite,
                 topCallSites: Object.entries(stats.callSites)
                     .map(([stack, data]) => {
-                        const topPredicateSources = Object.entries(data.predicateSources || {})
+                        const topPredicateSources = Object.entries(
+                            data.predicateSources || {}
+                        )
                             .map(([source, sourceData]) => ({
                                 source,
                                 calls: sourceData.calls,
@@ -4321,133 +1961,6 @@
             };
         },
 
-        applyStoreReadOptimization({
-            debug = false,
-            clearStats = false,
-        } = {}) {
-            const startedAt = performance.now();
-
-            this.__storeReadOptimizationRequested = true;
-            this.__storeReadOptimizationDebug = Boolean(debug);
-
-            if (!this.__store) {
-                return {
-                    ok: false,
-                    reason: "store not registered",
-                };
-            }
-
-            const profiled = ENABLE_CACHE_PROFILING || Boolean(debug);
-            const results = [];
-
-            const installIfEnabled = (enabled, name, installer, options = {}) => {
-                if (!enabled) {
-                    results.push({
-                        name,
-                        skipped: true,
-                        reason: "disabled by config",
-                    });
-                    return;
-                }
-
-                if (typeof installer !== "function") {
-                    results.push({
-                        name,
-                        ok: false,
-                        reason: "installer unavailable",
-                    });
-                    return;
-                }
-
-                const result = installer.call(this, {
-                    profiled,
-                    clearStats,
-                    ...options,
-                });
-
-                results.push({
-                    name,
-                    ...result,
-                });
-            };
-
-            installIfEnabled(
-                ENABLE_MESSAGE_ID_INDEX_CACHE,
-                "messageIdIndex",
-                this.installMessageIdIndex
-            );
-
-            installIfEnabled(
-                ENABLE_EXISTING_NODE_STABLE_CACHE,
-                "existingNodeStableCache",
-                this.installExistingNodeStableCache
-            );
-
-            installIfEnabled(
-                ENABLE_BRANCH_CACHE,
-                "branchCache",
-                this.installBranchCache
-            );
-
-            installIfEnabled(
-                ENABLE_RESOLVED_NODE_FRAME_CACHE,
-                "resolvedNodeFrameCache",
-                this.installResolvedNodeFrameCache
-            );
-
-            installIfEnabled(
-                ENABLE_GET_NODE_BY_ID_OR_MESSAGE_ID_CACHE,
-                "getNodeByIdOrMessageIdCache",
-                this.installGetNodeByIdOrMessageIdCache
-            );
-
-            if (ENABLE_STORE_PROFILER) {
-                results.push({
-                    name: "storeProfiler",
-                    ...this.installStoreProfiler(),
-                });
-            }
-
-            const durationMs = performance.now() - startedAt;
-
-            this.__initTiming.lastApplyOptimizationMs = durationMs;
-
-            if (debug || ENABLE_DEBUG) {
-                console.log(DISCOVERY_LOG_PREFIX, "optimization install completed", {
-                    durationMs,
-                    profiled,
-                    results,
-                });
-            }
-
-            return {
-                ok: true,
-                profiled,
-                durationMs,
-                results,
-            };
-        },
-
-        disableStoreReadOptimization({ debug = false } = {}) {
-            const result = {
-                profiler: this.uninstallStoreProfiler?.(),
-                findNodeCallSiteProfiler: this.uninstallFindNodeCallSiteProfiler?.(),
-
-                ...runStoreEnhancementUninstalls(this),
-
-                indexRefreshHooks: this.uninstallIndexRefreshHooks?.(),
-            };
-
-            if (debug) {
-                console.log("[thread-optimizer bridge] store read optimization disabled", result);
-            }
-
-            return {
-                ok: true,
-                ...result,
-            };
-        },
-
         clearPerformanceStats() {
             this.clearStoreProfile?.();
 
@@ -4457,7 +1970,8 @@
                 this.__messageIdIndexStats.fallbackHits = 0;
                 this.__messageIdIndexStats.activeHits = 0;
                 this.__messageIdIndexStats.activeMisses = 0;
-                this.__messageIdIndexStats.cached = this.__messageIdIndex?.size ?? 0;
+                this.__messageIdIndexStats.cached =
+                    this.__messageIdIndex?.size ?? 0;
             }
 
             for (const [cacheSlot, statsSlot] of STABLE_CACHE_SLOTS) {
@@ -4498,12 +2012,14 @@
                 status: this.status?.(),
                 messageIdIndex: this.getMessageIdIndexStats?.(),
                 existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
-                getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
+                getNodeByIdOrMessageIdCache:
+                    this.getGetNodeByIdOrMessageIdCacheStats?.(),
                 branchCache: this.getBranchCacheStats?.(),
                 resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
 
                 branchCallSites: this.getBranchCallSiteStats?.(),
-                getNodeByIdOrMessageIdCallSites: this.getNodeByIdOrMessageIdCallSiteStats?.(),
+                getNodeByIdOrMessageIdCallSites:
+                    this.getNodeByIdOrMessageIdCallSiteStats?.(),
                 initTiming: this.getInitTiming?.(),
                 profile: this.getStoreProfile?.(),
                 findNodeCallSites: this.getFindNodeCallSiteProfilerStats?.(),
@@ -4539,7 +2055,12 @@
             invalidationStats.byReason[reason] =
                 (invalidationStats.byReason[reason] || 0) + 1;
 
-            const recordInvalidation = (cacheName, action, sizeBefore = 0, extra = null) => {
+            const recordInvalidation = (
+                cacheName,
+                action,
+                sizeBefore = 0,
+                extra = null
+            ) => {
                 const cacheStats = invalidationStats.byCache[cacheName] ??= {
                     clears: 0,
                     skipped: 0,
@@ -4588,7 +2109,7 @@
                 });
             };
 
-            const recordCacheSkip = (cacheSlot, stats, why) => {
+            const recordCacheSkip = (cacheSlot, why) => {
                 const cache = this[cacheSlot];
 
                 recordInvalidation(cacheSlot, "skipped", cache?.size ?? 0, {
@@ -4597,7 +2118,7 @@
             };
 
             if (!shouldHardClear) {
-                for (const [cacheSlot, statsSlot] of STABLE_CACHE_SLOTS) {
+                for (const [cacheSlot] of STABLE_CACHE_SLOTS) {
                     if (cacheSlot === "__branchCache") {
                         recordBranchSkip("cache preserved until conversation/store reset");
                         continue;
@@ -4605,7 +2126,6 @@
 
                     recordCacheSkip(
                         cacheSlot,
-                        this[statsSlot],
                         "cache preserved until conversation/store reset"
                     );
                 }
@@ -4627,7 +2147,11 @@
 
                     this.clearBranchCache?.();
 
-                    recordInvalidation("__branchCache.getBranch", "cleared", getBranchSize);
+                    recordInvalidation(
+                        "__branchCache.getBranch",
+                        "cleared",
+                        getBranchSize
+                    );
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
                         if (this.__branchCacheStats.getBranch) {
@@ -4661,156 +2185,18 @@
             };
         },
 
-        getStoreReadCacheStats() {
-            return {
-                installed: Boolean(
-                    this.__messageIdIndexInstalled ||
-                    this.__existingNodeStableCacheInstalled ||
-                    this.__branchCacheInstalled ||
-                    this.__resolvedNodeFrameCacheInstalled
-                ),
-                messageIdIndex: this.getMessageIdIndexStats?.(),
-                existingNodeStableCache: this.getExistingNodeStableCacheStats?.(),
-                getNodeByIdOrMessageIdCache: this.getGetNodeByIdOrMessageIdCacheStats?.(),
-                branchCache: this.getBranchCacheStats?.(),
-                resolvedNodeFrameCache: this.getResolvedNodeFrameCacheStats?.(),
-            };
-        },
-
-        beginStoreTopologyMutation(reason = "topology-mutation") {
-            this.__storeReadEpoch = (this.__storeReadEpoch || 0) + 1;
-
-            this.__liveNodeCacheDirty = true;
-            this.__liveNodeCacheId = null;
-            this.__liveNodeCacheValue = null;
-
-            this.__lastLiveFindLeafId = null;
-            this.__lastLiveFindPredicateSource = null;
-            this.__lastLiveFindValue = null;
-
-            return {
-                ok: true,
-                reason,
-                epoch: this.__storeReadEpoch,
-            };
-        },
-
-        clearFullTopologyCaches(reason = "conversation-change") {
-            this.__storeReadEpoch = (this.__storeReadEpoch || 0) + 1;
-
-            this.__nodeObjectCacheApi?.clear?.(reason);
-            this.__existingNodeStableCacheApi?.clear?.(reason);
-
-            this.__messageIdIndex?.clear?.();
-            this.__getNodeByIdOrMessageIdCache?.clear?.();
-            this.__resolvedNodeFrameCache?.clear?.();
-
-            this.__leafDescendantCache?.clear?.();
-            this.__leafDescendantMissCache?.clear?.();
-
-            this.clearBranchCache?.();
-
-            this.__nodeIdDirectIndex = null;
-            this.__nodeIdDirectIndexSource = null;
-            this.__confirmedExistingNodeIds = null;
-
-            this.__liveNodeCacheDirty = true;
-            this.__liveNodeCacheId = null;
-            this.__liveNodeCacheValue = null;
-
-            this.__lastLiveFindLeafId = null;
-            this.__lastLiveFindPredicateSource = null;
-            this.__lastLiveFindValue = null;
-
-            return {
-                ok: true,
-                reason,
-                epoch: this.__storeReadEpoch,
-            };
-        },
-
-        clearCachesForDeletedNode(node, inputId = null) {
-            if (!node?.id) {
-                return { ok: false, reason: "node missing" };
-            }
-
-            const nodeId = node.id;
-            const parentId = node.parentId ?? null;
-            const childIds = Array.isArray(node.children)
-                ? node.children.filter(Boolean)
-                : [];
-
-            const messageId =
-                node.message?.id ||
-                node.message?.message_id ||
-                node.message?.metadata?.message_id ||
-                null;
-
-            const aliases = Array.from(
-                new Set([inputId, nodeId, messageId].filter(Boolean))
-            );
-
-            let deletedEntries = 0;
-
-            const deleteAliasesFromMap = (map) => {
-                if (!(map instanceof Map)) return 0;
-
-                let count = 0;
-
-                for (const alias of aliases) {
-                    if (map.delete(alias)) count += 1;
-                }
-
-                return count;
-            };
-
-            deletedEntries += deleteAliasesFromMap(this.__nodeObjectCache);
-            deletedEntries += deleteAliasesFromMap(this.__nodeIdDirectIndex);
-            deletedEntries += deleteAliasesFromMap(this.__messageIdIndex);
-            deletedEntries += deleteAliasesFromMap(this.__existingNodeStableCache);
-            deletedEntries += deleteAliasesFromMap(this.__getNodeByIdOrMessageIdCache);
-            deletedEntries += deleteAliasesFromMap(this.__resolvedNodeFrameCache);
-
-            // Branch cache:
-            // getBranch is current-leaf derived, so any topology mutation invalidates it.
-            this.clearBranchCache?.();
-
-            // Leaf caches are path/topology dependent. Clear whole.
-            this.__leafDescendantCache?.clear?.();
-            this.__leafDescendantMissCache?.clear?.();
-
-            this.__liveNodeCacheDirty = true;
-
-            if (this.__liveNodeCacheId === nodeId || aliases.includes(this.__liveNodeCacheId)) {
-                this.__liveNodeCacheId = null;
-                this.__liveNodeCacheValue = null;
-            }
-
-            if (this.__lastLiveFindValue?.id === nodeId) {
-                this.__lastLiveFindLeafId = null;
-                this.__lastLiveFindPredicateSource = null;
-                this.__lastLiveFindValue = null;
-            }
-
-            return {
-                ok: true,
-                nodeId,
-                parentId,
-                childIds,
-                aliases,
-                deletedEntries,
-            };
-        },
-
         getInitTiming() {
             const now = performance.now();
 
             return {
-                installedForMs: Math.round((now - this.__initTiming.installedAt) * 10) / 10,
+                installedForMs:
+                    Math.round((now - this.__initTiming.installedAt) * 10) / 10,
                 firstDiscoveryStartedAt: this.__initTiming.firstDiscoveryStartedAt,
                 firstDiscoveryCompletedAt: this.__initTiming.firstDiscoveryCompletedAt,
-                lastDiscoveryMs: Math.round(this.__initTiming.lastDiscoveryMs * 10) / 10,
-                lastApplyOptimizationMs: Math.round(this.__initTiming.lastApplyOptimizationMs * 10) / 10,
+                lastDiscoveryMs:
+                    Math.round(this.__initTiming.lastDiscoveryMs * 10) / 10,
+                lastApplyOptimizationMs:
+                    Math.round(this.__initTiming.lastApplyOptimizationMs * 10) / 10,
                 discoveryRuns: this.__discoveryRuns,
                 found: this.__found,
                 hasStore: Boolean(this.__store),
@@ -4830,17 +2216,18 @@
                 originalSlot: "__indexRefreshHookOriginals",
                 installedFlag: "__indexRefreshHooksInstalled",
                 unavailableReason: `${methodName} unavailable`,
-                createWrapper: ({ store, original, bridge }) => function indexedMutationWrapper(...args) {
-                    const res = original.apply(store, args);
+                createWrapper: ({ store, original, bridge }) =>
+                    function indexedMutationWrapper(...args) {
+                        const res = original.apply(store, args);
 
-                    if (clearCaches) {
-                        bridge.clearStoreReadCache?.(
-                            cacheReason || getMutationCacheReason(methodName, args)
-                        );
-                    }
+                        if (clearCaches) {
+                            bridge.clearStoreReadCache?.(
+                                cacheReason || getMutationCacheReason(methodName, args)
+                            );
+                        }
 
-                    return res;
-                },
+                        return res;
+                    },
             });
 
             return {
@@ -4852,12 +2239,17 @@
         },
 
         uninstallIndexRefreshHooks() {
-            if (!this.__indexRefreshHooksInstalled || !this.__indexRefreshHookOriginals) {
+            if (
+                !this.__indexRefreshHooksInstalled ||
+                !this.__indexRefreshHookOriginals
+            ) {
                 return { ok: true, alreadyUninstalled: true };
             }
 
             if (this.__store) {
-                for (const [methodName, original] of Object.entries(this.__indexRefreshHookOriginals)) {
+                for (const [methodName, original] of Object.entries(
+                    this.__indexRefreshHookOriginals
+                )) {
                     this.__store[methodName] = original;
                 }
             }
@@ -4871,102 +2263,10 @@
 
     window[GLOBAL_KEY] = bridge;
 
-    function isPlainObject(value) {
-        return value !== null &&
-            typeof value === "object" &&
-            Object.getPrototypeOf(value) === Object.prototype;
-    }
-
-    function isValidBridgeMessageEnvelope(event) {
-        if (event.source !== window) return false;
-        if (event.origin !== window.location.origin) return false;
-
-        const data = event.data;
-
-        if (!isPlainObject(data)) return false;
-        if (data.source !== TRUSTED_SOURCE) return false;
-        if (data.token !== BRIDGE_TOKEN) return false;
-        if (!MESSAGE_TYPES.has(data.type)) return false;
-
-        return true;
-    }
-
-    function validateBridgeMessage(data) {
-        switch (data.type) {
-            case "thread-optimizer:set-pruning-state": {
-                const prunedTurnCount = Number(data.prunedTurnCount);
-                const historyKeptExchanges = Number(data.historyKeptExchanges);
-
-                return {
-                    ok: true,
-                    value: {
-                        enabled: Boolean(data.enabled),
-                        prunedTurnCount:
-                            Number.isFinite(prunedTurnCount) && prunedTurnCount >= 0
-                                ? prunedTurnCount
-                                : 0,
-                        historyKeptExchanges:
-                            Number.isFinite(historyKeptExchanges) && historyKeptExchanges >= 1
-                                ? Math.floor(historyKeptExchanges)
-                                : 1,
-                    },
-                };
-            }
-
-            case "thread-optimizer:prune-store-history": {
-                const historyKeptExchanges = Number(data.historyKeptExchanges);
-
-                return {
-                    ok: true,
-                    value: {
-                        historyKeptExchanges:
-                            Number.isFinite(historyKeptExchanges) && historyKeptExchanges >= 1
-                                ? Math.floor(historyKeptExchanges)
-                                : 1,
-                        reason:
-                            typeof data.reason === "string"
-                                ? data.reason.slice(0, 100)
-                                : "store-prune",
-                    },
-                };
-            }
-
-            case "thread-optimizer:log-store-performance": {
-                return {
-                    ok: true,
-                    value: {},
-                };
-            }
-
-            case "thread-optimizer:set-store-read-optimization": {
-                return {
-                    ok: true,
-                    value: {
-                        enabled: Boolean(data.enabled),
-                        debug: Boolean(data.debug),
-                    },
-                };
-            }
-
-            case "thread-optimizer:visible-messages-ready": {
-                return {
-                    ok: true,
-                    value: {},
-                };
-            }
-
-            default:
-                return {
-                    ok: false,
-                    reason: "unknown message type",
-                };
-        }
-    }
-
     window.addEventListener(
         "message",
         (event) => {
-            if (!isValidBridgeMessageEnvelope(event)) {
+            if (!isTrustedBridgeMessage(event, BRIDGE_TOKEN)) {
                 return;
             }
 
@@ -5003,11 +2303,14 @@
                         reason: payload.reason,
                     });
 
-                    console.debug("[thread-optimizer bridge] queued store prune bridge request because store is unavailable", {
-                        ok: queued.ok,
-                        historyKeptExchanges: queued.historyKeptExchanges,
-                        reason: queued.reason,
-                    });
+                    console.debug(
+                        "[thread-optimizer bridge] queued store prune bridge request because store is unavailable",
+                        {
+                            ok: queued.ok,
+                            historyKeptExchanges: queued.historyKeptExchanges,
+                            reason: queued.reason,
+                        }
+                    );
 
                     return;
                 }
@@ -5033,8 +2336,13 @@
             }
 
             if (data.type === "thread-optimizer:log-store-performance") {
-                console.debug("[thread-optimizer bridge] received store performance log request");
-                console.log("[thread-optimizer bridge] store performance", bridge.getPerformanceSnapshot());
+                console.debug(
+                    "[thread-optimizer bridge] received store performance log request"
+                );
+                console.log(
+                    "[thread-optimizer bridge] store performance",
+                    bridge.getPerformanceSnapshot()
+                );
                 return;
             }
 
@@ -5054,7 +2362,13 @@
                     bridge.disableStoreReadOptimization({
                         debug: payload.debug,
                     });
+                    return;
                 }
+
+                bridge.applyStoreReadOptimization?.({
+                    debug: payload.debug,
+                    clearStats: true,
+                });
 
                 return;
             }
@@ -5093,69 +2407,17 @@
         bridge.__startupStorePruneCompletedForStore = null;
     }
 
-    function shouldAdvanceStoreEpoch(reason) {
-        return (
-            reason === "topology-mutation" ||
-            reason === "conversation-change" ||
-            reason === "manual"
-        );
-    }
-
-    function getMutationCacheReason(methodName, args) {
-        if (
-            methodName === "addMessageNode" ||
-            methodName === "addOptimisticMessageNode" ||
-            methodName === "prependNode" ||
-            methodName === "prependOptismisticNode"
-        ) {
-            const message = args?.[1];
-
-            const role = message?.author?.role;
-            const status = message?.status;
-            const metadata = message?.metadata || {};
-
-            // User send is the one we care about for store topology epoch.
-            if (role === "user") {
-                return "topology-mutation";
-            }
-
-            // Assistant/tool/system streaming nodes should not keep invalidating stable read caches.
-            if (
-                role === "assistant" ||
-                role === "tool" ||
-                role === "system" ||
-                status === "in_progress" ||
-                metadata.is_loading_message ||
-                metadata.async_task_id ||
-                metadata.async_completion_id
-            ) {
-                return "streaming-mutation";
-            }
-
-            return "store-mutation";
-        }
-
-        if (
-            methodName === "deleteNode" ||
-            methodName === "moveNode"
-        ) {
-            return "topology-mutation";
-        }
-
-        return "store-mutation";
-    }
-
     window.addEventListener("popstate", checkConversationChanged);
 
     const originalPushState = history.pushState;
-    history.pushState = function (...args) {
+    history.pushState = function patchedPushState(...args) {
         const result = originalPushState.apply(this, args);
         queueMicrotask(checkConversationChanged);
         return result;
     };
 
     const originalReplaceState = history.replaceState;
-    history.replaceState = function (...args) {
+    history.replaceState = function patchedReplaceState(...args) {
         const result = originalReplaceState.apply(this, args);
         queueMicrotask(checkConversationChanged);
         return result;

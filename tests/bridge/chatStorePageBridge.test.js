@@ -1,5 +1,5 @@
-import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const BRIDGE_PATH = path.resolve("src/page/chatStorePageBridge.js");
@@ -7,15 +7,49 @@ const BRIDGE_GLOBAL = "__threadOptimizerChatStoreBridge";
 const TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
-function loadBridgeWithCurrentScript(scriptEl) {
-    const source = fs.readFileSync(BRIDGE_PATH, "utf8");
+const ESBUILD_BIN = path.resolve("node_modules/esbuild/bin/esbuild");
 
+const bundledBridgeSources = new Map();
+
+function getBundledBridgeSource({ bridgeProfile = false } = {}) {
+    const cacheKey = bridgeProfile ? "profiled" : "production";
+
+    if (bundledBridgeSources.has(cacheKey)) {
+        return bundledBridgeSources.get(cacheKey);
+    }
+
+    const source = execFileSync(
+        ESBUILD_BIN,
+        [
+            BRIDGE_PATH,
+            "--bundle",
+            "--format=iife",
+            "--platform=browser",
+            "--target=es2020",
+            "--legal-comments=none",
+            `--define:globalThis.__THREAD_OPTIMIZER_DEBUG__=false`,
+            `--define:globalThis.__THREAD_OPTIMIZER_STORE_PROFILER__=${bridgeProfile}`,
+            `--define:globalThis.__THREAD_OPTIMIZER_CACHE_PROFILING__=${bridgeProfile}`,
+            `--define:globalThis.__THREAD_OPTIMIZER_BRANCH_CALLSITE_STATS__=${bridgeProfile}`,
+            `--define:globalThis.__THREAD_OPTIMIZER_NODE_CALLSITE_STATS__=${bridgeProfile}`,
+            `--define:globalThis.__THREAD_OPTIMIZER_FIND_NODE_CALLSITE_STATS__=${bridgeProfile}`,
+        ],
+        {
+            encoding: "utf8",
+        }
+    );
+
+    bundledBridgeSources.set(cacheKey, source);
+    return source;
+}
+
+function loadBridgeWithCurrentScript(scriptEl, options = {}) {
     Object.defineProperty(document, "currentScript", {
         configurable: true,
         get: () => scriptEl,
     });
 
-    window.eval(source);
+    window.eval(getBundledBridgeSource(options));
 }
 
 function dispatchBridgeMessage(data, options = {}) {
@@ -741,7 +775,9 @@ describe("chatStorePageBridge", () => {
     });
 
     it("creates profiled cache stats shape correctly", () => {
-        loadBridgeWithCurrentScript(script);
+        loadBridgeWithCurrentScript(script, {
+            bridgeProfile: true,
+        });
 
         const bridge = window[BRIDGE_GLOBAL];
         const fakeStore = createFakeStore();
@@ -753,9 +789,7 @@ describe("chatStorePageBridge", () => {
         bridge.disableStoreReadOptimization();
         bridge.resetInstalledStoreEnhancements();
 
-        const result = bridge.installResolvedNodeFrameCache({
-            profiled: true,
-        });
+        const result = bridge.installResolvedNodeFrameCache();
 
         expect(result.ok).toBe(true);
         expect(result.alreadyInstalled).not.toBe(true);
@@ -787,9 +821,7 @@ describe("chatStorePageBridge", () => {
         bridge.disableStoreReadOptimization();
         bridge.resetInstalledStoreEnhancements();
 
-        const result = bridge.installResolvedNodeFrameCache({
-            profiled: false,
-        });
+        const result = bridge.installResolvedNodeFrameCache();
 
         expect(result.ok).toBe(true);
         expect(result.alreadyInstalled).not.toBe(true);

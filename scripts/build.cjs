@@ -39,6 +39,7 @@ function copyStaticFiles(src, dest) {
 function writeManifestForTarget(target, outDir) {
     const baseManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     const manifest = createManifestForTarget(baseManifest, target);
+
     fs.writeFileSync(
         path.join(outDir, "manifest.json"),
         `${JSON.stringify(manifest, null, 2)}\n`
@@ -79,7 +80,20 @@ function shouldMinifyBuild() {
     return parseBoolean(process.env.BUILD_MINIFY, true);
 }
 
-function buildTarget(target, { minify }) {
+function shouldEnableBridgeProfiling() {
+    if (hasArg("--bridge-profile")) {
+        return true;
+    }
+
+    const cliProfile = getArgValue("--bridge-profile");
+    if (cliProfile != null) {
+        return parseBoolean(cliProfile, false);
+    }
+
+    return parseBoolean(process.env.BRIDGE_PROFILE, false);
+}
+
+function buildTarget(target, { minify, bridgeProfile }) {
     const outDir = getBrowserDistDir(distDir, target);
 
     fs.mkdirSync(outDir, { recursive: true });
@@ -99,10 +113,18 @@ function buildTarget(target, { minify }) {
         minify,
         sourcemap: !minify,
         legalComments: "none",
+        define: {
+            "globalThis.__THREAD_OPTIMIZER_DEBUG__": "false",
+            "globalThis.__THREAD_OPTIMIZER_STORE_PROFILER__": JSON.stringify(bridgeProfile),
+            "globalThis.__THREAD_OPTIMIZER_CACHE_PROFILING__": JSON.stringify(bridgeProfile),
+            "globalThis.__THREAD_OPTIMIZER_BRANCH_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
+            "globalThis.__THREAD_OPTIMIZER_NODE_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
+            "globalThis.__THREAD_OPTIMIZER_FIND_NODE_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
+        },
     });
 
     console.log(
-        `Built ${target} extension -> ${outDir} (${minify ? "minified" : "debug"})`
+        `Built ${target} extension -> ${outDir} (${minify ? "minified" : "debug"}, bridgeProfile=${bridgeProfile})`
     );
 }
 
@@ -125,9 +147,12 @@ fs.mkdirSync(distDir, { recursive: true });
 const requestedTarget = getRequestedTarget();
 const targets = resolveBuildTargets(requestedTarget);
 const minify = shouldMinifyBuild();
+const bridgeProfile = shouldEnableBridgeProfiling();
 
 for (const target of targets) {
-    buildTarget(target, { minify });
+    buildTarget(target, { minify, bridgeProfile });
 }
 
-console.log(`Build complete for: ${targets.join(", ")} (${minify ? "minified" : "debug"})`);
+console.log(
+    `Build complete for: ${targets.join(", ")} (${minify ? "minified" : "debug"}, bridgeProfile=${bridgeProfile})`
+);

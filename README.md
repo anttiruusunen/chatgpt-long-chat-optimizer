@@ -6,7 +6,6 @@ Thread Optimizer improves responsiveness in large ChatGPT threads by reducing DO
 
 Features:
 - Store-native hard pruning of old conversation history
-- Startup masking to prevent old turns flashing during page load
 - CSS-driven offscreen rendering optimization
 - Streaming-aware pruning deferral
 - Long prompt and code block scrollbar quality-of-life styles
