@@ -13,9 +13,14 @@ import {
 import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
 
 const AUTO_PRUNE_DEBOUNCE_MS = 300;
+const PENDING_AUTO_PRUNE_CHECK_MS = 5000;
 
 function getSafeHistoryKeptExchanges(value) {
     return Math.max(1, Math.floor(Number(value) || 1));
+}
+
+function isPruneDeferred(result) {
+    return Boolean(result?.pruneDeferred || result?.deferred);
 }
 
 export function createPruneController({
@@ -24,6 +29,79 @@ export function createPruneController({
     withDomMutationGuard,
 }) {
     let isBootstrapInitialPruneScheduled = false;
+    let pendingDeferredAutoPruneTimer = null;
+    let pendingDeferredAutoPruneReason = null;
+    let pendingDeferredAutoPruneLastResult = null;
+
+    function clearPendingDeferredAutoPrune() {
+        if (pendingDeferredAutoPruneTimer) {
+            clearTimeout(pendingDeferredAutoPruneTimer);
+            pendingDeferredAutoPruneTimer = null;
+        }
+
+        pendingDeferredAutoPruneReason = null;
+        pendingDeferredAutoPruneLastResult = null;
+    }
+
+    function schedulePendingDeferredAutoPrune(reason, pruneResult = null) {
+        if (!state.featureFlags.pruning) return;
+        if (!state.settings.autoPrune) return;
+        if (!state.didInitialPrune) return;
+
+        pendingDeferredAutoPruneReason = reason;
+        pendingDeferredAutoPruneLastResult = pruneResult;
+
+        if (pendingDeferredAutoPruneTimer) {
+            debugLog("Prune controller: deferred auto-prune already pending", {
+                reason,
+                deferredReason: pruneResult?.reason,
+                delayMs: PENDING_AUTO_PRUNE_CHECK_MS,
+            });
+            return;
+        }
+
+        pendingDeferredAutoPruneTimer = setTimeout(() => {
+            pendingDeferredAutoPruneTimer = null;
+
+            if (!state.featureFlags.pruning) {
+                clearPendingDeferredAutoPrune();
+                return;
+            }
+
+            if (!state.settings.autoPrune) {
+                clearPendingDeferredAutoPrune();
+                return;
+            }
+
+            if (!state.didInitialPrune) {
+                clearPendingDeferredAutoPrune();
+                return;
+            }
+
+            if (state.isApplyingDomChanges) {
+                schedulePendingDeferredAutoPrune(
+                    pendingDeferredAutoPruneReason || reason,
+                    pendingDeferredAutoPruneLastResult
+                );
+                return;
+            }
+
+            debugLog("Prune controller: checking pending deferred auto-prune", {
+                reason: pendingDeferredAutoPruneReason || reason,
+                deferredReason: pendingDeferredAutoPruneLastResult?.reason,
+            });
+
+            scheduleAutoPrune(
+                `${pendingDeferredAutoPruneReason || reason}:pending-deferred-check`
+            );
+        }, PENDING_AUTO_PRUNE_CHECK_MS);
+
+        debugLog("Prune controller: scheduled pending deferred auto-prune check", {
+            reason,
+            deferredReason: pruneResult?.reason,
+            delayMs: PENDING_AUTO_PRUNE_CHECK_MS,
+        });
+    }
 
     function syncAfterPrune(reason) {
         scheduleConversationChromeSync({
@@ -38,8 +116,6 @@ export function createPruneController({
         historyKeptExchanges = state.settings.historyKeptExchanges,
         options = {}
     ) {
-        clearCssVisibilityWindow();
-
         const runPrune = () =>
             pruneOldSectionsBase(
                 getSafeHistoryKeptExchanges(historyKeptExchanges),
@@ -54,6 +130,10 @@ export function createPruneController({
             typeof withDomMutationGuard === "function"
                 ? withDomMutationGuard(runPrune)
                 : runPrune();
+
+        if (!isPruneDeferred(result)) {
+            clearCssVisibilityWindow();
+        }
 
         syncAfterPrune("prune-old-sections");
 
@@ -129,6 +209,8 @@ export function createPruneController({
             state.debounceTimer = null;
         }
 
+        clearPendingDeferredAutoPrune();
+
         clearCssVisibilityWindow();
         state.isAutoPruneScheduled = false;
     }
@@ -165,6 +247,7 @@ export function createPruneController({
                         "Prune controller: skipped auto-prune because feature is disabled",
                         { reason }
                     );
+                    clearPendingDeferredAutoPrune();
                     return;
                 }
 
@@ -173,12 +256,28 @@ export function createPruneController({
                         "Prune controller: skipped auto-prune because DOM guard is active",
                         { reason }
                     );
+                    schedulePendingDeferredAutoPrune(reason);
                     return;
                 }
 
-                pruneOldSections(state.settings.historyKeptExchanges, {
+                const pruneResult = pruneOldSections(
+                    state.settings.historyKeptExchanges
+                );
+
+                debugLog("Prune controller: auto-prune result", {
                     reason,
+                    pruneDeferred: Boolean(pruneResult?.pruneDeferred),
+                    deferred: Boolean(pruneResult?.deferred),
+                    resultReason: pruneResult?.reason,
+                    posted: Boolean(pruneResult?.posted),
                 });
+
+                if (isPruneDeferred(pruneResult)) {
+                    schedulePendingDeferredAutoPrune(reason, pruneResult);
+                    return;
+                }
+
+                clearPendingDeferredAutoPrune();
             } finally {
                 state.isAutoPruneScheduled = false;
                 state.debounceTimer = null;

@@ -321,6 +321,7 @@ describe("core/index", () => {
 
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "storage-changed",
+            forceCss: true,
             includeStreaming: true,
         });
     });

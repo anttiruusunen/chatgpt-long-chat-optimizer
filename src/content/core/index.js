@@ -422,6 +422,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
 
     scheduleConversationChromeSync({
         reason: "storage-changed",
+        forceCss: offscreenFlagChanged || historyKeptChanged,
         includeStreaming: true,
     });
 });

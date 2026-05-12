@@ -131,7 +131,7 @@ export function pruneOldSections(
             visibleSectionsChanged: false,
             placeholderChanged: false,
             posted: false,
-            initialPruneDeferred: true,
+            deferred: true,
             reason: latestAssistantPruneDeferralReason,
         };
     }
@@ -189,7 +189,7 @@ export function runInitialPrune(
                 }
             );
 
-            if (result?.initialPruneDeferred) {
+            if (result?.deferred) {
                 debugLog("Prune: initial prune deferred", {
                     reason: result.reason,
                 });
