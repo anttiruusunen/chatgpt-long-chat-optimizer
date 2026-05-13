@@ -18,6 +18,12 @@ const USER_MESSAGE_CLAMP_SELECTOR =
 const USER_MESSAGE_WRAPPER_SELECTOR =
     'section[data-turn="user"] [data-message-author-role="user"]';
 
+const OFFSCREEN_ROOT_SELECTOR =
+    'html[data-thread-optimizer-sections-offscreen="true"]';
+
+const OFFSCREEN_SECTION_SELECTOR =
+    `${OFFSCREEN_ROOT_SELECTOR} section[data-thread-optimizer-offscreen-opt="true"]`;
+
 describe("qolStyles", () => {
     beforeEach(() => {
         document.head.innerHTML = "";
@@ -33,39 +39,52 @@ describe("qolStyles", () => {
         expect(document.querySelectorAll("#thread-optimizer-qol-style")).toHaveLength(1);
     });
 
-    it("contains the CSS visibility-window hide rule", () => {
+    it("contains browser-native section offscreen rules", () => {
         const styleEl = ensureQolStyles();
 
         expect(styleEl).not.toBeNull();
+        expect(styleEl.textContent).toContain(OFFSCREEN_SECTION_SELECTOR);
+        expect(styleEl.textContent).toContain("content-visibility: auto");
         expect(styleEl.textContent).toContain(
+            "contain-intrinsic-size: auto var(--thread-optimizer-section-intrinsic-size, 160px)"
+        );
+    });
+
+    it("does not include legacy CSS visibility-window hide rules", () => {
+        const styleEl = ensureQolStyles();
+
+        expect(styleEl).not.toBeNull();
+        expect(styleEl.textContent).not.toContain(
             'section[data-thread-optimizer-out-of-window="true"]'
         );
-        expect(styleEl.textContent).toContain("display: none !important");
     });
 
-    it("contains the CSS-driven section offscreen rules", () => {
+    it("does not include legacy live-section override rules", () => {
         const styleEl = ensureQolStyles();
 
         expect(styleEl).not.toBeNull();
-        expect(styleEl.textContent).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section[data-testid^="conversation-turn-"]'
+        expect(styleEl.textContent).not.toContain(
+            "data-thread-optimizer-offscreen-live"
         );
-        expect(styleEl.textContent).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section[data-turn]'
-        );
-        expect(styleEl.textContent).toContain("content-visibility: auto");
-        expect(styleEl.textContent).toContain("contain-intrinsic-size: auto 160px");
+        expect(styleEl.textContent).not.toContain("content-visibility: visible");
+        expect(styleEl.textContent).not.toContain("contain-intrinsic-size: none");
     });
 
-    it("contains the live-section override rule", () => {
-        const styleEl = ensureQolStyles();
+    it("does not include legacy live large code block CSS rules", () => {
+        const text = getQolStyleText();
 
-        expect(styleEl).not.toBeNull();
-        expect(styleEl.textContent).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimizer-offscreen-live="true"]'
+        expect(text).not.toContain("data-thread-optimizer-large-code-live");
+        expect(text).not.toContain("contain-intrinsic-size: auto 240px");
+    });
+
+    it("keeps collapsed code block CSS separate from legacy visibility-window behavior", () => {
+        const text = getQolStyleText();
+
+        expect(text).toContain(
+            'section pre[data-thread-optimizer-code-collapsed="true"]'
         );
-        expect(styleEl.textContent).toContain("content-visibility: visible");
-        expect(styleEl.textContent).toContain("contain-intrinsic-size: none");
+        expect(text).toContain("display: none !important");
+        expect(text).not.toContain("data-thread-optimizer-out-of-window");
     });
 
     it("does not install user message clamp styles with base QoL styles", () => {
@@ -109,6 +128,7 @@ describe("qolStyles", () => {
         expect(text).toContain("overflow-y: auto");
         expect(text).toContain("overflow-x: hidden");
         expect(text).toContain("overscroll-behavior: contain");
+        expect(text).not.toContain("data-thread-optimizer-offscreen-opt");
     });
 
     it("does not install code block scrollbar styles with base QoL styles", () => {
@@ -148,26 +168,17 @@ describe("qolStyles", () => {
         expect(text).toContain("section pre {");
         expect(text).toContain("section pre:has(.cm-editor)");
         expect(text).toContain("section pre .cm-scroller");
+        expect(text).not.toContain("data-thread-optimizer-offscreen-opt");
     });
 
-    it("getQolStyleText exposes the CSS-driven offscreen selectors", () => {
+    it("getQolStyleText exposes the browser-native offscreen selector", () => {
         const text = getQolStyleText();
 
+        expect(text).toContain(OFFSCREEN_SECTION_SELECTOR);
+        expect(text).toContain("content-visibility: auto");
         expect(text).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section[data-testid^="conversation-turn-"]'
+            "var(--thread-optimizer-section-intrinsic-size, 160px)"
         );
-        expect(text).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimizer-offscreen-live="true"]'
-        );
-    });
-
-    it("contains the live large code block CSS rule", () => {
-        const text = getQolStyleText();
-
-        expect(text).toContain(
-            'html[data-thread-optimizer-sections-offscreen="true"] section pre[data-thread-optimizer-large-code-live="true"]'
-        );
-        expect(text).toContain("contain-intrinsic-size: auto 240px");
     });
 
     it("removes the QoL style tag", () => {

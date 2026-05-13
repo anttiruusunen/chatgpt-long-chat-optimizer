@@ -10,7 +10,6 @@ let isReplyStreamingMock = false;
 
 const ensureSectionCssOffscreenModeMock = vi.fn();
 const scheduleOffscreenRefreshMock = vi.fn();
-const syncCssVisibilityWindowMock = vi.fn();
 
 vi.mock("../../src/content/core/dom.js", () => ({
     getConversationSections: vi.fn(() => conversationSectionsMock),
@@ -29,19 +28,12 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
     isReplyStreaming: vi.fn(() => isReplyStreamingMock),
 }));
 
-vi.mock("../../src/content/pruning/cssVisibilityWindow.js", () => ({
-    syncCssVisibilityWindow: vi.fn((...args) =>
-        syncCssVisibilityWindowMock(...args)
-    ),
-}));
-
 vi.mock("../../src/content/core/logger.js", () => ({
     debugLog: vi.fn(),
 }));
 
 import {
     configureConversationMaintenance,
-    flushDeferredCssVisibilityWindowSync,
     resetConversationMaintenanceForTests,
     scheduleConversationChromeSync,
     scheduleRefreshPostPruneState,
@@ -67,7 +59,6 @@ describe("conversationMaintenance", () => {
 
         ensureSectionCssOffscreenModeMock.mockReset();
         scheduleOffscreenRefreshMock.mockReset();
-        syncCssVisibilityWindowMock.mockReset();
 
         globalThis.requestAnimationFrame = (callback) => {
             callback(performance.now());
@@ -99,11 +90,10 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
-        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
-    it("syncs CSS visibility even when there are no sections", () => {
+    it("syncs browser-native offscreen mode even when there are no sections", () => {
         conversationSectionsMock = [];
 
         scheduleConversationChromeSync({
@@ -113,11 +103,10 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
-        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
-    it("defers CSS visibility sync during streaming and flushes it after settling", () => {
+    it("does not defer browser-native offscreen mode during streaming", () => {
         isReplyStreamingMock = true;
 
         scheduleConversationChromeSync({
@@ -126,25 +115,7 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
-        expect(syncCssVisibilityWindowMock).not.toHaveBeenCalled();
-
-        isReplyStreamingMock = false;
-        flushDeferredCssVisibilityWindowSync("reply-settled");
-
-        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not defer forced CSS visibility sync during streaming", () => {
-        isReplyStreamingMock = true;
-
-        scheduleConversationChromeSync({
-            reason: "forced-streaming",
-            forceCss: true,
-        });
-
-        flushDomWriteBatchNow();
-
-        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
     it("refreshes offscreen state during post-prune refresh", () => {
@@ -195,7 +166,6 @@ describe("conversationMaintenance", () => {
 
         flushDomWriteBatchNow();
 
-        expect(syncCssVisibilityWindowMock).toHaveBeenCalledTimes(1);
         expect(ensureSectionCssOffscreenModeMock).not.toHaveBeenCalled();
 
         scheduleRefreshPostPruneState();

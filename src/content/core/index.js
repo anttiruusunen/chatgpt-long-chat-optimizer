@@ -29,7 +29,6 @@ import {
 import { installConversationNavigationWatcher } from "./navigation.js";
 import {
     configureConversationMaintenance,
-    flushDeferredCssVisibilityWindowSync,
     scheduleConversationChromeSync,
     scheduleRefreshPostPruneState,
 } from "./conversationMaintenance.js";
@@ -50,6 +49,7 @@ const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
 let pendingReplySettledPruneTimer = null;
+let lastCompletedFreshNavigationLocationKey = null;
 
 function clearPendingReplySettledPrune() {
     if (pendingReplySettledPruneTimer) {
@@ -93,6 +93,8 @@ function isLinkNavigationReason(reason) {
  * running initial prune so we do not prune the previous thread by mistake.
  */
 function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
+    const { navigationLocationKey = null, ...initialPruneOptions } = options;
+
     const generation = ++navigationPruneGeneration;
     const startedAt = performance.now();
 
@@ -125,8 +127,12 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 
             runInitialPrune(container, {
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
-                ...options,
+                ...initialPruneOptions,
             });
+
+            if (navigationLocationKey) {
+                lastCompletedFreshNavigationLocationKey = navigationLocationKey;
+            }
 
             pendingNavigationPruneTimer = null;
             return;
@@ -152,7 +158,41 @@ function resetConversationLifecycleForNavigation() {
     debugLog("Index: reset conversation lifecycle state for navigation");
 }
 
-function rearmInitialPruneForNavigation(reason) {
+function shouldSkipDuplicateLinkNavigationRearm(reason, locationKey) {
+    if (!isLinkNavigationReason(reason)) {
+        return false;
+    }
+
+    if (!locationKey) {
+        return false;
+    }
+
+    if (locationKey !== lastCompletedFreshNavigationLocationKey) {
+        return false;
+    }
+
+    return (
+        state.didInitialPrune &&
+        state.observedContainer instanceof Element &&
+        state.observedContainer.isConnected
+    );
+}
+
+function rearmInitialPruneForNavigation(reason, locationKey = null) {
+    const isLinkNavigation = isLinkNavigationReason(reason);
+
+    if (shouldSkipDuplicateLinkNavigationRearm(reason, locationKey)) {
+        debugLog("Index: skipped duplicate link navigation rearm", {
+            reason,
+            locationKey,
+        });
+        return;
+    }
+
+    if (!isLinkNavigation) {
+        lastCompletedFreshNavigationLocationKey = null;
+    }
+
     const previousContainer = state.observedContainer || getConversationContainer();
 
     resetConversationLifecycleForNavigation();
@@ -161,13 +201,16 @@ function rearmInitialPruneForNavigation(reason) {
 
     debugLog("Index: rearming initial prune after navigation", {
         reason,
+        locationKey,
         hasContainer,
-        isLinkNavigation: isLinkNavigationReason(reason),
+        isLinkNavigation,
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
-        if (isLinkNavigationReason(reason)) {
-            waitForFreshContainerAndInitialPrune(previousContainer);
+        if (isLinkNavigation) {
+            waitForFreshContainerAndInitialPrune(previousContainer, {
+                navigationLocationKey: locationKey,
+            });
             return;
         }
 
@@ -265,8 +308,6 @@ async function initialize() {
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
-            flushDeferredCssVisibilityWindowSync("reply-settled");
-
             scheduleReplySettledPrune();
 
             scheduleConversationChromeSync({
@@ -278,8 +319,8 @@ async function initialize() {
     });
 
     installConversationNavigationWatcher({
-        onNavigationDetected: ({ reason }) => {
-            rearmInitialPruneForNavigation(reason);
+        onNavigationDetected: ({ reason, locationKey }) => {
+            rearmInitialPruneForNavigation(reason, locationKey);
         },
     });
 

@@ -12,9 +12,16 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
 import {
     handleReplyStreamingStarted,
     refreshObservedSections,
+    scheduleOffscreenRefresh,
     setOffscreenOptimizationEnabled,
 } from "../../src/content/offscreen/offscreen.js";
 import { state } from "../../src/content/core/state.js";
+
+const ROOT_ATTR = "data-thread-optimizer-sections-offscreen";
+const SECTION_ATTR = "data-thread-optimizer-offscreen-opt";
+const HEIGHT_ATTR = "data-thread-optimizer-height";
+const INTRINSIC_SIZE_VAR = "--thread-optimizer-section-intrinsic-size";
+const LEGACY_LIVE_ATTR = "data-thread-optimizer-offscreen-live";
 
 function createConversationDom() {
     document.body.innerHTML = `
@@ -22,13 +29,13 @@ function createConversationDom() {
             <div id="scroll-root" style="overflow-y:auto; max-height:600px;">
                 <div id="conversation">
                     <section data-testid="conversation-turn-1" data-turn="user">
-                        <div>User</div>
+                        <div style="height: 80px;">User</div>
                     </section>
                     <section data-testid="conversation-turn-2" data-turn="assistant">
-                        <div>Assistant 1</div>
+                        <div style="height: 120px;">Assistant 1</div>
                     </section>
                     <section data-testid="conversation-turn-3" data-turn="assistant">
-                        <div>Assistant latest</div>
+                        <div style="height: 160px;">Assistant latest</div>
                     </section>
                 </div>
             </div>
@@ -36,9 +43,9 @@ function createConversationDom() {
     `;
 }
 
-function getOlderAssistant() {
-    return document.querySelector(
-        'section[data-testid="conversation-turn-2"]'
+function getSections() {
+    return Array.from(
+        document.querySelectorAll('section[data-testid^="conversation-turn-"]')
     );
 }
 
@@ -48,17 +55,37 @@ function getLatestAssistant() {
     );
 }
 
-describe("offscreen CSS-driven section mode", () => {
+function mockSectionHeights() {
+    for (const [index, section] of getSections().entries()) {
+        Object.defineProperty(section, "offsetHeight", {
+            configurable: true,
+            value: 100 + index * 25,
+        });
+
+        section.getBoundingClientRect = vi.fn(() => ({
+            width: 800,
+            height: 100 + index * 25,
+            top: index * 100,
+            right: 800,
+            bottom: index * 100 + 100,
+            left: 0,
+            x: 0,
+            y: index * 100,
+            toJSON: () => {},
+        }));
+    }
+}
+
+describe("offscreen browser-native section mode", () => {
     beforeEach(() => {
         mockRefs.isReplyStreaming.mockReturnValue(false);
         vi.useFakeTimers();
 
-        document.documentElement.removeAttribute(
-            "data-thread-optimizer-sections-offscreen"
-        );
+        document.documentElement.removeAttribute(ROOT_ATTR);
         document.body.innerHTML = "";
 
         createConversationDom();
+        mockSectionHeights();
 
         state.featureFlags.offscreenOptimization = true;
         state.isOffscreenRefreshScheduled = false;
@@ -70,138 +97,142 @@ describe("offscreen CSS-driven section mode", () => {
         vi.runOnlyPendingTimers();
         vi.useRealTimers();
 
-        document.documentElement.removeAttribute(
-            "data-thread-optimizer-sections-offscreen"
-        );
+        document.documentElement.removeAttribute(ROOT_ATTR);
         document.body.innerHTML = "";
+
+        state.isOffscreenRefreshScheduled = false;
+        state.offscreenRefreshTimer = null;
         state.offscreenLiveSection = null;
     });
 
-    it("enables CSS-driven section mode on the root element", () => {
+    it("enables browser-native section mode on the root element", () => {
         setOffscreenOptimizationEnabled(true);
 
-        expect(
-            document.documentElement.getAttribute(
-                "data-thread-optimizer-sections-offscreen"
-            )
-        ).toBe("true");
+        expect(document.documentElement.getAttribute(ROOT_ATTR)).toBe("true");
     });
 
-    it("marks the latest assistant section as live during refresh", () => {
+    it("applies content-visibility markers and intrinsic sizes to mounted sections", () => {
         refreshObservedSections();
 
-        const latest = getLatestAssistant();
-
-        expect(latest).not.toBeNull();
-        expect(
-            latest.getAttribute(
-                "data-thread-optimizer-offscreen-live"
-            )
-        ).toBe("true");
+        for (const section of getSections()) {
+            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
+            expect(section.getAttribute(HEIGHT_ATTR)).toMatch(/^\d+$/);
+            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
+                /^\d+px$/
+            );
+        }
     });
 
-    it("clears previous live overrides before re-applying", () => {
-        const older = getOlderAssistant();
-        const latest = getLatestAssistant();
+    it("does not apply legacy live-section overrides during refresh", () => {
+        refreshObservedSections();
 
-        older.setAttribute("data-thread-optimizer-offscreen-live", "true");
-        latest.removeAttribute("data-thread-optimizer-offscreen-live");
+        for (const section of getSections()) {
+            expect(section.hasAttribute(LEGACY_LIVE_ATTR)).toBe(false);
+        }
+
+        expect(state.offscreenLiveSection).toBe(null);
+    });
+
+    it("keeps cached intrinsic sizes stable on repeated refreshes", () => {
+        const latest = getLatestAssistant();
 
         refreshObservedSections();
 
-        expect(
-            older.hasAttribute("data-thread-optimizer-offscreen-live")
-        ).toBe(false);
-        expect(
-            latest.getAttribute("data-thread-optimizer-offscreen-live")
-        ).toBe("true");
+        expect(latest.getAttribute(HEIGHT_ATTR)).toBe("150");
+        expect(latest.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("150px");
+
+        Object.defineProperty(latest, "offsetHeight", {
+            configurable: true,
+            value: 240,
+        });
+
+        latest.getBoundingClientRect = vi.fn(() => ({
+            width: 800,
+            height: 240,
+            top: 0,
+            right: 800,
+            bottom: 240,
+            left: 0,
+            x: 0,
+            y: 0,
+            toJSON: () => {},
+        }));
+
+        refreshObservedSections();
+
+        expect(latest.getAttribute(HEIGHT_ATTR)).toBe("150");
+        expect(latest.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("150px");
     });
 
     it("disabling removes the root CSS mode flag", () => {
         setOffscreenOptimizationEnabled(true);
 
-        expect(
-            document.documentElement.hasAttribute(
-                "data-thread-optimizer-sections-offscreen"
-            )
-        ).toBe(true);
+        expect(document.documentElement.hasAttribute(ROOT_ATTR)).toBe(true);
 
         setOffscreenOptimizationEnabled(false);
 
-        expect(
-            document.documentElement.hasAttribute(
-                "data-thread-optimizer-sections-offscreen"
-            )
-        ).toBe(false);
+        expect(document.documentElement.hasAttribute(ROOT_ATTR)).toBe(false);
     });
 
-    it("disabling clears live section overrides", () => {
+    it("disabling clears active browser-native offscreen section markers", () => {
         refreshObservedSections();
 
-        const latest = getLatestAssistant();
-        expect(
-            latest.hasAttribute(
-                "data-thread-optimizer-offscreen-live"
-            )
-        ).toBe(true);
+        for (const section of getSections()) {
+            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
+            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).not.toBe("");
+        }
 
         setOffscreenOptimizationEnabled(false);
 
-        expect(
-            latest.hasAttribute(
-                "data-thread-optimizer-offscreen-live"
-            )
-        ).toBe(false);
+        for (const section of getSections()) {
+            expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
+            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("");
+            expect(section.hasAttribute(LEGACY_LIVE_ATTR)).toBe(false);
+
+            // Height metadata is inert without SECTION_ATTR/root mode and can stay cached.
+            expect(section.hasAttribute(HEIGHT_ATTR)).toBe(true);
+        }
     });
 
-    it("schedule path eventually applies live override", () => {
-        setOffscreenOptimizationEnabled(true);
+    it("schedule path eventually applies browser-native section markers", () => {
+        scheduleOffscreenRefresh({
+            reason: "test-refresh",
+        });
 
         flushDomWriteBatchNow();
 
-        const latest = getLatestAssistant();
-
-        expect(
-            latest.getAttribute(
-                "data-thread-optimizer-offscreen-live"
-            )
-        ).toBe("true");
+        for (const section of getSections()) {
+            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
+            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
+                /^\d+px$/
+            );
+        }
     });
 
-    it("keeps the same live section pinned without clearing all sections on repeated refreshes", () => {
-        const latestAssistant = getLatestAssistant();
+    it("does not schedule refresh work when offscreen optimization is disabled", () => {
+        state.featureFlags.offscreenOptimization = false;
 
-        refreshObservedSections();
-        expect(state.offscreenLiveSection).toBe(latestAssistant);
-        expect(
-            latestAssistant.getAttribute("data-thread-optimizer-offscreen-live")
-        ).toBe("true");
+        scheduleOffscreenRefresh({
+            reason: "disabled",
+        });
 
-        refreshObservedSections();
-        expect(state.offscreenLiveSection).toBe(latestAssistant);
-        expect(
-            latestAssistant.getAttribute("data-thread-optimizer-offscreen-live")
-        ).toBe("true");
+        flushDomWriteBatchNow();
+
+        for (const section of getSections()) {
+            expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
+        }
+
+        expect(state.isOffscreenRefreshScheduled).toBe(false);
     });
 
-    it("pins latest assistant without scheduling full refresh while streaming", async () => {
+    it("reply streaming start does not pin a legacy live section", () => {
         mockRefs.isReplyStreaming.mockReturnValue(true);
-
-        const latestAssistant = document.createElement("section");
-        latestAssistant.setAttribute("data-turn", "assistant");
-        latestAssistant.setAttribute("data-testid", "conversation-turn-latest");
-
-        document.body.innerHTML = `<main><div></div></main>`;
-        document.querySelector("div").appendChild(latestAssistant);
-
-        state.featureFlags.offscreenOptimization = true;
 
         handleReplyStreamingStarted();
 
-        expect(latestAssistant.getAttribute(
-            "data-thread-optimizer-offscreen-live"
-        )).toBe("true");
+        const latest = getLatestAssistant();
 
-        expect(state.isOffscreenRefreshScheduled).toBe(false);
+        expect(latest.hasAttribute(LEGACY_LIVE_ATTR)).toBe(false);
+        expect(state.offscreenLiveSection).toBe(null);
     });
 });

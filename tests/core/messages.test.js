@@ -441,4 +441,179 @@ describe("core/messages", () => {
         expect(state.settings.enablePruning).toBe(true);
         expect(state.featureFlags.pruning).toBe(true);
     });
+
+    it.each([
+        ["enablePruning", "pruning"],
+        ["enableOffscreenOptimization", "offscreenOptimization"],
+        ["enableStoreReadOptimization", "storeReadOptimization"],
+        ["enableCodeBlockScrollbars", "codeBlockScrollbars"],
+        ["enableUserMessageClamp", "userMessageClamp"],
+    ])(
+        "settings-updated maps %s=false to runtime %s=false",
+        async (settingKey, featureFlagKey) => {
+            const { stateModule, messagesModule } = await importFreshModules();
+            const { state, DEFAULT_SETTINGS } = stateModule;
+
+            state.settings = {
+                ...DEFAULT_SETTINGS,
+                enablePruning: true,
+                enableOffscreenOptimization: true,
+                enableStoreReadOptimization: true,
+                enableCodeBlockScrollbars: true,
+                enableUserMessageClamp: true,
+                autoPrune: false,
+            };
+
+            state.featureFlags = {
+                pruning: true,
+                offscreenOptimization: true,
+                storeReadOptimization: true,
+                codeBlockScrollbars: true,
+                userMessageClamp: true,
+            };
+
+            const { listener } = setupRuntimeHandlers(messagesModule, {
+                syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
+            });
+
+            const sendResponse = vi.fn();
+
+            const returned = listener(
+                {
+                    action: "settings-updated",
+                    autoPrune: false,
+                    [settingKey]: false,
+                },
+                {},
+                sendResponse
+            );
+
+            expect(returned).toBe(true);
+            expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+            expect(state.settings[settingKey]).toBe(false);
+            expect(state.featureFlags[featureFlagKey]).toBe(false);
+        }
+    );
+
+    it.each([
+        ["enablePruning", "pruning"],
+        ["enableOffscreenOptimization", "offscreenOptimization"],
+        ["enableStoreReadOptimization", "storeReadOptimization"],
+        ["enableCodeBlockScrollbars", "codeBlockScrollbars"],
+        ["enableUserMessageClamp", "userMessageClamp"],
+    ])(
+        "settings-updated maps %s=true to runtime %s=true",
+        async (settingKey, featureFlagKey) => {
+            const { stateModule, messagesModule } = await importFreshModules();
+            const { state, DEFAULT_SETTINGS } = stateModule;
+
+            state.settings = {
+                ...DEFAULT_SETTINGS,
+                enablePruning: false,
+                enableOffscreenOptimization: false,
+                enableStoreReadOptimization: false,
+                enableCodeBlockScrollbars: false,
+                enableUserMessageClamp: false,
+                autoPrune: false,
+            };
+
+            state.featureFlags = {
+                pruning: false,
+                offscreenOptimization: false,
+                storeReadOptimization: false,
+                codeBlockScrollbars: false,
+                userMessageClamp: false,
+            };
+
+            const { listener } = setupRuntimeHandlers(messagesModule, {
+                syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
+            });
+
+            const sendResponse = vi.fn();
+
+            const returned = listener(
+                {
+                    action: "settings-updated",
+                    autoPrune: false,
+                    [settingKey]: true,
+                },
+                {},
+                sendResponse
+            );
+
+            expect(returned).toBe(true);
+            expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+            expect(state.settings[settingKey]).toBe(true);
+            expect(state.featureFlags[featureFlagKey]).toBe(true);
+        }
+    );
+
+    it("settings-updated maps debug logging to debugLoggingEnabled, not featureFlags", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state } = stateModule;
+
+        state.settings.enableDebugLogging = false;
+        state.debugLoggingEnabled = false;
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
+        });
+
+        const sendResponse = vi.fn();
+
+        listener(
+            {
+                action: "settings-updated",
+                autoPrune: false,
+                enableDebugLogging: true,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+        expect(state.settings.enableDebugLogging).toBe(true);
+        expect(state.debugLoggingEnabled).toBe(true);
+        expect(state.featureFlags).not.toHaveProperty("debugLogging");
+    });
+
+    it("settings-updated sends store-read optimization disabled state to the page bridge", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state, DEFAULT_SETTINGS } = stateModule;
+
+        state.settings = {
+            ...DEFAULT_SETTINGS,
+            enableStoreReadOptimization: true,
+            enableDebugLogging: true,
+        };
+
+        state.featureFlags.storeReadOptimization = true;
+        state.debugLoggingEnabled = true;
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
+        });
+
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            {
+                action: "settings-updated",
+                autoPrune: true,
+                enableStoreReadOptimization: false,
+                enableDebugLogging: true,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: false,
+            debug: true,
+        });
+    });
 });

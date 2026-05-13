@@ -5,8 +5,6 @@ import {
     ensureSectionCssOffscreenMode,
     scheduleOffscreenRefresh,
 } from "../offscreen/offscreen.js";
-import { isReplyStreaming } from "../streaming/replyTiming.js";
-import { syncCssVisibilityWindow } from "../pruning/cssVisibilityWindow.js";
 import {
     registerUiPipelineTask,
     scheduleUiPipelineTask,
@@ -18,7 +16,6 @@ let ensureObserverAttachedDependency = null;
 let withDomMutationGuardDependency = null;
 
 let isConversationMaintenanceScheduled = false;
-let isCssVisibilityWindowSyncDeferred = false;
 
 let pendingConversationChromeSync = false;
 let pendingPostPruneRefresh = false;
@@ -30,12 +27,6 @@ let pendingConversationChromeSyncReasons = new Set();
 let pendingMaintenanceReasons = new Set();
 let pendingPostPruneRefreshTimer = null;
 
-/**
- * Injects lifecycle dependencies from the top-level controller.
- *
- * This module owns scheduling/coalescing, while index.js owns the concrete
- * observer and DOM mutation guard implementations.
- */
 export function configureConversationMaintenance({
     ensureObserverAttached,
     withDomMutationGuard,
@@ -64,13 +55,6 @@ function getMaintenanceDeps() {
     };
 }
 
-/**
- * Coalesces all conversation-maintenance work into the shared UI pipeline.
- *
- * Pruning, CSS visibility syncs, and offscreen refreshes can all be requested
- * by different subsystems in the same tick. Running them as one batch avoids
- * unnecessary DOM churn.
- */
 function scheduleConversationMaintenance(reason = "unknown") {
     pendingMaintenanceReasons.add(reason);
 
@@ -89,58 +73,13 @@ function scheduleConversationMaintenance(reason = "unknown") {
     });
 }
 
-/**
- * CSS visibility changes are deferred during streaming unless forced.
- *
- * The active assistant message can still be changing shape while ChatGPT is
- * streaming. Deferring non-forced syncs avoids hiding or reclassifying the
- * live turn mid-response.
- */
-function requestCssVisibilityWindowSync({
-    force = false,
-    reason = "unknown",
-} = {}) {
-    if (force || !isReplyStreaming()) {
-        isCssVisibilityWindowSyncDeferred = false;
-        syncCssVisibilityWindow();
-
-        debugLog("Maintenance: synced CSS visibility window", {
-            force,
-            reason,
-        });
-        return;
-    }
-
-    isCssVisibilityWindowSyncDeferred = true;
-
-    debugLog("Maintenance: deferred CSS visibility window sync during active reply", {
-        reason,
-    });
-}
-
-export function flushDeferredCssVisibilityWindowSync(reason = "reply-settled") {
-    if (isReplyStreaming() || !isCssVisibilityWindowSyncDeferred) {
-        return;
-    }
-
-    isCssVisibilityWindowSyncDeferred = false;
-    syncCssVisibilityWindow();
-
-    debugLog("Maintenance: flushed deferred CSS visibility window sync", {
-        reason,
-    });
-}
-
-/**
- * Refreshes secondary rendering state after visible sections change.
- */
 function flushPostPruneState() {
     if (!isOffscreenRefreshEnabled()) {
         debugLog("Maintenance: skipped offscreen refresh because feature is disabled");
         return;
     }
 
-    scheduleOffscreenRefresh();
+    scheduleOffscreenRefresh("post-prune-refresh");
 
     debugLog("Maintenance: flushed post-prune offscreen refresh");
 }
@@ -154,12 +93,6 @@ function collectConversationChromeSnapshot() {
     };
 }
 
-/**
- * Applies rendering helpers around the current visible conversation window.
- *
- * This no longer manages hidden-count placeholders, restore sentinels, prune
- * sentinels, or DOM-side soft pruning. Store-native pruning owns history now.
- */
 function applyConversationChromeSnapshot(
     snapshot,
     {
@@ -168,11 +101,6 @@ function applyConversationChromeSnapshot(
         reasons = [],
     } = {}
 ) {
-    requestCssVisibilityWindowSync({
-        force: forceCss,
-        reason: reasons.join(",") || "conversation-chrome-sync",
-    });
-
     if (isOffscreenRefreshEnabled()) {
         ensureSectionCssOffscreenMode();
     }
@@ -203,9 +131,6 @@ function flushConversationChromeSync() {
     });
 }
 
-/**
- * Runs the coalesced maintenance batch.
- */
 function flushConversationMaintenance() {
     isConversationMaintenanceScheduled = false;
 
@@ -273,12 +198,6 @@ export function scheduleRefreshPostPruneState({
     });
 }
 
-/**
- * Schedules updates for the UI around the visible conversation window.
- *
- * `forceCss` is used after events like startup/navigation/reply-settled where
- * the CSS visibility window must be corrected immediately.
- */
 export function scheduleConversationChromeSync({
     reason = "unknown",
     forceCss = false,
@@ -311,7 +230,6 @@ export function resetConversationMaintenanceForTests() {
     }
 
     isConversationMaintenanceScheduled = false;
-    isCssVisibilityWindowSyncDeferred = false;
 
     pendingConversationChromeSync = false;
     pendingPostPruneRefresh = false;

@@ -285,9 +285,6 @@ describe("core/index", () => {
 
         options.onReplySettled();
 
-        expect(mockRefs.flushDeferredCssVisibilityWindowSync).toHaveBeenCalledWith(
-            "reply-settled"
-        );
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,

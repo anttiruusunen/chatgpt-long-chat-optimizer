@@ -190,7 +190,7 @@ describe("startup integration", () => {
     });
 
     it(
-        "initializes, attaches, and marks older mounted sections out of window on startup",
+        "initializes, attaches, and does not mark kept sections out of window on startup",
         async () => {
             buildConversation({
                 exchangeCount: 6,
@@ -198,11 +198,9 @@ describe("startup integration", () => {
                 latestAssistantFinished: true,
             });
 
-            const stateModule = await import("../../src/content/core/state.js");
+            await import("../../src/content/core/state.js");
             await import("../../src/content/core/index.js");
             await flush();
-
-            const { OUT_OF_WINDOW_ATTR } = stateModule;
 
             const sections = Array.from(
                 document.querySelectorAll("section[data-turn]")
@@ -210,18 +208,13 @@ describe("startup integration", () => {
 
             expect(sections).toHaveLength(12);
 
-            const outOfWindowSections = sections.filter((section) =>
-                section.hasAttribute(OUT_OF_WINDOW_ATTR)
-            );
-
-            expect(outOfWindowSections).toHaveLength(10);
-
-            for (const section of sections.slice(0, 10)) {
-                expect(section.getAttribute(OUT_OF_WINDOW_ATTR)).toBe("true");
-            }
-
-            for (const section of sections.slice(-2)) {
-                expect(section.hasAttribute(OUT_OF_WINDOW_ATTR)).toBe(false);
+            for (const section of sections) {
+                expect(
+                    section.hasAttribute("data-thread-optimizer-out-of-window")
+                ).toBe(false);
+                expect(
+                    section.hasAttribute("data-thread-optimizer-offscreen-live")
+                ).toBe(false);
             }
 
             expect(

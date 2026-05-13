@@ -49,7 +49,8 @@ export function syncPruningStateToPageBridge(retries = 10) {
  */
 export function syncStoreReadOptimizationToPageWithRetry(
     retries = 10,
-    totalTimeMs = 0
+    totalTimeMs = 0,
+    hasPostedWithoutBridge = false
 ) {
     if (typeof window === "undefined") {
         return;
@@ -57,24 +58,26 @@ export function syncStoreReadOptimizationToPageWithRetry(
 
     const bridge = window.__threadOptimizerChatStoreBridge;
 
-    if (bridge?.__installed) {
+    if (bridge?.__installed || !hasPostedWithoutBridge) {
         postThreadOptimizerBridgeMessage({
             type: "thread-optimizer:set-store-read-optimization",
             enabled: state.featureFlags.storeReadOptimization,
             debug: state.debugLoggingEnabled,
         });
 
-        return;
+        if (bridge?.__installed) {
+            return;
+        }
+
+        hasPostedWithoutBridge = true;
     }
 
-    if (
-        retries > 0 &&
-        totalTimeMs < STORE_READ_OPTIMIZATION_MAX_SYNC_MS
-    ) {
+    if (retries > 0 && totalTimeMs < STORE_READ_OPTIMIZATION_MAX_SYNC_MS) {
         setTimeout(() => {
             syncStoreReadOptimizationToPageWithRetry(
                 retries - 1,
-                totalTimeMs + BRIDGE_SYNC_RETRY_DELAY_MS
+                totalTimeMs + BRIDGE_SYNC_RETRY_DELAY_MS,
+                hasPostedWithoutBridge
             );
         }, BRIDGE_SYNC_RETRY_DELAY_MS);
     }

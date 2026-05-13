@@ -19,31 +19,10 @@ section[data-turn="user"] [data-message-author-role="user"] .whitespace-pre-wrap
 }
 `;
 
-/**
- * Base CSS for the extension runtime.
- *
- * Includes the CSS visibility window, section content-visibility mode, and
- * code-block placeholder presentation.
- */
 const BASE_QOL_CSS = `
-section[data-thread-optimizer-out-of-window="true"] {
-    display: none !important;
-}
-
-html[data-thread-optimizer-sections-offscreen="true"] section[data-testid^="conversation-turn-"],
-html[data-thread-optimizer-sections-offscreen="true"] section[data-turn] {
+html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimizer-offscreen-opt="true"] {
     content-visibility: auto;
-    contain-intrinsic-size: auto 160px;
-}
-
-html[data-thread-optimizer-sections-offscreen="true"] section[data-thread-optimizer-offscreen-live="true"] {
-    content-visibility: visible;
-    contain-intrinsic-size: none;
-}
-
-html[data-thread-optimizer-sections-offscreen="true"] section pre[data-thread-optimizer-large-code-live="true"] {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 240px;
+    contain-intrinsic-size: auto var(--thread-optimizer-section-intrinsic-size, 160px);
 }
 
 section pre[data-thread-optimizer-code-collapsed="true"] {

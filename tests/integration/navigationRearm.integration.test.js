@@ -1,17 +1,44 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { dispatchClick } from "../utils/domEvents.js";
 
-const mockRefs = vi.hoisted(() => ({
-    registeredHandlers: null,
-    runInitialPruneBase: vi.fn(),
-    attachObserverToContainerBase: vi.fn(),
-    ensureObserverAttachedBase: vi.fn(() => true),
-    waitForContainerAndInitialPruneBase: vi.fn(),
-    createObserverDeps: vi.fn(({ scheduleAutoPrune, getDidInitialPrune }) => ({
-        scheduleAutoPrune,
-        getDidInitialPrune,
-    })),
-}));
+const mockRefs = vi.hoisted(() => {
+    function getTestConversationContainer() {
+        return document.querySelector("main > div > div");
+    }
+
+    return {
+        registeredHandlers: null,
+        runInitialPruneBase: vi.fn(() => {
+            if (window.__threadOptimizerState) {
+                window.__threadOptimizerState.didInitialPrune = true;
+            }
+
+            return {};
+        }),
+        attachObserverToContainerBase: vi.fn((container) => {
+            if (window.__threadOptimizerState) {
+                window.__threadOptimizerState.observedContainer = container;
+            }
+        }),
+        ensureObserverAttachedBase: vi.fn(() => {
+            const container = getTestConversationContainer();
+
+            if (container && window.__threadOptimizerState) {
+                window.__threadOptimizerState.observedContainer = container;
+            }
+
+            return Boolean(container);
+        }),
+        waitForContainerAndInitialPruneBase: vi.fn(),
+        createObserverDeps: vi.fn(
+            ({ scheduleAutoPrune, getDidInitialPrune, bootstrapInitialPrune }) => ({
+                scheduleAutoPrune,
+                getDidInitialPrune,
+                bootstrapInitialPrune,
+            })
+        ),
+    };
+});
 
 vi.mock("../../src/shared/ext.js", () => ({
     ext: {
@@ -33,6 +60,9 @@ vi.mock("../../src/shared/ext.js", () => ({
         enablePruning: true,
         enableOffscreenOptimization: false,
         enableDebugLogging: false,
+        enableStoreReadOptimization: false,
+        enableCodeBlockScrollbars: true,
+        enableUserMessageClamp: true,
     })),
 }));
 
@@ -45,16 +75,6 @@ vi.mock("../../src/content/core/messages.js", () => ({
 vi.mock("../../src/content/pruning/prune.js", () => ({
     pruneOldSections: vi.fn(() => []),
     runInitialPrune: mockRefs.runInitialPruneBase,
-}));
-
-vi.mock("../../src/content/pruning/pruneUi.js", () => ({
-    installStartupPruneMask: vi.fn(),
-    removeStartupPruneMask: vi.fn(),
-}));
-
-vi.mock("../../src/content/pruning/cssVisibilityWindow.js", () => ({
-    clearCssVisibilityWindow: vi.fn(),
-    syncCssVisibilityWindow: vi.fn(),
 }));
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
@@ -112,24 +132,36 @@ async function flush() {
     await Promise.resolve();
 }
 
-async function resetNavigationWatcher() {
-    const navigationModule = await import("../../src/content/core/navigation.js");
-    navigationModule.resetConversationNavigationWatcherForTests();
+async function flushScheduledWork() {
+    await flush();
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
 }
 
-async function flushNavigationRearmTimeout() {
-    vi.runOnlyPendingTimers();
-    await flush();
+async function advanceNavigationDetection() {
+    await vi.advanceTimersByTimeAsync(150);
+    await flushScheduledWork();
+}
 
-    vi.advanceTimersByTime(2500);
-    await flush();
+async function advanceFreshContainerPoll() {
+    await vi.advanceTimersByTimeAsync(100);
+    await flushScheduledWork();
+    await vi.advanceTimersByTimeAsync(100);
+    await flushScheduledWork();
+}
 
-    vi.runOnlyPendingTimers();
-    await flush();
+async function advancePastFollowupWindow() {
+    await vi.advanceTimersByTimeAsync(500);
+    await flushScheduledWork();
 }
 
 function navigateTo(path) {
     history.pushState({}, "", path);
+}
+
+async function resetNavigationWatcher() {
+    const navigationModule = await import("../../src/content/core/navigation.js");
+    navigationModule.resetConversationNavigationWatcherForTests();
 }
 
 describe("navigation rearm integration", () => {
@@ -140,11 +172,13 @@ describe("navigation rearm integration", () => {
         vi.resetModules();
         vi.useFakeTimers();
 
-        await resetNavigationWatcher();
-
         document.body.innerHTML = "";
         document.head.innerHTML = "";
         history.replaceState({}, "", "/");
+
+        delete window.__threadOptimizerState;
+
+        await resetNavigationWatcher();
 
         mockRefs.registeredHandlers = null;
         mockRefs.runInitialPruneBase.mockClear();
@@ -162,7 +196,9 @@ describe("navigation rearm integration", () => {
     });
 
     afterEach(async () => {
+        vi.clearAllTimers();
         vi.useRealTimers();
+
         await resetNavigationWatcher();
 
         globalThis.requestAnimationFrame = originalRAF;
@@ -171,21 +207,21 @@ describe("navigation rearm integration", () => {
         document.body.innerHTML = "";
         document.head.innerHTML = "";
         history.replaceState({}, "", "/");
+        delete window.__threadOptimizerState;
     });
 
     it("reruns initial prune after a route change", async () => {
         createConversationContainer();
 
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
         replaceConversationDom();
-
         navigateTo("/c/chat-2");
-        vi.runAllTimers();
-        await flush();
+
+        await advanceNavigationDetection();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
@@ -194,7 +230,7 @@ describe("navigation rearm integration", () => {
         createConversationContainer();
 
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
@@ -206,23 +242,29 @@ describe("navigation rearm integration", () => {
         dispatchClick(link);
         navigateTo("/c/chat-from-sidebar");
 
-        vi.advanceTimersByTime(150);
-        await flush();
+        await advanceNavigationDetection();
 
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
         replaceConversationDom();
 
-        await flushNavigationRearmTimeout();
+        await advanceFreshContainerPoll();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+        expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
+            expect.any(Element),
+            expect.objectContaining({
+                pruneOldSections: expect.any(Function),
+                refreshObservedSections: expect.any(Function),
+            })
+        );
     });
 
     it("rearms from a Recents conversation link without data-sidebar-item after navigation", async () => {
         createConversationContainer();
 
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
@@ -234,11 +276,15 @@ describe("navigation rearm integration", () => {
         dispatchClick(link);
         navigateTo("/c/chat-from-recents");
 
-        vi.advanceTimersByTime(150);
-        await flush();
+        await advanceNavigationDetection();
+
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+
+        replaceConversationDom();
+
+        await advanceFreshContainerPoll();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
-
         expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
             expect.any(Element),
             expect.objectContaining({
@@ -246,19 +292,13 @@ describe("navigation rearm integration", () => {
                 refreshObservedSections: expect.any(Function),
             })
         );
-
-        replaceConversationDom();
-
-        await flushNavigationRearmTimeout();
-
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
 
     it("does not double-prune from the follow-up rearm after a Recents conversation link click", async () => {
         createConversationContainer();
 
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
@@ -270,19 +310,17 @@ describe("navigation rearm integration", () => {
         dispatchClick(link);
         navigateTo("/c/chat-from-recents-followup");
 
-        vi.advanceTimersByTime(150);
-        await flush();
+        await advanceNavigationDetection();
 
-        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
+        expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
         replaceConversationDom();
 
-        await flushNavigationRearmTimeout();
+        await advanceFreshContainerPoll();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
 
-        vi.advanceTimersByTime(450);
-        await flush();
+        await advancePastFollowupWindow();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(2);
     });
@@ -291,7 +329,7 @@ describe("navigation rearm integration", () => {
         createConversationContainer();
 
         await import("../../src/content/core/index.js");
-        await flush();
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
 
@@ -301,11 +339,10 @@ describe("navigation rearm integration", () => {
         document.body.appendChild(link);
 
         dispatchClick(link);
-
         replaceConversationDom();
 
-        vi.advanceTimersByTime(1000);
-        await flush();
+        await vi.advanceTimersByTimeAsync(1000);
+        await flushScheduledWork();
 
         expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
     });

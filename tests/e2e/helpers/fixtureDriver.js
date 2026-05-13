@@ -8,6 +8,9 @@ async function installStorePruneBridgeMock(page) {
         window.THREAD_OPTIMIZER_BRIDGE_TOKEN =
             window.THREAD_OPTIMIZER_BRIDGE_TOKEN || token;
 
+        window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__ =
+            window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__ || [];
+
         if (window.__threadOptimizerE2EStorePruneMockInstalled) {
             return;
         }
@@ -114,6 +117,11 @@ async function installStorePruneBridgeMock(page) {
                 message?.source === "thread-optimizer" &&
                 message?.token === window.THREAD_OPTIMIZER_BRIDGE_TOKEN
             ) {
+                window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__ =
+                    window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__ || [];
+
+                window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__.push(message);
+
                 if (message.type === "thread-optimizer:set-pruning-state") {
                     window.__threadOptimizerChatStoreBridge.setKnownPruningState({
                         enabled: message.enabled,

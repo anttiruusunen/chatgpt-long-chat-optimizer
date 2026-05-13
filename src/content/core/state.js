@@ -1,7 +1,6 @@
 export const STATE_KEY = "__threadOptimizerState";
 
 export const OFFSCREEN_OPT_ATTR = "data-thread-optimizer-offscreen-opt";
-export const OUT_OF_WINDOW_ATTR = "data-thread-optimizer-out-of-window";
 
 export const DEFAULT_SETTINGS = {
     historyKeptExchanges: 10,
@@ -9,7 +8,7 @@ export const DEFAULT_SETTINGS = {
     enablePruning: true,
     enableOffscreenOptimization: true,
     enableDebugLogging: false,
-    enableStoreReadOptimization: false,
+    enableStoreReadOptimization: true,
     enableCodeBlockScrollbars: true,
     enableUserMessageClamp: true,
 };

@@ -5,7 +5,6 @@ import {
     pruneOldSections as pruneOldSectionsBase,
     runInitialPrune as runInitialPruneBase,
 } from "./prune.js";
-import { clearCssVisibilityWindow } from "./cssVisibilityWindow.js";
 import {
     scheduleConversationChromeSync,
     scheduleRefreshPostPruneState,
@@ -131,10 +130,6 @@ export function createPruneController({
                 ? withDomMutationGuard(runPrune)
                 : runPrune();
 
-        if (!isPruneDeferred(result)) {
-            clearCssVisibilityWindow();
-        }
-
         syncAfterPrune("prune-old-sections");
 
         return result;
@@ -156,12 +151,6 @@ export function createPruneController({
         });
     }
 
-    /**
-     * Handles the case where ChatGPT mounts the conversation after startup.
-     *
-     * The observer sees the first real turn mutation, then schedules initial
-     * prune for the next frame so the container lookup has settled.
-     */
     function bootstrapInitialPruneFromObservedMutation() {
         if (isBootstrapInitialPruneScheduled) {
             return;
@@ -211,16 +200,9 @@ export function createPruneController({
 
         clearPendingDeferredAutoPrune();
 
-        clearCssVisibilityWindow();
         state.isAutoPruneScheduled = false;
     }
 
-    /**
-     * Debounces store-native pruning after ChatGPT adds/removes conversation turns.
-     *
-     * This avoids pruning while React is still completing a burst of DOM
-     * mutations, and skips if our own mutation guard is active.
-     */
     function scheduleAutoPrune(reason = "auto-prune") {
         if (!state.featureFlags.pruning) return;
         if (!state.settings.autoPrune) return;

@@ -36,29 +36,129 @@ export async function loadFixtureWithOptimizer(
     await page.goto(fixtureUrl);
 
     await page.addInitScript((injectedSettings) => {
-        const listeners = [];
+        const runtimeListeners = [];
+        const storageListeners = [];
+        const storageState = {
+            ...injectedSettings,
+        };
+
+        function cloneStorageState() {
+            return {
+                ...storageState,
+            };
+        }
+
+        function selectStorageValues(keys) {
+            if (keys == null) {
+                return cloneStorageState();
+            }
+
+            if (typeof keys === "string") {
+                return {
+                    [keys]: storageState[keys],
+                };
+            }
+
+            if (Array.isArray(keys)) {
+                const result = {};
+
+                for (const key of keys) {
+                    result[key] = storageState[key];
+                }
+
+                return result;
+            }
+
+            if (typeof keys === "object") {
+                return {
+                    ...keys,
+                    ...storageState,
+                };
+            }
+
+            return cloneStorageState();
+        }
+
+        function buildStorageChanges(values) {
+            const changes = {};
+
+            for (const [key, newValue] of Object.entries(values || {})) {
+                const oldValue = storageState[key];
+
+                storageState[key] = newValue;
+
+                changes[key] = {
+                    oldValue,
+                    newValue,
+                };
+            }
+
+            return changes;
+        }
+
+        function emitStorageChanges(changes) {
+            if (!changes || Object.keys(changes).length === 0) {
+                return;
+            }
+
+            for (const listener of storageListeners) {
+                try {
+                    listener(changes, "sync");
+                } catch (error) {
+                    setTimeout(() => {
+                        throw error;
+                    }, 0);
+                }
+            }
+        }
 
         globalThis.chrome = {
             runtime: {
                 getURL: (path) => path,
                 onMessage: {
-                    __listeners: listeners,
+                    __listeners: runtimeListeners,
                     addListener: (listener) => {
-                        listeners.push(listener);
+                        runtimeListeners.push(listener);
                     },
                 },
             },
             storage: {
                 sync: {
-                    get: (defaults, callback) => callback({
-                        ...defaults,
-                        ...injectedSettings,
-                    }),
-                    set: (_values, callback) => callback?.(),
+                    get: (keys, callback) => {
+                        if (typeof keys === "function") {
+                            keys(selectStorageValues(null));
+                            return;
+                        }
+
+                        callback?.(selectStorageValues(keys));
+                    },
+                    set: (values, callback) => {
+                        const changes = buildStorageChanges(values);
+
+                        queueMicrotask(() => {
+                            emitStorageChanges(changes);
+                            callback?.();
+                        });
+                    },
                 },
                 onChanged: {
-                    addListener: () => {},
+                    __listeners: storageListeners,
+                    addListener: (listener) => {
+                        storageListeners.push(listener);
+                    },
                 },
+            },
+        };
+
+        globalThis.__THREAD_OPTIMIZER_E2E_STORAGE__ = {
+            get: cloneStorageState,
+            set: (values) =>
+                new Promise((resolve) => {
+                    globalThis.chrome.storage.sync.set(values, resolve);
+                }),
+            dispatch: (values) => {
+                const changes = buildStorageChanges(values);
+                emitStorageChanges(changes);
             },
         };
     }, settings);

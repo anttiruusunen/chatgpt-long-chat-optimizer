@@ -179,6 +179,7 @@ describe("dom write batch integration", () => {
 
         expect(mockRefs.ensurePlaceholderState.mock.calls.length).toBeLessThanOrEqual(1);
         expect(mockRefs.removePlaceholder.mock.calls.length).toBeLessThanOrEqual(1);
-        expect(mockRefs.syncCssVisibilityWindow).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleOffscreenRefresh.mock.calls.length).toBeGreaterThanOrEqual(1);
+        expect(mockRefs.scheduleOffscreenRefresh.mock.calls.length).toBeLessThanOrEqual(2);
     });
 });

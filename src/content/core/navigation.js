@@ -7,6 +7,10 @@ let originalReplaceState = null;
 
 let currentNavigationCallback = null;
 
+let pendingConversationLinkClickUntil = 0;
+
+const CONVERSATION_LINK_HISTORY_SUPPRESSION_MS = 1000;
+
 function getCurrentLocationKey() {
     return `${location.pathname}${location.search}${location.hash}`;
 }
@@ -17,6 +21,19 @@ function clearScheduledChecks() {
     }
 
     scheduledCheckTimers.clear();
+}
+
+function markConversationLinkClickPending() {
+    pendingConversationLinkClickUntil =
+        performance.now() + CONVERSATION_LINK_HISTORY_SUPPRESSION_MS;
+}
+
+function hasPendingConversationLinkClick() {
+    return performance.now() <= pendingConversationLinkClickUntil;
+}
+
+function clearPendingConversationLinkClick() {
+    pendingConversationLinkClickUntil = 0;
 }
 
 /**
@@ -30,10 +47,15 @@ function scheduleNavigationCheck(
     {
         delayMs = 0,
         alwaysNotify = false,
+        clearLinkClickPending = false,
     } = {}
 ) {
     const timer = setTimeout(() => {
         scheduledCheckTimers.delete(timer);
+
+        if (clearLinkClickPending) {
+            clearPendingConversationLinkClick();
+        }
 
         const nextKey = getCurrentLocationKey();
         const locationChanged = nextKey !== lastKnownLocationKey;
@@ -69,9 +91,10 @@ function isConversationNavigationLink(element) {
 }
 
 /**
- * Sidebar/recent-chat clicks can reuse the same URL briefly while React swaps
- * content. We notify once shortly after the click and again after a longer
- * delay so the lifecycle code can wait for a fresh container.
+ * Sidebar/recent-chat clicks can update history before React has mounted the
+ * next conversation. The click path is therefore the authoritative signal for
+ * conversation links: it notifies after short delays, while immediate
+ * pushState/replaceState events from the same click are suppressed.
  */
 function handleDocumentClick(event) {
     const target = event.target;
@@ -84,6 +107,8 @@ function handleDocumentClick(event) {
         return;
     }
 
+    markConversationLinkClickPending();
+
     scheduleNavigationCheck("conversation-link-click", {
         delayMs: 150,
         alwaysNotify: true,
@@ -92,10 +117,18 @@ function handleDocumentClick(event) {
     scheduleNavigationCheck("conversation-link-click-followup", {
         delayMs: 600,
         alwaysNotify: true,
+        clearLinkClickPending: true,
     });
 }
 
 function handleHistoryNavigation(reason) {
+    if (
+        (reason === "pushState" || reason === "replaceState") &&
+        hasPendingConversationLinkClick()
+    ) {
+        return;
+    }
+
     scheduleNavigationCheck(reason);
 }
 
@@ -166,6 +199,7 @@ export function installConversationNavigationWatcher({ onNavigationDetected }) {
 
 export function resetConversationNavigationWatcherForTests() {
     clearScheduledChecks();
+    clearPendingConversationLinkClick();
 
     if (navigationWatcherInstalled) {
         document.removeEventListener("click", handleDocumentClick, true);
