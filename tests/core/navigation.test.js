@@ -62,6 +62,58 @@ describe("navigation watcher", () => {
         });
     });
 
+    it("detects New Chat button clicks", () => {
+        const button = document.createElement("button");
+        button.textContent = "New chat";
+        document.body.appendChild(button);
+
+        dispatchClick(button);
+
+        vi.advanceTimersByTime(200);
+
+        expect(callback).toHaveBeenCalledWith({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+    });
+
+    it("detects New Chat icon buttons by aria-label", () => {
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "New chat");
+        document.body.appendChild(button);
+
+        dispatchClick(button);
+
+        vi.advanceTimersByTime(200);
+
+        expect(callback).toHaveBeenCalledWith({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+    });
+
+    it("runs both immediate and follow-up checks after New Chat click", () => {
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "New chat");
+        document.body.appendChild(button);
+
+        dispatchClick(button);
+
+        vi.advanceTimersByTime(200);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(callback).toHaveBeenLastCalledWith({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+
+        vi.advanceTimersByTime(500);
+        expect(callback).toHaveBeenCalledTimes(2);
+        expect(callback).toHaveBeenLastCalledWith({
+            reason: "new-chat-click-followup",
+            locationKey: "/",
+        });
+    });
+
     it("does not trigger for non-conversation links", () => {
         const link = document.createElement("a");
         link.href = "/settings";
@@ -138,5 +190,16 @@ describe("navigation watcher", () => {
         vi.advanceTimersByTime(1000);
 
         expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("detects pushState route changes without requiring a click hint", () => {
+        history.pushState({}, "", "/c/plain-route-change");
+
+        vi.runOnlyPendingTimers();
+
+        expect(callback).toHaveBeenCalledWith({
+            reason: "pushState",
+            locationKey: "/c/plain-route-change",
+        });
     });
 });

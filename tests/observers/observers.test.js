@@ -4,6 +4,7 @@ import { state } from "../../src/content/core/state.js";
 import {
     mutationNeedsPrune,
     handleObservedMutations,
+    containerHasConversationTurns,
 } from "../../src/content/observers/observers.js";
 
 function makeWrapper(id, turn = "assistant") {
@@ -24,6 +25,17 @@ describe("observers", () => {
         document.body.innerHTML = `<main><div id="conversation-host"></div></main>`;
         state.observedContainer = document.getElementById("conversation-host");
         state.isApplyingDomChanges = false;
+    });
+
+    it("detects whether a container has conversation turns", () => {
+        const container = state.observedContainer;
+
+        expect(containerHasConversationTurns(container)).toBe(false);
+
+        const { wrapper } = makeWrapper("1");
+        container.appendChild(wrapper);
+
+        expect(containerHasConversationTurns(container)).toBe(true);
     });
 
     it("treats wrapper turn insertion as prune-relevant", () => {

@@ -34,6 +34,7 @@ const mockRefs = vi.hoisted(() => ({
     ensureObserverAttached: vi.fn(),
     waitForContainerAndInitialPrune: vi.fn(),
     createObserverDeps: vi.fn(),
+    resetVisibleMessagesReadyNotification: vi.fn(),
 
     registerRuntimeMessageHandlers: vi.fn(),
     debugLog: vi.fn(),
@@ -116,6 +117,8 @@ vi.mock("../../src/content/observers/observers.js", () => ({
     ensureObserverAttached: mockRefs.ensureObserverAttached,
     waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
     createObserverDeps: mockRefs.createObserverDeps,
+    resetVisibleMessagesReadyNotification:
+        mockRefs.resetVisibleMessagesReadyNotification,
 }));
 
 vi.mock("../../src/content/core/messages.js", () => ({
@@ -140,6 +143,23 @@ const DEFAULT_TEST_SETTINGS = {
     enableCodeBlockScrollbars: true,
     enableUserMessageClamp: true,
 };
+
+function createReadyConversationContainer() {
+    const container = document.createElement("main");
+
+    const section = document.createElement("section");
+    section.setAttribute("data-testid", "conversation-turn-1");
+    section.setAttribute("data-turn", "user");
+    section.textContent = "turn-1";
+
+    container.appendChild(section);
+
+    return container;
+}
+
+function createEmptyConversationContainer() {
+    return document.createElement("main");
+}
 
 async function importFreshIndex() {
     vi.resetModules();
@@ -166,6 +186,8 @@ async function importFreshIndex() {
     state.isAutoPruneScheduled = false;
     state.observedContainer = null;
 
+    window.__threadOptimizerState = state;
+
     await import("../../src/content/core/index.js");
 
     await Promise.resolve();
@@ -188,7 +210,7 @@ function resetMocks() {
     mockRefs.getSettings.mockResolvedValue({ ...DEFAULT_TEST_SETTINGS });
 
     mockRefs.getConversationContainer.mockReturnValue(
-        document.createElement("main")
+        createReadyConversationContainer()
     );
 
     mockRefs.ensureObserverAttached.mockReturnValue(true);
@@ -207,12 +229,14 @@ function resetMocks() {
 describe("core/index", () => {
     beforeEach(() => {
         document.body.innerHTML = "";
+        delete window.__threadOptimizerState;
         resetMocks();
     });
 
     afterEach(() => {
         vi.useRealTimers();
         document.body.innerHTML = "";
+        delete window.__threadOptimizerState;
         resetMocks();
     });
 
@@ -227,7 +251,9 @@ describe("core/index", () => {
         expect(mockRefs.syncCodeBlockScrollbarStyles).toHaveBeenCalledTimes(1);
         expect(mockRefs.syncUserMessageClampStyles).toHaveBeenCalledTimes(1);
 
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(1);
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalledTimes(1);
         expect(mockRefs.syncPruningStateToPageBridge).toHaveBeenCalledTimes(1);
 
         expect(mockRefs.installReplyTimingListeners).toHaveBeenCalledTimes(1);
@@ -239,6 +265,7 @@ describe("core/index", () => {
 
         expect(mockRefs.ensureObserverAttached).toHaveBeenCalledTimes(1);
         expect(mockRefs.runInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).not.toHaveBeenCalled();
 
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "initialize",
@@ -251,11 +278,34 @@ describe("core/index", () => {
 
     it("waits for a container when none is attached during initialization", async () => {
         mockRefs.ensureObserverAttached.mockReturnValue(false);
+        mockRefs.getConversationContainer.mockReturnValue(null);
 
         await importFreshIndex();
 
         expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
         expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledWith(
+            expect.objectContaining({
+                requireConversationTurns: true,
+            })
+        );
+    });
+
+    it("waits for conversation turns when an empty container exists during initialization", async () => {
+        mockRefs.ensureObserverAttached.mockReturnValue(true);
+        mockRefs.getConversationContainer.mockReturnValue(
+            createEmptyConversationContainer()
+        );
+
+        await importFreshIndex();
+
+        expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledWith(
+            expect.objectContaining({
+                requireConversationTurns: true,
+            })
+        );
     });
 
     it("schedules only maintenance when pruning is disabled at startup", async () => {
@@ -273,7 +323,7 @@ describe("core/index", () => {
         expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
         expect(mockRefs.scheduleRefreshPostPruneState).toHaveBeenCalledTimes(1);
     });
-    
+
     it("handles reply lifecycle callbacks", async () => {
         await importFreshIndex();
 

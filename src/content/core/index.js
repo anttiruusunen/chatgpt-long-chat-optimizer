@@ -50,6 +50,7 @@ const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
 let pendingReplySettledPruneTimer = null;
+let pendingDeferredInitialPrune = false;
 let lastCompletedFreshNavigationLocationKey = null;
 
 function clearPendingReplySettledPrune() {
@@ -80,21 +81,107 @@ function clearPendingNavigationPrune() {
     }
 }
 
+function containerHasConversationTurns(container) {
+    if (!(container instanceof Element)) {
+        return false;
+    }
+
+    return Boolean(
+        container.querySelector(
+            'section[data-turn], section[data-testid^="conversation-turn-"], [data-turn-id-container]'
+        )
+    );
+}
+
 function isLinkNavigationReason(reason) {
     return (
         reason === "conversation-link-click" ||
         reason === "conversation-link-click-followup" ||
-        reason === "sidebar-click"
+        reason === "sidebar-click" ||
+        reason === "new-chat-click" ||
+        reason === "new-chat-click-followup"
     );
 }
 
+function trackInitialPruneResult(result) {
+    pendingDeferredInitialPrune = Boolean(result?.deferred);
+
+    return result;
+}
+
+function runInitialPruneWithDeferredTracking(container, options = {}) {
+    return trackInitialPruneResult(runInitialPrune(container, options));
+}
+
+function runInitialPruneWhenReady(container, options = {}) {
+    if (!containerHasConversationTurns(container)) {
+        return false;
+    }
+
+    attachObserverToContainer(container);
+
+    runInitialPruneWithDeferredTracking(container, {
+        postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+        ...options,
+    });
+
+    return true;
+}
+
+function retryIncompleteInitialPruneAfterReplySettled() {
+    if (!state.settings.autoPrune || !state.featureFlags.pruning) {
+        return false;
+    }
+
+    if (state.didInitialPrune) {
+        pendingDeferredInitialPrune = false;
+        return false;
+    }
+
+    const container = getConversationContainer();
+    const hasContainer = container instanceof Element;
+    const hasTurns = containerHasConversationTurns(container);
+
+    debugLog("Index: retrying incomplete initial prune after reply settled", {
+        pendingDeferredInitialPrune,
+        didInitialPrune: state.didInitialPrune,
+        hasContainer,
+        hasTurns,
+    });
+
+    pendingDeferredInitialPrune = false;
+
+    if (hasContainer && hasTurns) {
+        runInitialPruneWithDeferredTracking(container, {
+            reason: "reply-settled-after-incomplete-initial-prune",
+            postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+        });
+    } else {
+        waitForContainerAndInitialPrune({
+            reason: "reply-settled-after-incomplete-initial-prune",
+            postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+            requireConversationTurns: true,
+        });
+    }
+
+    return true;
+}
+
 /**
- * Link/sidebar navigation can briefly leave the old conversation container in
- * the DOM while ChatGPT renders the new one. Wait for a fresh container before
- * running initial prune so we do not prune the previous thread by mistake.
+ * Link/sidebar/new-chat navigation can briefly leave the old conversation
+ * container in the DOM, or mount a new empty container before real turns appear.
+ *
+ * Wait for a fresh container with actual conversation turns before running
+ * initial prune. This prevents empty New Chat containers from consuming the
+ * initial-prune lifecycle.
  */
 function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
-    const { navigationLocationKey = null, ...initialPruneOptions } = options;
+    const {
+        navigationLocationKey = null,
+        locationKey = navigationLocationKey,
+        reason = "navigation",
+        ...initialPruneOptions
+    } = options;
 
     const generation = ++navigationPruneGeneration;
     const startedAt = performance.now();
@@ -119,12 +206,17 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
             container instanceof Element && container !== previousContainer;
         const noPreviousContainer = !(previousContainer instanceof Element);
         const timedOut = performance.now() - startedAt >= MAX_WAIT_MS;
+        const hasTurns = containerHasConversationTurns(container);
+        const hasFreshContainer =
+            container instanceof Element &&
+            (noPreviousContainer || previousGone || containerChanged || timedOut);
 
         debugLog("Index: fresh-container prune poll", {
-            reason: options.reason,
+            reason,
             generation,
             activeGeneration: navigationPruneGeneration,
             hasContainer: container instanceof Element,
+            hasTurns,
             previousGone,
             containerChanged,
             noPreviousContainer,
@@ -132,15 +224,26 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
             elapsedMs: Math.round(performance.now() - startedAt),
         });
 
-        if (
-            container &&
-            (noPreviousContainer || previousGone || containerChanged || timedOut)
-        ) {
-            attachObserverToContainer(container);
+        if (hasFreshContainer && hasTurns) {
+            runInitialPruneWhenReady(container, {
+                ...initialPruneOptions,
+                reason,
+            });
 
-            runInitialPrune(container, {
+            lastCompletedFreshNavigationLocationKey = locationKey;
+            pendingNavigationPruneTimer = null;
+            return;
+        }
+
+        if (timedOut) {
+            if (container instanceof Element) {
+                attachObserverToContainer(container);
+            }
+
+            waitForContainerAndInitialPrune({
+                ...initialPruneOptions,
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
-                ...options,
+                requireConversationTurns: true,
             });
 
             pendingNavigationPruneTimer = null;
@@ -163,6 +266,7 @@ function resetConversationLifecycleForNavigation() {
     resetVisibleMessagesReadyNotification();
     clearPendingAutoPrune();
 
+    pendingDeferredInitialPrune = false;
     state.didInitialPrune = false;
 
     debugLog("Index: reset conversation lifecycle state for navigation");
@@ -198,6 +302,15 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
         didInitialPrune: state.didInitialPrune,
     });
 
+    if (shouldSkipDuplicateLinkNavigationRearm(reason, locationKey)) {
+        debugLog("Index: skipped duplicate navigation rearm", {
+            reason,
+            locationKey,
+        });
+
+        return;
+    }
+
     const previousContainer = state.observedContainer || getConversationContainer();
 
     resetConversationLifecycleForNavigation();
@@ -220,22 +333,26 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
     }
 
     const hasContainer = ensureObserverAttached();
+    const container = hasContainer ? getConversationContainer() : null;
+    const hasTurns = containerHasConversationTurns(container);
 
     debugLog("Index: rearming initial prune after navigation", {
         reason,
         locationKey,
         hasContainer,
+        hasTurns,
         isLinkNavigation: isLinkNavigationReason(reason),
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
-        if (hasContainer) {
-            runInitialPrune(getConversationContainer(), {
+        if (hasContainer && hasTurns) {
+            runInitialPruneWithDeferredTracking(container, {
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
             });
         } else {
             waitForContainerAndInitialPrune({
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
+                requireConversationTurns: true,
             });
         }
 
@@ -270,9 +387,16 @@ function ensureObserverAttached() {
 }
 
 function waitForContainerAndInitialPrune(options = {}) {
+    const {
+        requireConversationTurns = false,
+        ...initialPruneOptions
+    } = options;
+
     return waitForContainerAndInitialPruneBase({
         attachObserverToContainer,
-        runInitialPrune: (container) => runInitialPrune(container, options),
+        runInitialPrune: (container) =>
+            runInitialPruneWithDeferredTracking(container, initialPruneOptions),
+        requireConversationTurns,
     });
 }
 
@@ -323,7 +447,12 @@ async function initialize() {
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
-            scheduleReplySettledPrune();
+            const retriedInitialPrune =
+                retryIncompleteInitialPruneAfterReplySettled();
+
+            if (!retriedInitialPrune) {
+                scheduleReplySettledPrune();
+            }
 
             scheduleConversationChromeSync({
                 reason: "reply-settled",
@@ -340,18 +469,23 @@ async function initialize() {
     });
 
     const hasContainer = ensureObserverAttached();
+    const container = hasContainer ? getConversationContainer() : null;
+    const hasTurns = containerHasConversationTurns(container);
 
     debugLog("Index: initialize", {
         settings: state.settings,
         featureFlags: state.featureFlags,
         hasContainer,
+        hasTurns,
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
-        if (hasContainer) {
-            runInitialPrune(getConversationContainer());
+        if (hasContainer && hasTurns) {
+            runInitialPruneWithDeferredTracking(container);
         } else {
-            waitForContainerAndInitialPrune();
+            waitForContainerAndInitialPrune({
+                requireConversationTurns: true,
+            });
         }
     } else if (!hasContainer) {
         waitForContainerAndInitialPrune();
@@ -460,10 +594,12 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         if (!state.didInitialPrune) {
             const container = getConversationContainer();
 
-            if (container) {
-                runInitialPrune(container);
+            if (container && containerHasConversationTurns(container)) {
+                runInitialPruneWithDeferredTracking(container);
             } else {
-                waitForContainerAndInitialPrune();
+                waitForContainerAndInitialPrune({
+                    requireConversationTurns: true,
+                });
             }
         } else {
             scheduleAutoPrune(
@@ -472,6 +608,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         }
     } else {
         clearPendingReplySettledPrune();
+        pendingDeferredInitialPrune = false;
         clearPendingAutoPrune();
         scheduleRefreshPostPruneState();
     }

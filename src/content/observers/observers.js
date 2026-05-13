@@ -9,6 +9,28 @@ import { debugLog } from "../core/logger.js";
 
 let visibleMessagesReadyPostedForContainer = null;
 
+export function containerHasConversationTurns(container) {
+    if (!(container instanceof Element)) {
+        return false;
+    }
+
+    if (
+        container.querySelector(
+            'section[data-turn], section[data-testid^="conversation-turn-"], [data-turn-id-container]'
+        )
+    ) {
+        return true;
+    }
+
+    for (const section of container.querySelectorAll("section")) {
+        if (isConversationSection(section)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function maybeNotifyVisibleMessagesReady(container, reason = "unknown") {
     if (!container || visibleMessagesReadyPostedForContainer === container) {
         return;
@@ -266,9 +288,21 @@ function clearInitWaiters() {
     }
 }
 
-function tryAttachAndRun({ attachObserverToContainer, runInitialPrune }) {
+function tryAttachAndRun({
+    attachObserverToContainer,
+    runInitialPrune,
+    requireConversationTurns = false,
+}) {
     const container = getConversationContainer();
     if (!container) {
+        return false;
+    }
+
+    if (requireConversationTurns && !containerHasConversationTurns(container)) {
+        debugLog(
+            "Observers: found conversation container but waiting for conversation turns"
+        );
+
         return false;
     }
 
@@ -285,20 +319,32 @@ function tryAttachAndRun({ attachObserverToContainer, runInitialPrune }) {
  * Waits for ChatGPT's conversation container to exist, then attaches the
  * observer and runs initial prune.
  *
- * Uses both a MutationObserver and a polling fallback because ChatGPT can mount
- * the conversation DOM before or after our content script initializes.
+ * When requireConversationTurns is true, an empty New Chat container does not
+ * consume the initial-prune lifecycle. The first real turn mount will trigger
+ * the deferred bootstrap instead.
  */
 export function waitForContainerAndInitialPrune({
     attachObserverToContainer,
     runInitialPrune,
+    requireConversationTurns = false,
 }) {
-    if (tryAttachAndRun({ attachObserverToContainer, runInitialPrune })) {
+    if (
+        tryAttachAndRun({
+            attachObserverToContainer,
+            runInitialPrune,
+            requireConversationTurns,
+        })
+    ) {
         return;
     }
 
     if (!state.initObserver) {
         state.initObserver = new MutationObserver(() => {
-            tryAttachAndRun({ attachObserverToContainer, runInitialPrune });
+            tryAttachAndRun({
+                attachObserverToContainer,
+                runInitialPrune,
+                requireConversationTurns,
+            });
         });
 
         state.initObserver.observe(document.body, {
@@ -316,7 +362,13 @@ export function waitForContainerAndInitialPrune({
         state.initPollTimer = setInterval(() => {
             pollAttempts += 1;
 
-            if (tryAttachAndRun({ attachObserverToContainer, runInitialPrune })) {
+            if (
+                tryAttachAndRun({
+                    attachObserverToContainer,
+                    runInitialPrune,
+                    requireConversationTurns,
+                })
+            ) {
                 return;
             }
 
@@ -324,7 +376,7 @@ export function waitForContainerAndInitialPrune({
                 clearInitWaiters();
 
                 debugLog(
-                    "Observers: stopped init polling without finding conversation container"
+                    "Observers: stopped init polling without finding ready conversation container"
                 );
             }
         }, 250);

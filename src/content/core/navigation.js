@@ -90,10 +90,45 @@ function isConversationNavigationLink(element) {
     );
 }
 
+function normalizeTriggerText(value) {
+    return String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+}
+
+function isNewChatNavigationTrigger(element) {
+    if (!(element instanceof Element)) {
+        return false;
+    }
+
+    const trigger = element.closest("a, button, [role='button']");
+    if (!(trigger instanceof Element)) {
+        return false;
+    }
+
+    const label = normalizeTriggerText(
+        [
+            trigger.getAttribute("aria-label"),
+            trigger.getAttribute("title"),
+            trigger.getAttribute("data-testid"),
+            trigger.textContent,
+        ]
+            .filter(Boolean)
+            .join(" ")
+    );
+
+    return (
+        label === "new chat" ||
+        label.includes("new chat") ||
+        label.includes("new-chat")
+    );
+}
+
 /**
- * Sidebar/recent-chat clicks can update history before React has mounted the
- * next conversation. The click path is therefore the authoritative signal for
- * conversation links: it notifies after short delays, while immediate
+ * Sidebar/recent-chat/new-chat clicks can update history before React has
+ * mounted the next conversation. The click path is therefore the authoritative
+ * signal for these navigations: it notifies after short delays, while immediate
  * pushState/replaceState events from the same click are suppressed.
  */
 function handleDocumentClick(event) {
@@ -103,22 +138,38 @@ function handleDocumentClick(event) {
     }
 
     const link = target.closest("a");
-    if (!isConversationNavigationLink(link)) {
+
+    if (isConversationNavigationLink(link)) {
+        markConversationLinkClickPending();
+
+        scheduleNavigationCheck("conversation-link-click", {
+            delayMs: 150,
+            alwaysNotify: true,
+        });
+
+        scheduleNavigationCheck("conversation-link-click-followup", {
+            delayMs: 600,
+            alwaysNotify: true,
+            clearLinkClickPending: true,
+        });
+
         return;
     }
 
-    markConversationLinkClickPending();
+    if (isNewChatNavigationTrigger(target)) {
+        markConversationLinkClickPending();
 
-    scheduleNavigationCheck("conversation-link-click", {
-        delayMs: 150,
-        alwaysNotify: true,
-    });
+        scheduleNavigationCheck("new-chat-click", {
+            delayMs: 150,
+            alwaysNotify: true,
+        });
 
-    scheduleNavigationCheck("conversation-link-click-followup", {
-        delayMs: 600,
-        alwaysNotify: true,
-        clearLinkClickPending: true,
-    });
+        scheduleNavigationCheck("new-chat-click-followup", {
+            delayMs: 600,
+            alwaysNotify: true,
+            clearLinkClickPending: true,
+        });
+    }
 }
 
 function handleHistoryNavigation(reason) {
@@ -176,9 +227,9 @@ function handleHashChange() {
 /**
  * Installs navigation detection for ChatGPT's SPA routing.
  *
- * We combine patched history methods, pop/hash listeners, and captured link
- * clicks because no single signal reliably covers all sidebar and conversation
- * navigation paths.
+ * We combine patched history methods, pop/hash listeners, and captured clicks
+ * because no single signal reliably covers all sidebar, Recents, New Chat, and
+ * conversation navigation paths.
  */
 export function installConversationNavigationWatcher({ onNavigationDetected }) {
     currentNavigationCallback = onNavigationDetected;
