@@ -24,7 +24,7 @@ function copyStaticFiles(src, dest) {
 
         if (
             (entry.isDirectory() &&
-                ["content", "background", "page", "types"].includes(entry.name)) ||
+                ["content", "background", "page", "types", "shared"].includes(entry.name)) ||
             entry.name === "manifest.json"
         ) {
             continue;
