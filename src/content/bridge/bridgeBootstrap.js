@@ -2,6 +2,14 @@ const PAGE_SCRIPT_PATH = "page/chatStorePageBridge.js";
 const PAGE_SCRIPT_ID = "thread-optimizer-chat-store-page-bridge-script";
 const PAGE_BRIDGE_TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
 
+const IS_DEV_BUILD = typeof __DEV__ !== "undefined" && __DEV__ === true;
+
+function devWarn(...args) {
+    if (IS_DEV_BUILD) {
+        console.warn(...args);
+    }
+}
+
 /**
  * Generates a per-page token used to authenticate messages between
  * the content script and the page context.
@@ -58,7 +66,7 @@ function injectBridge(doc = document) {
     const getURL = typeof chrome !== "undefined" && chrome.runtime?.getURL;
 
     if (!getURL) {
-        console.warn(
+        devWarn(
             "[Long Chat Optimizer] chrome.runtime.getURL not available, skipping injection"
         );
         return false;
@@ -79,12 +87,11 @@ function injectBridge(doc = document) {
 
         script.onload = () => {
             window.__threadOptimizerChatStoreBridge.__installed = true;
-            console.log("[Long Chat Optimizer] Bridge installed successfully");
         };
 
         return true;
     } catch (error) {
-        console.error("[Long Chat Optimizer] bridge bootstrap failed", error);
+        devWarn("[Long Chat Optimizer] bridge bootstrap failed", error);
         return false;
     }
 }

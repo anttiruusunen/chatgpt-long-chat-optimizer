@@ -3,6 +3,10 @@
 <head>
     <meta charset="utf-8" />
     <style>
+        [hidden] {
+            display: none !important;
+        }
+
         body {
             width: 320px;
             margin: 0;
@@ -37,23 +41,6 @@
             width: 90px;
             padding: 6px 8px;
             font-size: 13px;
-        }
-
-        .clearButton {
-            width: 28px;
-            height: 28px;
-            padding: 0;
-            border: 1px solid #d33;
-            border-radius: 6px;
-            background: #fff;
-            color: #d33;
-            font-size: 16px;
-            line-height: 1;
-            cursor: pointer;
-        }
-
-        .clearButton:hover {
-            background: rgba(211, 51, 51, 0.08);
         }
 
         .hint {
@@ -95,10 +82,6 @@
             opacity: 0.75;
         }
 
-        .debug[hidden] {
-            display: none !important;
-        }
-
         .debugButtons {
             display: flex;
             flex-wrap: wrap;
@@ -128,21 +111,15 @@
 </head>
 <body>
     <h3>Long Chat Optimizer</h3>
+
     <div class="setting">
         <label class="label" for="historyKeptExchanges">Chat history kept</label>
         <div class="controlRow">
             <input id="historyKeptExchanges" type="number" min="1" step="1" />
-            <button
-                id="clearHistoryKeptExchanges"
-                class="clearButton"
-                type="button"
-                title="Disable auto-pruning"
-                aria-label="Disable auto-pruning"
-            >×</button>
         </div>
         <div class="hint">
             How many recent exchanges stay in the active chat. Older exchanges are pruned from the ChatGPT chat.
-            Clear to disable auto-pruning.
+            Minimum: 1.
         </div>
     </div>
 
@@ -196,7 +173,7 @@
             </label>
         </div>
 
-        <div id="debugButtons" class="debugButtons">
+        <div id="debugButtons" class="debugButtons" hidden>
             <button id="logDebugState" class="debugButton" type="button">Log state</button>
             <button id="logDebugBuckets" class="debugButton" type="button">Log buckets</button>
             <button id="logDebugLogical" class="debugButton" type="button">Log logical</button>

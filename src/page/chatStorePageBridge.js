@@ -75,13 +75,18 @@ import {
     cacheInstallerMethods,
 } from "./chatStoreBridge/cacheInstallers.js";
 
+const ENABLE_DEV_DIAGNOSTICS =
+    typeof __DEV__ !== "undefined" && __DEV__ === true;
+
 (() => {
     const BRIDGE_TOKEN = getBridgeTokenFromCurrentScript();
 
     if (!BRIDGE_TOKEN) {
-        console.warn(
-            "[thread-optimizer bridge] blocked install because bridge token is missing"
-        );
+        if (ENABLE_DEV_DIAGNOSTICS) {
+            console.warn(
+                "[thread-optimizer bridge] blocked install because bridge token is missing"
+            );
+        }
         return;
     }
 
@@ -450,12 +455,14 @@ import {
                 queuedAt: Date.now(),
             };
 
-            console.debug("[thread-optimizer bridge] queued store history prune", {
-                reason,
-                historyKeptExchanges: keepCount,
-                hasStore: Boolean(this.__store),
-                pruningEnabled: this.__knownPruningEnabled,
-            });
+            if (ENABLE_DEV_DIAGNOSTICS) {
+                console.debug("[thread-optimizer bridge] queued store history prune", {
+                    reason,
+                    historyKeptExchanges: keepCount,
+                    hasStore: Boolean(this.__store),
+                    pruningEnabled: this.__knownPruningEnabled,
+                });
+            }
 
             return {
                 ok: true,
@@ -502,24 +509,28 @@ import {
                 }
 
                 if (!this.__store) {
-                    console.debug(
-                        "[thread-optimizer bridge] kept pending store prune because store disappeared",
-                        {
-                            reason,
-                            pending,
-                        }
-                    );
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug(
+                            "[thread-optimizer bridge] kept pending store prune because store disappeared",
+                            {
+                                reason,
+                                pending,
+                            }
+                        );
+                    }
                     return;
                 }
 
                 if (!this.__knownPruningEnabled) {
-                    console.debug(
-                        "[thread-optimizer bridge] dropped pending store prune because pruning is disabled",
-                        {
-                            reason,
-                            pending,
-                        }
-                    );
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug(
+                            "[thread-optimizer bridge] dropped pending store prune because pruning is disabled",
+                            {
+                                reason,
+                                pending,
+                            }
+                        );
+                    }
 
                     this.__pendingStoreHistoryPrune = null;
                     return;
@@ -534,17 +545,19 @@ import {
 
                 this.__lastStoreHistoryPruneResult = result;
 
-                console.debug("[thread-optimizer bridge] flushed pending store history prune", {
-                    reason,
-                    pending,
-                    ok: result?.ok,
-                    historyKeptExchanges: result?.historyKeptExchanges,
-                    currentLeafId: result?.currentLeafId,
-                    branchNodeCount: result?.branchNodeCount,
-                    requestedDeleteCount: result?.deleteNodeIds?.length || 0,
-                    deletedCount: result?.deleted?.length || 0,
-                    failedCount: result?.failed?.length || 0,
-                });
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug("[thread-optimizer bridge] flushed pending store history prune", {
+                        reason,
+                        pending,
+                        ok: result?.ok,
+                        historyKeptExchanges: result?.historyKeptExchanges,
+                        currentLeafId: result?.currentLeafId,
+                        branchNodeCount: result?.branchNodeCount,
+                        requestedDeleteCount: result?.deleteNodeIds?.length || 0,
+                        deletedCount: result?.deleted?.length || 0,
+                        failedCount: result?.failed?.length || 0,
+                    });
+                }
             }, 0);
 
             return {
@@ -558,13 +571,15 @@ import {
 
         scheduleStartupStorePrune(reason = "store-registered") {
             if (!this.__knownPruningEnabled) {
-                console.debug(
-                    "[thread-optimizer bridge] skipped startup store prune because pruning is disabled",
-                    {
-                        reason,
-                        historyKeptExchanges: this.__knownHistoryKeptExchanges,
-                    }
-                );
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug(
+                        "[thread-optimizer bridge] skipped startup store prune because pruning is disabled",
+                        {
+                            reason,
+                            historyKeptExchanges: this.__knownHistoryKeptExchanges,
+                        }
+                    );
+                }
 
                 return {
                     ok: true,
@@ -603,11 +618,13 @@ import {
                 this.__startupStorePruneScheduled = false;
 
                 if (!this.__knownPruningEnabled || !this.__store) {
-                    console.debug("[thread-optimizer bridge] canceled startup store prune", {
-                        reason,
-                        pruningEnabled: this.__knownPruningEnabled,
-                        hasStore: Boolean(this.__store),
-                    });
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug("[thread-optimizer bridge] canceled startup store prune", {
+                            reason,
+                            pruningEnabled: this.__knownPruningEnabled,
+                            hasStore: Boolean(this.__store),
+                        });
+                    }
                     return;
                 }
 
@@ -619,16 +636,18 @@ import {
                 this.__startupStorePruneCompletedForStore = this.__store;
                 this.__lastStoreHistoryPruneResult = result;
 
-                console.debug("[thread-optimizer bridge] startup store prune completed", {
-                    reason,
-                    ok: result?.ok,
-                    historyKeptExchanges: result?.historyKeptExchanges,
-                    currentLeafId: result?.currentLeafId,
-                    branchNodeCount: result?.branchNodeCount,
-                    requestedDeleteCount: result?.deleteNodeIds?.length || 0,
-                    deletedCount: result?.deleted?.length || 0,
-                    failedCount: result?.failed?.length || 0,
-                });
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug("[thread-optimizer bridge] startup store prune completed", {
+                        reason,
+                        ok: result?.ok,
+                        historyKeptExchanges: result?.historyKeptExchanges,
+                        currentLeafId: result?.currentLeafId,
+                        branchNodeCount: result?.branchNodeCount,
+                        requestedDeleteCount: result?.deleteNodeIds?.length || 0,
+                        deletedCount: result?.deleted?.length || 0,
+                        failedCount: result?.failed?.length || 0,
+                    });
+                }
             }, 0);
 
             return {
@@ -658,10 +677,12 @@ import {
             }
 
             if (currentStore && nextNodeCount < currentNodeCount) {
-                console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
-                    currentNodeCount,
-                    nextNodeCount,
-                });
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
+                        currentNodeCount,
+                        nextNodeCount,
+                    });
+                }
                 return false;
             }
 
@@ -678,10 +699,12 @@ import {
             this.__found = true;
             this.__storeValidationFailed = false;
 
-            console.log("[thread-optimizer bridge] store registered", {
-                nodeCount: getStoreNodeCount(this.__store),
-                status: this.status(),
-            });
+            if (ENABLE_DEV_DIAGNOSTICS) {
+                console.log("[thread-optimizer bridge] store registered", {
+                    nodeCount: getStoreNodeCount(this.__store),
+                    status: this.status(),
+                });
+            }
 
             if (this.__storeReadOptimizationRequested) {
                 const result = this.applyStoreReadOptimization({
@@ -690,10 +713,12 @@ import {
                 });
 
                 if (!result?.ok) {
-                    console.warn(
-                        "[thread-optimizer bridge] optimization failed after store registration",
-                        result
-                    );
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.warn(
+                            "[thread-optimizer bridge] optimization failed after store registration",
+                            result
+                        );
+                    }
 
                     this.disableStoreReadOptimization?.({ debug: false });
                     this.resetInstalledStoreEnhancements();
@@ -705,7 +730,7 @@ import {
                     return false;
                 }
 
-                if (this.__storeReadOptimizationDebug) {
+                if (ENABLE_DEV_DIAGNOSTICS && this.__storeReadOptimizationDebug) {
                     console.log(
                         "[thread-optimizer bridge] re-applied store read optimization after store registration",
                         result
@@ -950,23 +975,25 @@ import {
                 failed: [],
             };
 
-            console.debug("[thread-optimizer bridge] store exchange prune plan", {
-                reason,
-                historyKeptExchanges: keepCount,
-                rootId,
-                currentLeafId,
-                branchNodeCount: branchNodes.length,
-                keptExchangeCount: keepPlan.keptExchangeCount,
-                keepWalkedNodeCount: keepPlan.walkedNodeCount,
-                keepStopReason: keepPlan.stopReason,
-                keepCount: keepNodeIds.size,
-                deleteCount: deleteNodeIds.length,
-                keepSamples: Array.from(keepNodeIds).slice(0, 20),
-                deleteSamples: deleteNodeIds.slice(0, 25),
-                newestBranchSamples: branchNodes
-                    .slice(0, 12)
-                    .map(summarizeStoreNode),
-            });
+            if (ENABLE_DEV_DIAGNOSTICS) {
+                console.debug("[thread-optimizer bridge] store exchange prune plan", {
+                    reason,
+                    historyKeptExchanges: keepCount,
+                    rootId,
+                    currentLeafId,
+                    branchNodeCount: branchNodes.length,
+                    keptExchangeCount: keepPlan.keptExchangeCount,
+                    keepWalkedNodeCount: keepPlan.walkedNodeCount,
+                    keepStopReason: keepPlan.stopReason,
+                    keepCount: keepNodeIds.size,
+                    deleteCount: deleteNodeIds.length,
+                    keepSamples: Array.from(keepNodeIds).slice(0, 20),
+                    deleteSamples: deleteNodeIds.slice(0, 25),
+                    newestBranchSamples: branchNodes
+                        .slice(0, 12)
+                        .map(summarizeStoreNode),
+                });
+            }
 
             if (deleteNodeIds.length === 0) {
                 return result;
@@ -1014,27 +1041,31 @@ import {
                         currentLeafId,
                     });
 
-                    console.debug(
-                        "[thread-optimizer bridge] delayed store prune refresh completed",
-                        {
-                            reason,
-                            refreshResult: result.refreshResult,
-                        }
-                    );
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug(
+                            "[thread-optimizer bridge] delayed store prune refresh completed",
+                            {
+                                reason,
+                                refreshResult: result.refreshResult,
+                            }
+                        );
+                    }
                 }, 100);
             }
 
-            console.debug("[thread-optimizer bridge] store prune completed", {
-                reason,
-                ok: result.ok,
-                historyKeptExchanges: keepCount,
-                requestedDeleteCount: deleteNodeIds.length,
-                deletedCount: result.deletedCount,
-                failedCount: result.failedCount,
-                refreshResult: result.refreshResult,
-                deletedSamples: result.deleted.slice(0, 20),
-                failedSamples: result.failed.slice(0, 20),
-            });
+            if (ENABLE_DEV_DIAGNOSTICS) {
+                console.debug("[thread-optimizer bridge] store prune completed", {
+                    reason,
+                    ok: result.ok,
+                    historyKeptExchanges: keepCount,
+                    requestedDeleteCount: deleteNodeIds.length,
+                    deletedCount: result.deletedCount,
+                    failedCount: result.failedCount,
+                    refreshResult: result.refreshResult,
+                    deletedSamples: result.deleted.slice(0, 20),
+                    failedSamples: result.failed.slice(0, 20),
+                });
+            }
 
             return result;
         },
@@ -1054,12 +1085,15 @@ import {
 
                 if (!this.__messageIdResolveWarningShown) {
                     this.__messageIdResolveWarningShown = true;
-                    console.debug(
-                        "[thread-optimizer bridge] messageId resolver fallback unavailable",
-                        {
-                            error: this.__lastError,
-                        }
-                    );
+
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug(
+                            "[thread-optimizer bridge] messageId resolver fallback unavailable",
+                            {
+                                error: this.__lastError,
+                            }
+                        );
+                    }
                 }
 
                 return null;
@@ -1078,7 +1112,11 @@ import {
                 return node;
             } catch (error) {
                 this.__lastError = String(error?.message || error);
-                console.warn("[thread-optimizer bridge] getNodeByMessageId failed", error);
+
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.warn("[thread-optimizer bridge] getNodeByMessageId failed", error);
+                }
+
                 return null;
             }
         },
@@ -1186,9 +1224,10 @@ import {
                 this.__initTiming.firstDiscoveryCompletedAt ??= performance.now();
 
                 if (
-                    this.__found ||
-                    this.__discoveryRuns === 1 ||
-                    this.__discoveryRuns % 5 === 0
+                    ENABLE_DEV_DIAGNOSTICS &&
+                    (this.__found ||
+                        this.__discoveryRuns === 1 ||
+                        this.__discoveryRuns % 5 === 0)
                 ) {
                     console.log(DISCOVERY_LOG_PREFIX, "discovery completed", {
                         found: this.__found,
@@ -1206,10 +1245,12 @@ import {
             this.__storeDiscoveryLocked = true;
             this.__storeDiscoveryLockReason = reason;
 
-            console.debug("[thread-optimizer bridge] locked store discovery", {
-                reason,
-                status: this.status(),
-            });
+            if (ENABLE_DEV_DIAGNOSTICS) {
+                console.debug("[thread-optimizer bridge] locked store discovery", {
+                    reason,
+                    status: this.status(),
+                });
+            }
 
             return true;
         },
@@ -2274,10 +2315,12 @@ import {
             const validation = validateBridgeMessage(data);
 
             if (!validation.ok) {
-                console.debug("[thread-optimizer bridge] ignored invalid bridge message", {
-                    type: data.type,
-                    reason: validation.reason,
-                });
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug("[thread-optimizer bridge] ignored invalid bridge message", {
+                        type: data.type,
+                        reason: validation.reason,
+                    });
+                }
                 return;
             }
 
@@ -2303,14 +2346,16 @@ import {
                         reason: payload.reason,
                     });
 
-                    console.debug(
-                        "[thread-optimizer bridge] queued store prune bridge request because store is unavailable",
-                        {
-                            ok: queued.ok,
-                            historyKeptExchanges: queued.historyKeptExchanges,
-                            reason: queued.reason,
-                        }
-                    );
+                    if (ENABLE_DEV_DIAGNOSTICS) {
+                        console.debug(
+                            "[thread-optimizer bridge] queued store prune bridge request because store is unavailable",
+                            {
+                                ok: queued.ok,
+                                historyKeptExchanges: queued.historyKeptExchanges,
+                                reason: queued.reason,
+                            }
+                        );
+                    }
 
                     return;
                 }
@@ -2320,29 +2365,33 @@ import {
                     reason: payload.reason,
                 });
 
-                console.debug("[thread-optimizer bridge] store prune bridge result", {
-                    ok: result.ok,
-                    reason: result.reason,
-                    historyKeptExchanges: result.historyKeptExchanges,
-                    currentLeafId: result.currentLeafId,
-                    branchNodeCount: result.branchNodeCount,
-                    requestedDeleteCount: result.deleteNodeIds?.length || 0,
-                    deletedCount: result.deleted?.length || 0,
-                    failedCount: result.failed?.length || 0,
-                    result,
-                });
+                if (ENABLE_DEV_DIAGNOSTICS) {
+                    console.debug("[thread-optimizer bridge] store prune bridge result", {
+                        ok: result.ok,
+                        reason: result.reason,
+                        historyKeptExchanges: result.historyKeptExchanges,
+                        currentLeafId: result.currentLeafId,
+                        branchNodeCount: result.branchNodeCount,
+                        requestedDeleteCount: result.deleteNodeIds?.length || 0,
+                        deletedCount: result.deleted?.length || 0,
+                        failedCount: result.failed?.length || 0,
+                        result,
+                    });
+                }
 
                 return;
             }
 
             if (data.type === "thread-optimizer:log-store-performance") {
-                console.debug(
-                    "[thread-optimizer bridge] received store performance log request"
-                );
-                console.log(
-                    "[thread-optimizer bridge] store performance",
-                    bridge.getPerformanceSnapshot()
-                );
+                if (ENABLE_DEBUG) {
+                    console.debug(
+                        "[thread-optimizer bridge] received store performance log request"
+                    );
+                    console.log(
+                        "[thread-optimizer bridge] store performance",
+                        bridge.getPerformanceSnapshot()
+                    );
+                }
                 return;
             }
 

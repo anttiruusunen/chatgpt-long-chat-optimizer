@@ -13,6 +13,8 @@ const distDir = path.join(rootDir, "dist");
 const srcDir = path.join(rootDir, "src");
 const manifestPath = path.join(srcDir, "manifest.json");
 
+const BUNDLED_ENTRY_FILENAMES = new Set(["popup.js"]);
+
 function copyStaticFiles(src, dest) {
     const entries = fs.readdirSync(src, { withFileTypes: true });
 
@@ -21,9 +23,14 @@ function copyStaticFiles(src, dest) {
         const destPath = path.join(dest, entry.name);
 
         if (
-            (entry.isDirectory() && ["content", "background"].includes(entry.name)) ||
+            (entry.isDirectory() &&
+                ["content", "background", "page", "types"].includes(entry.name)) ||
             entry.name === "manifest.json"
         ) {
+            continue;
+        }
+
+        if (!entry.isDirectory() && BUNDLED_ENTRY_FILENAMES.has(entry.name)) {
             continue;
         }
 
@@ -138,6 +145,7 @@ function buildTarget(target, { minify, dev, profile }) {
                 "bridge",
                 "bridgeBootstrap.js"
             ),
+            "popup/popup": path.join(srcDir, "popup", "popup.js"),
             "page/chatStorePageBridge": path.join(
                 srcDir,
                 "page",

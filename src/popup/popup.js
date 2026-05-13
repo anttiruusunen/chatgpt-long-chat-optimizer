@@ -21,7 +21,6 @@ const STATUS_TIMEOUT_MS = 2000;
 
 const elements = {
     historyKeptExchanges: document.getElementById("historyKeptExchanges"),
-    clearHistoryKeptExchanges: document.getElementById("clearHistoryKeptExchanges"),
     enablePruning: document.getElementById("enablePruning"),
     enableOffscreenOptimization: document.getElementById("enableOffscreenOptimization"),
     enableCodeBlockScrollbars: document.getElementById("enableCodeBlockScrollbars"),
@@ -101,16 +100,17 @@ function normalizePositiveInt(value) {
     return rounded >= 1 ? rounded : null;
 }
 
-function updateFieldStates() {
-    const historyDisabled = elements.historyKeptExchanges.value === "";
+function getNormalizedHistoryKeptExchanges() {
+    return (
+        normalizePositiveInt(elements.historyKeptExchanges.value) ??
+        DEFAULT_SETTINGS.historyKeptExchanges
+    );
+}
 
+function updateFieldStates() {
     elements.historyKeptExchanges.placeholder = String(
         DEFAULT_SETTINGS.historyKeptExchanges
     );
-
-    elements.clearHistoryKeptExchanges.title = historyDisabled
-        ? "Auto-pruning is disabled"
-        : "Disable auto-pruning";
 }
 
 function updateDebugVisibility() {
@@ -146,6 +146,7 @@ async function sendToActiveTab(message) {
     } catch (error) {
         return {
             ok: false,
+            unexpected: true,
             error: error?.message || "Content script unavailable",
         };
     }
@@ -153,11 +154,11 @@ async function sendToActiveTab(message) {
 
 async function loadSettings() {
     const stored = await storageSyncGet(DEFAULT_SETTINGS);
+    const historyKeptExchanges =
+        normalizePositiveInt(stored.historyKeptExchanges) ??
+        DEFAULT_SETTINGS.historyKeptExchanges;
 
-    elements.historyKeptExchanges.value =
-        stored.historyKeptExchanges == null
-            ? ""
-            : String(stored.historyKeptExchanges);
+    elements.historyKeptExchanges.value = String(historyKeptExchanges);
 
     elements.enablePruning.checked = Boolean(stored.enablePruning);
     elements.enableOffscreenOptimization.checked = Boolean(
@@ -179,22 +180,13 @@ async function loadSettings() {
 }
 
 function collectSettingsFromForm() {
-    const historyValue = elements.historyKeptExchanges.value;
-    const historyKeptExchanges =
-        historyValue === "" ? null : normalizePositiveInt(historyValue);
-
-    if (historyValue !== "" && historyKeptExchanges == null) {
-        return {
-            ok: false,
-            error: "Chat history kept must be 1 or more",
-        };
-    }
+    const historyKeptExchanges = getNormalizedHistoryKeptExchanges();
 
     return {
         ok: true,
         settings: {
             historyKeptExchanges,
-            autoPrune: historyKeptExchanges != null,
+            autoPrune: true,
             enablePruning: elements.enablePruning.checked,
             enableOffscreenOptimization: elements.enableOffscreenOptimization.checked,
             enableDebugLogging: elements.enableDebugLogging.checked,
@@ -228,8 +220,12 @@ async function saveSettings() {
         ...formState.settings,
     });
 
-    if (!response?.ok) {
-        logPopupError("settings saved, page update skipped", response);
+    if (!response?.ok && response?.unexpected === true && IS_DEV_BUILD) {
+        logPopupError(
+            "settings saved, page update skipped",
+            new Error(response?.error || "No active content script response"),
+            response
+        );
     }
 
     updateFieldStates();
@@ -265,20 +261,10 @@ function bindEvents() {
     bindEvent(elements.historyKeptExchanges, "input", updateFieldStates);
 
     bindEvent(elements.historyKeptExchanges, "change", async () => {
-        const normalized = normalizePositiveInt(
-            elements.historyKeptExchanges.value
-        );
+        const normalized = getNormalizedHistoryKeptExchanges();
 
-        if (elements.historyKeptExchanges.value !== "" && normalized != null) {
-            elements.historyKeptExchanges.value = String(normalized);
-        }
+        elements.historyKeptExchanges.value = String(normalized);
 
-        await saveSettings();
-    });
-
-    bindEvent(elements.clearHistoryKeptExchanges, "click", async () => {
-        elements.historyKeptExchanges.value = "";
-        updateFieldStates();
         await saveSettings();
     });
 

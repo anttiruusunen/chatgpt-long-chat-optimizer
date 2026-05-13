@@ -36,8 +36,7 @@ const POPUP_FLAG_IDS = [
 
 function createPopupDom() {
     document.body.innerHTML = `
-        <input id="historyKeptExchanges" />
-        <button id="clearHistoryKeptExchanges" type="button"></button>
+        <input id="historyKeptExchanges" type="number" min="1" step="1" />
 
         <input id="enablePruning" type="checkbox" />
         <input id="enableCodeBlockScrollbars" type="checkbox" />
@@ -48,7 +47,7 @@ function createPopupDom() {
             <input id="enableOffscreenOptimization" type="checkbox" />
             <input id="enableStoreReadOptimization" type="checkbox" />
 
-            <div id="debugButtons">
+            <div id="debugButtons" hidden>
                 <button id="logDebugState" type="button"></button>
                 <button id="logDebugBuckets" type="button"></button>
                 <button id="logDebugLogical" type="button"></button>
@@ -105,6 +104,15 @@ async function changeCheckbox(id, checked) {
 
     checkbox.checked = checked;
     checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await flushAsyncWork();
+}
+
+async function changeHistoryKeptExchanges(value) {
+    const input = document.getElementById("historyKeptExchanges");
+
+    input.value = value;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
 
     await flushAsyncWork();
 }
@@ -344,7 +352,7 @@ describe("popup feature flags", () => {
         expect(warnSpy).toHaveBeenCalled();
     });
 
-    it("empty history input disables auto-prune while preserving feature flag values", async () => {
+    it("normalizes empty history input to the default and keeps auto-prune enabled", async () => {
         await importPopupWithSettings({
             historyKeptExchanges: 3,
             enablePruning: true,
@@ -358,16 +366,13 @@ describe("popup feature flags", () => {
         mockRefs.storageSyncSet.mockClear();
         mockRefs.sendMessageToTab.mockClear();
 
-        document.getElementById("historyKeptExchanges").value = "";
-        document
-            .getElementById("historyKeptExchanges")
-            .dispatchEvent(new Event("change", { bubbles: true }));
+        await changeHistoryKeptExchanges("");
 
-        await flushAsyncWork();
+        expect(document.getElementById("historyKeptExchanges").value).toBe("10");
 
         expect(getLastSavedSettings()).toMatchObject({
-            historyKeptExchanges: null,
-            autoPrune: false,
+            historyKeptExchanges: 10,
+            autoPrune: true,
             enablePruning: true,
             enableOffscreenOptimization: true,
             enableDebugLogging: true,
@@ -378,8 +383,8 @@ describe("popup feature flags", () => {
 
         expect(getLastRuntimeMessage()).toMatchObject({
             action: "settings-updated",
-            historyKeptExchanges: null,
-            autoPrune: false,
+            historyKeptExchanges: 10,
+            autoPrune: true,
             enablePruning: true,
             enableOffscreenOptimization: true,
             enableDebugLogging: true,
@@ -387,5 +392,47 @@ describe("popup feature flags", () => {
             enableCodeBlockScrollbars: true,
             enableUserMessageClamp: true,
         });
+    });
+
+    it("normalizes invalid history input to the default and keeps auto-prune enabled", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        await changeHistoryKeptExchanges("0");
+
+        expect(document.getElementById("historyKeptExchanges").value).toBe("10");
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 10,
+            autoPrune: true,
+        });
+    });
+
+    it("normalizes decimal history input down to an integer", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        await changeHistoryKeptExchanges("4.9");
+
+        expect(document.getElementById("historyKeptExchanges").value).toBe("4");
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 4,
+            autoPrune: true,
+        });
+    });
+
+    it("loads missing historyKeptExchanges as the default minimum-supported value", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: null,
+        });
+
+        expect(document.getElementById("historyKeptExchanges").value).toBe("10");
     });
 });
