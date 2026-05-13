@@ -8,26 +8,34 @@
         }
 
         body {
-            width: 320px;
+            width: 340px;
             margin: 0;
-            padding: 12px;
-            font-family: sans-serif;
+            padding: 14px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #111;
         }
 
         h3 {
             margin: 0 0 14px;
-            font-size: 16px;
+            font-size: 17px;
+            line-height: 1.2;
         }
 
         .setting {
             margin-bottom: 14px;
         }
 
+        .labelRow {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
         .label {
             display: block;
-            margin-bottom: 6px;
             font-size: 13px;
-            font-weight: 600;
+            font-weight: 700;
         }
 
         .controlRow {
@@ -39,59 +47,115 @@
         input[type="number"] {
             box-sizing: border-box;
             width: 90px;
-            padding: 6px 8px;
+            padding: 7px 8px;
             font-size: 13px;
         }
 
         .hint {
-            margin-top: 6px;
+            margin-top: 7px;
             font-size: 12px;
-            line-height: 1.35;
-            opacity: 0.75;
+            line-height: 1.4;
+            color: rgba(0, 0, 0, 0.68);
         }
 
         .flags,
         .debug {
             margin-top: 14px;
             padding-top: 12px;
-            border-top: 1px solid rgba(0, 0, 0, 0.08);
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
         }
 
         .flagRow {
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-            margin-bottom: 8px;
+            display: grid;
+            grid-template-columns: 22px 1fr auto;
+            align-items: start;
+            column-gap: 8px;
+            margin-bottom: 10px;
             font-size: 13px;
+        }
+
+        .flagRow input[type="checkbox"] {
+            margin-top: 2px;
         }
 
         .flagLabel {
             display: flex;
             flex-direction: column;
             gap: 2px;
+            min-width: 0;
         }
 
         .flagLabel strong {
             font-size: 13px;
-            font-weight: 600;
+            font-weight: 700;
+            line-height: 1.3;
         }
 
-        .flagLabel span {
+        .summary {
             font-size: 12px;
-            line-height: 1.3;
-            opacity: 0.75;
+            line-height: 1.35;
+            color: rgba(0, 0, 0, 0.68);
+        }
+
+        .infoButton {
+            width: 20px;
+            height: 20px;
+            margin-top: 0;
+            padding: 0;
+            border: 1px solid rgba(0, 0, 0, 0.22);
+            border-radius: 999px;
+            background: #fff;
+            color: rgba(0, 0, 0, 0.72);
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 18px;
+            cursor: pointer;
+        }
+
+        .infoButton:hover,
+        .infoButton:focus-visible {
+            background: rgba(0, 0, 0, 0.05);
+            outline: none;
+        }
+
+        .details {
+            grid-column: 2 / 4;
+            margin-top: 6px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.045);
+            font-size: 12px;
+            line-height: 1.4;
+            color: rgba(0, 0, 0, 0.76);
+        }
+
+        .details p {
+            margin: 0;
+        }
+
+        .debugHeader {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .debugHeader .label {
+            margin: 0;
         }
 
         .debugButtons {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
+            margin-top: 10px;
         }
 
         .debugButton {
             padding: 6px 10px;
             border: 1px solid rgba(0, 0, 0, 0.16);
-            border-radius: 6px;
+            border-radius: 7px;
             background: #fff;
             font-size: 12px;
             cursor: pointer;
@@ -105,7 +169,7 @@
             min-height: 16px;
             margin-top: 10px;
             font-size: 12px;
-            opacity: 0.8;
+            color: rgba(0, 0, 0, 0.72);
         }
     </style>
 </head>
@@ -113,13 +177,30 @@
     <h3>Long Chat Optimizer</h3>
 
     <div class="setting">
-        <label class="label" for="historyKeptExchanges">Chat history kept</label>
+        <div class="labelRow">
+            <label class="label" for="historyKeptExchanges">Recent exchanges kept</label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="historyKeptInfo"
+                aria-expanded="false"
+                aria-controls="historyKeptInfo"
+                title="More information"
+            >?</button>
+        </div>
+
         <div class="controlRow">
             <input id="historyKeptExchanges" type="number" min="1" step="1" />
         </div>
+
         <div class="hint">
-            How many recent exchanges stay in the active chat. Older exchanges are pruned from the ChatGPT chat.
-            Minimum: 1.
+            Keep the newest exchanges active and remove older ones from the current ChatGPT page.
+        </div>
+
+        <div id="historyKeptInfo" class="details" hidden>
+            <p>
+                An exchange means one user message plus the assistant reply. A value of 1 keeps only the newest exchange active, which gives the biggest speedup in very long chats.
+            </p>
         </div>
     </div>
 
@@ -127,50 +208,133 @@
         <div class="flagRow">
             <input id="enablePruning" type="checkbox" />
             <label class="flagLabel" for="enablePruning">
-                <strong>Enable pruning</strong>
+                <strong>Speed up long chats</strong>
+                <span class="summary">Automatically remove older visible chat turns from the current page.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enablePruningInfo"
+                aria-expanded="false"
+                aria-controls="enablePruningInfo"
+                title="More information"
+            >?</button>
+            <div id="enablePruningInfo" class="details" hidden>
+                <p>
+                    This keeps ChatGPT responsive by reducing how much old conversation content the page has to keep rendered. Your saved ChatGPT conversation remains available when you reload or reopen it.
+                </p>
+            </div>
         </div>
 
         <div class="flagRow">
             <input id="enableUserMessageClamp" type="checkbox" />
             <label class="flagLabel" for="enableUserMessageClamp">
-                <strong>Clamp long user messages</strong>
-                <span>Make very long prompts scrollable instead of taking over the page.</span>
+                <strong>Make long prompts scrollable</strong>
+                <span class="summary">Prevent huge user messages from taking over the page.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enableUserMessageClampInfo"
+                aria-expanded="false"
+                aria-controls="enableUserMessageClampInfo"
+                title="More information"
+            >?</button>
+            <div id="enableUserMessageClampInfo" class="details" hidden>
+                <p>
+                    Long prompts stay readable, but they get their own scroll area so you can move through the conversation more easily.
+                </p>
+            </div>
         </div>
 
         <div class="flagRow">
             <input id="enableCodeBlockScrollbars" type="checkbox" />
             <label class="flagLabel" for="enableCodeBlockScrollbars">
-                <strong>Code block scrollbars</strong>
-                <span>Clamp tall code blocks and make them scrollable.</span>
+                <strong>Make large code blocks scrollable</strong>
+                <span class="summary">Limit tall code blocks so replies are easier to navigate.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enableCodeBlockScrollbarsInfo"
+                aria-expanded="false"
+                aria-controls="enableCodeBlockScrollbarsInfo"
+                title="More information"
+            >?</button>
+            <div id="enableCodeBlockScrollbarsInfo" class="details" hidden>
+                <p>
+                    Very large code blocks keep their content, but they use an internal scrollbar instead of stretching the entire chat page.
+                </p>
+            </div>
         </div>
 
         <div class="flagRow">
             <input id="enableDebugLogging" type="checkbox" />
             <label class="flagLabel" for="enableDebugLogging">
-                <strong>Advanced / debug mode</strong>
+                <strong>Show advanced settings</strong>
+                <span class="summary">Reveal extra performance options and diagnostics.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enableDebugLoggingInfo"
+                aria-expanded="false"
+                aria-controls="enableDebugLoggingInfo"
+                title="More information"
+            >?</button>
+            <div id="enableDebugLoggingInfo" class="details" hidden>
+                <p>
+                    Advanced settings are useful for troubleshooting or tuning performance. Most users can leave them hidden.
+                </p>
+            </div>
         </div>
     </div>
 
     <div id="debugSection" class="debug" hidden>
-        <div class="label">Advanced / Debug</div>
+        <div class="debugHeader">
+            <div class="label">Advanced settings</div>
+        </div>
 
         <div class="flagRow">
             <input id="enableOffscreenOptimization" type="checkbox" />
             <label class="flagLabel" for="enableOffscreenOptimization">
-                <strong>Enable offscreen optimization</strong>
+                <strong>Reduce offscreen rendering work</strong>
+                <span class="summary">Let the browser skip layout work for older chat sections that are far away.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enableOffscreenOptimizationInfo"
+                aria-expanded="false"
+                aria-controls="enableOffscreenOptimizationInfo"
+                title="More information"
+            >?</button>
+            <div id="enableOffscreenOptimizationInfo" class="details" hidden>
+                <p>
+                    This uses browser-native rendering hints to reduce work for conversation sections outside the visible area.
+                </p>
+            </div>
         </div>
 
         <div class="flagRow">
             <input id="enableStoreReadOptimization" type="checkbox" />
             <label class="flagLabel" for="enableStoreReadOptimization">
-                <strong>Optimize ChatGPT store reads</strong>
-                <span>Experimental cache for repeated internal node lookups during long conversations.</span>
+                <strong>Speed up ChatGPT conversation lookups</strong>
+                <span class="summary">Cache repeated internal lookups during very long conversations.</span>
             </label>
+            <button
+                class="infoButton"
+                type="button"
+                data-info-target="enableStoreReadOptimizationInfo"
+                aria-expanded="false"
+                aria-controls="enableStoreReadOptimizationInfo"
+                title="More information"
+            >?</button>
+            <div id="enableStoreReadOptimizationInfo" class="details" hidden>
+                <p>
+                    This reduces repeated work inside ChatGPT's page state while a long conversation is open. Disable it if ChatGPT changes behavior unexpectedly.
+                </p>
+            </div>
         </div>
 
         <div id="debugButtons" class="debugButtons" hidden>

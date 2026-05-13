@@ -120,6 +120,22 @@ function updateDebugVisibility() {
     elements.debugButtons.hidden = !(IS_DEV_BUILD && debugEnabled);
 }
 
+function toggleInfoPanel(button) {
+    const targetId = button?.dataset?.infoTarget;
+    if (!targetId) {
+        return;
+    }
+
+    const panel = document.getElementById(targetId);
+    if (!panel) {
+        return;
+    }
+
+    const nextExpanded = panel.hidden;
+    panel.hidden = !nextExpanded;
+    button.setAttribute("aria-expanded", String(nextExpanded));
+}
+
 async function getActiveTabId() {
     const tabs = await queryTabs({
         active: true,
@@ -257,6 +273,14 @@ function bindEvent(element, eventName, handler) {
     });
 }
 
+function bindInfoButtons() {
+    document.querySelectorAll("[data-info-target]").forEach((button) => {
+        bindEvent(button, "click", () => {
+            toggleInfoPanel(button);
+        });
+    });
+}
+
 function bindEvents() {
     bindEvent(elements.historyKeptExchanges, "input", updateFieldStates);
 
@@ -294,6 +318,8 @@ function bindEvents() {
     bindEvent(elements.logDebugStorePerformance, "click", () =>
         sendDebugAction("log-debug-store-performance", "Logged store cache")
     );
+
+    bindInfoButtons();
 }
 
 async function init() {

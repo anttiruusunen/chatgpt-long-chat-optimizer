@@ -34,18 +34,41 @@ const POPUP_FLAG_IDS = [
     "enableUserMessageClamp",
 ];
 
+function createInfoButton(targetId) {
+    return `
+        <button
+            type="button"
+            data-info-target="${targetId}"
+            aria-expanded="false"
+            aria-controls="${targetId}"
+        >?</button>
+        <div id="${targetId}" hidden></div>
+    `;
+}
+
 function createPopupDom() {
     document.body.innerHTML = `
         <input id="historyKeptExchanges" type="number" min="1" step="1" />
+        ${createInfoButton("historyKeptInfo")}
 
         <input id="enablePruning" type="checkbox" />
+        ${createInfoButton("enablePruningInfo")}
+
         <input id="enableCodeBlockScrollbars" type="checkbox" />
+        ${createInfoButton("enableCodeBlockScrollbarsInfo")}
+
         <input id="enableUserMessageClamp" type="checkbox" />
+        ${createInfoButton("enableUserMessageClampInfo")}
+
         <input id="enableDebugLogging" type="checkbox" />
+        ${createInfoButton("enableDebugLoggingInfo")}
 
         <div id="debugSection" hidden>
             <input id="enableOffscreenOptimization" type="checkbox" />
+            ${createInfoButton("enableOffscreenOptimizationInfo")}
+
             <input id="enableStoreReadOptimization" type="checkbox" />
+            ${createInfoButton("enableStoreReadOptimizationInfo")}
 
             <div id="debugButtons" hidden>
                 <button id="logDebugState" type="button"></button>
@@ -69,11 +92,7 @@ async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
     vi.resetModules();
     createPopupDom();
 
-    if (dev) {
-        vi.stubGlobal("__DEV__", true);
-    } else {
-        vi.stubGlobal("__DEV__", false);
-    }
+    vi.stubGlobal("__DEV__", Boolean(dev));
 
     mockRefs.storedSettings = {
         ...DEFAULT_POPUP_SETTINGS,
@@ -120,6 +139,14 @@ async function changeHistoryKeptExchanges(value) {
 async function clickButton(id) {
     document
         .getElementById(id)
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await flushAsyncWork();
+}
+
+async function clickInfoButton(targetId) {
+    document
+        .querySelector(`[data-info-target="${targetId}"]`)
         .dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await flushAsyncWork();
@@ -350,6 +377,43 @@ describe("popup feature flags", () => {
         );
         expect(errorSpy).not.toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it("toggles info panels from info buttons", async () => {
+        await importPopupWithSettings();
+
+        const button = document.querySelector(
+            '[data-info-target="enablePruningInfo"]'
+        );
+        const panel = document.getElementById("enablePruningInfo");
+
+        expect(panel.hidden).toBe(true);
+        expect(button.getAttribute("aria-expanded")).toBe("false");
+
+        await clickInfoButton("enablePruningInfo");
+
+        expect(panel.hidden).toBe(false);
+        expect(button.getAttribute("aria-expanded")).toBe("true");
+
+        await clickInfoButton("enablePruningInfo");
+
+        expect(panel.hidden).toBe(true);
+        expect(button.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("ignores malformed info buttons safely", async () => {
+        await importPopupWithSettings();
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("data-info-target", "missing-panel");
+        document.body.appendChild(button);
+
+        expect(() => {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        }).not.toThrow();
+
+        await flushAsyncWork();
     });
 
     it("normalizes empty history input to the default and keeps auto-prune enabled", async () => {
