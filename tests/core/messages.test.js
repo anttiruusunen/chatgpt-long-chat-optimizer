@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { silenceConsole } from "../utils/console.js";
 import {
     createRuntimeMessageHandlers,
     createFeatureFlagSyncMock,
@@ -9,6 +8,7 @@ import { resetCoreStateForTests } from "../utils/state.js";
 const mockRefs = vi.hoisted(() => ({
     runtimeListener: null,
     debugLog: vi.fn(),
+    debugError: vi.fn(),
     postThreadOptimizerBridgeMessage: vi.fn(),
 }));
 
@@ -26,6 +26,7 @@ vi.mock("../../src/shared/ext.js", () => ({
 
 vi.mock("../../src/content/core/logger.js", () => ({
     debugLog: mockRefs.debugLog,
+    debugError: mockRefs.debugError,
 }));
 
 vi.mock("../../src/content/ui/qolStyles.js", () => ({
@@ -64,6 +65,7 @@ describe("core/messages", () => {
     beforeEach(async () => {
         mockRefs.runtimeListener = null;
         mockRefs.debugLog.mockClear();
+        mockRefs.debugError.mockClear();
         mockRefs.postThreadOptimizerBridgeMessage.mockClear();
 
         const { stateModule } = await importFreshModules();
@@ -324,21 +326,23 @@ describe("core/messages", () => {
         });
     });
 
-    it("catches thrown errors and returns them in the response", async () => {
-        const restoreConsole = silenceConsole(["error"]);
-        const errorSpy = console.error;
+    it("catches thrown errors and returns them without logging when debug logging is disabled", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state } = stateModule;
+
+        state.debugLoggingEnabled = false;
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            pruneOldSections: vi.fn(() => {
+                throw new Error("boom");
+            }),
+        });
+
+        const sendResponse = vi.fn();
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
         try {
-            const { messagesModule } = await importFreshModules();
-
-            const { listener } = setupRuntimeHandlers(messagesModule, {
-                pruneOldSections: vi.fn(() => {
-                    throw new Error("boom");
-                }),
-            });
-
-            const sendResponse = vi.fn();
-
             const returned = listener(
                 {
                     action: "prune-now",
@@ -353,10 +357,56 @@ describe("core/messages", () => {
                 ok: false,
                 error: "Error: boom",
             });
-            expect(errorSpy).toHaveBeenCalled();
+            expect(mockRefs.debugError).toHaveBeenCalledWith(
+                "Messages: handler failed",
+                expect.any(Error),
+                {
+                    action: "prune-now",
+                }
+            );
+            expect(errorSpy).not.toHaveBeenCalled();
+            expect(warnSpy).not.toHaveBeenCalled();
         } finally {
-            restoreConsole();
+            errorSpy.mockRestore();
+            warnSpy.mockRestore();
         }
+    });
+
+    it("catches thrown errors and routes them through debugError when debug logging is enabled", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state } = stateModule;
+
+        state.debugLoggingEnabled = true;
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            pruneOldSections: vi.fn(() => {
+                throw new Error("boom");
+            }),
+        });
+
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            {
+                action: "prune-now",
+                historyKeptExchanges: 3,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({
+            ok: false,
+            error: "Error: boom",
+        });
+        expect(mockRefs.debugError).toHaveBeenCalledWith(
+            "Messages: handler failed",
+            expect.any(Error),
+            {
+                action: "prune-now",
+            }
+        );
     });
 
     it("settings-updated preserves existing settings when optional keys are omitted", async () => {

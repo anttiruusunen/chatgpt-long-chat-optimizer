@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { debugLog } from "../core/logger.js";
+import { debugLog, debugError } from "../core/logger.js";
 import { ext } from "../../shared/ext.js";
 import {
     syncCodeBlockScrollbarStyles,
@@ -235,7 +235,10 @@ export function registerRuntimeMessageHandlers({
             sendResponse({ ok: false, error: "Unknown action" });
             return true;
         } catch (error) {
-            console.error("[Thread Optimizer]", error);
+            debugError("Messages: handler failed", error, {
+                action: message?.action,
+            });
+
             sendResponse({ ok: false, error: String(error) });
             return true;
         }

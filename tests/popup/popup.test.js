@@ -47,10 +47,13 @@ function createPopupDom() {
         <div id="debugSection" hidden>
             <input id="enableOffscreenOptimization" type="checkbox" />
             <input id="enableStoreReadOptimization" type="checkbox" />
-            <button id="logDebugState" type="button"></button>
-            <button id="logDebugBuckets" type="button"></button>
-            <button id="logDebugLogical" type="button"></button>
-            <button id="logDebugStorePerformance" type="button"></button>
+
+            <div id="debugButtons">
+                <button id="logDebugState" type="button"></button>
+                <button id="logDebugBuckets" type="button"></button>
+                <button id="logDebugLogical" type="button"></button>
+                <button id="logDebugStorePerformance" type="button"></button>
+            </div>
         </div>
 
         <div id="status"></div>
@@ -63,9 +66,15 @@ async function flushAsyncWork() {
     await Promise.resolve();
 }
 
-async function importPopupWithSettings(settings = {}) {
+async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
     vi.resetModules();
     createPopupDom();
+
+    if (dev) {
+        vi.stubGlobal("__DEV__", true);
+    } else {
+        vi.stubGlobal("__DEV__", false);
+    }
 
     mockRefs.storedSettings = {
         ...DEFAULT_POPUP_SETTINGS,
@@ -100,6 +109,14 @@ async function changeCheckbox(id, checked) {
     await flushAsyncWork();
 }
 
+async function clickButton(id) {
+    document
+        .getElementById(id)
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await flushAsyncWork();
+}
+
 function getLastSavedSettings() {
     const calls = mockRefs.storageSyncSet.mock.calls;
     return calls[calls.length - 1]?.[0] || null;
@@ -111,6 +128,9 @@ function getLastRuntimeMessage() {
 }
 
 describe("popup feature flags", () => {
+    let warnSpy;
+    let errorSpy;
+
     beforeEach(() => {
         vi.useFakeTimers();
 
@@ -120,11 +140,19 @@ describe("popup feature flags", () => {
         mockRefs.storageSyncSet.mockReset();
         mockRefs.queryTabs.mockReset();
         mockRefs.sendMessageToTab.mockReset();
+
+        warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     });
 
     afterEach(() => {
         vi.clearAllTimers();
         vi.useRealTimers();
+        vi.unstubAllGlobals();
+
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+
         document.body.innerHTML = "";
     });
 
@@ -222,6 +250,98 @@ describe("popup feature flags", () => {
         });
 
         expect(document.getElementById("debugSection").hidden).toBe(false);
+    });
+
+    it("hides debug action buttons in production even when debug logging is enabled", async () => {
+        await importPopupWithSettings({
+            enableDebugLogging: true,
+        });
+
+        expect(document.getElementById("debugSection").hidden).toBe(false);
+        expect(document.getElementById("debugButtons").hidden).toBe(true);
+    });
+
+    it("shows debug action buttons in dev builds when debug logging is enabled", async () => {
+        await importPopupWithSettings(
+            {
+                enableDebugLogging: true,
+            },
+            {
+                dev: true,
+            }
+        );
+
+        expect(document.getElementById("debugSection").hidden).toBe(false);
+        expect(document.getElementById("debugButtons").hidden).toBe(false);
+    });
+
+    it("does not send debug actions in production even if the button is clicked", async () => {
+        await importPopupWithSettings({
+            enableDebugLogging: true,
+        });
+
+        mockRefs.sendMessageToTab.mockClear();
+
+        await clickButton("logDebugState");
+
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+        expect(document.getElementById("status").textContent).toBe(
+            "Debug actions are unavailable in production builds"
+        );
+    });
+
+    it("sends debug actions in dev builds", async () => {
+        await importPopupWithSettings(
+            {
+                enableDebugLogging: true,
+            },
+            {
+                dev: true,
+            }
+        );
+
+        mockRefs.sendMessageToTab.mockClear();
+
+        await clickButton("logDebugState");
+
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledWith(123, {
+            action: "debug-log-state",
+        });
+        expect(document.getElementById("status").textContent).toBe(
+            "Logged debug state"
+        );
+    });
+
+    it("shows popup action errors without calling console.error", async () => {
+        await importPopupWithSettings({
+            enableDebugLogging: false,
+        });
+
+        mockRefs.storageSyncSet.mockRejectedValueOnce(new Error("storage failed"));
+
+        await changeCheckbox("enablePruning", false);
+
+        expect(document.getElementById("status").textContent).toBe(
+            "storage failed"
+        );
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs popup action errors only when debug logging is enabled", async () => {
+        await importPopupWithSettings({
+            enableDebugLogging: true,
+        });
+
+        mockRefs.storageSyncSet.mockRejectedValueOnce(new Error("storage failed"));
+
+        await changeCheckbox("enablePruning", false);
+
+        expect(document.getElementById("status").textContent).toBe(
+            "storage failed"
+        );
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalled();
     });
 
     it("empty history input disables auto-prune while preserving feature flag values", async () => {

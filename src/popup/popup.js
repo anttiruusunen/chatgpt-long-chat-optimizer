@@ -5,6 +5,8 @@ import {
     storageSyncSet,
 } from "../shared/ext.js";
 
+const IS_DEV_BUILD = typeof __DEV__ !== "undefined" && __DEV__ === true;
+
 const DEFAULT_SETTINGS = {
     historyKeptExchanges: 10,
     enablePruning: true,
@@ -27,6 +29,7 @@ const elements = {
     enableStoreReadOptimization: document.getElementById("enableStoreReadOptimization"),
     enableUserMessageClamp: document.getElementById("enableUserMessageClamp"),
     debugSection: document.getElementById("debugSection"),
+    debugButtons: document.getElementById("debugButtons"),
     logDebugState: document.getElementById("logDebugState"),
     logDebugBuckets: document.getElementById("logDebugBuckets"),
     logDebugLogical: document.getElementById("logDebugLogical"),
@@ -68,8 +71,21 @@ function setPersistentError(message) {
     setStatus(message, { timeoutMs: 0 });
 }
 
+function logPopupError(message, error, details) {
+    if (!IS_DEV_BUILD && !elements.enableDebugLogging?.checked) {
+        return;
+    }
+
+    if (details === undefined) {
+        console.warn(`[Thread Optimizer popup] ${message}`, error);
+        return;
+    }
+
+    console.warn(`[Thread Optimizer popup] ${message}`, error, details);
+}
+
 function handlePopupError(error, fallbackMessage = "Action failed") {
-    console.error("[Thread Optimizer popup]", error);
+    logPopupError("action failed", error);
     setStatus(error?.message || fallbackMessage);
 }
 
@@ -98,7 +114,10 @@ function updateFieldStates() {
 }
 
 function updateDebugVisibility() {
-    elements.debugSection.hidden = !elements.enableDebugLogging.checked;
+    const debugEnabled = elements.enableDebugLogging.checked;
+
+    elements.debugSection.hidden = !debugEnabled;
+    elements.debugButtons.hidden = !(IS_DEV_BUILD && debugEnabled);
 }
 
 async function getActiveTabId() {
@@ -210,10 +229,7 @@ async function saveSettings() {
     });
 
     if (!response?.ok) {
-        console.debug(
-            "[Thread Optimizer popup] settings saved, page update skipped",
-            response
-        );
+        logPopupError("settings saved, page update skipped", response);
     }
 
     updateFieldStates();
@@ -223,9 +239,18 @@ async function saveSettings() {
 }
 
 async function sendDebugAction(action, successMessage) {
+    if (!IS_DEV_BUILD) {
+        setStatus("Debug actions are unavailable in production builds");
+        return;
+    }
+
     const response = await sendToActiveTab({ action });
 
-    setStatus(response?.ok ? successMessage : response?.error || "Debug action failed");
+    setStatus(
+        response?.ok
+            ? successMessage
+            : response?.error || "Debug action failed"
+    );
 }
 
 function bindEvent(element, eventName, handler) {
@@ -293,7 +318,7 @@ async function init() {
 }
 
 init().catch((error) => {
-    console.error("[Thread Optimizer popup] failed to initialize", error);
+    logPopupError("failed to initialize", error);
 
     try {
         setPersistentError(error?.message || "Failed to initialize popup");

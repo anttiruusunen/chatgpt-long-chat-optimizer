@@ -47,3 +47,16 @@ export function debugGroup(label, fn) {
         console.groupEnd();
     }
 }
+
+export function debugError(message, error, data) {
+    if (!state.debugLoggingEnabled) return;
+
+    const prefix = getElapsedLabel();
+
+    if (data === undefined) {
+        console.warn(prefix, message, error);
+        return;
+    }
+
+    console.warn(prefix, message, error, data);
+}
