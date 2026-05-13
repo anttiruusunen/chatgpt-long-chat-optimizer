@@ -80,20 +80,49 @@ function shouldMinifyBuild() {
     return parseBoolean(process.env.BUILD_MINIFY, true);
 }
 
-function shouldEnableBridgeProfiling() {
-    if (hasArg("--bridge-profile")) {
+function shouldEnableDevBuild() {
+    if (hasArg("--dev")) {
         return true;
     }
 
-    const cliProfile = getArgValue("--bridge-profile");
+    const cliDev = getArgValue("--dev");
+    if (cliDev != null) {
+        return parseBoolean(cliDev, false);
+    }
+
+    return parseBoolean(process.env.BUILD_DEV, false);
+}
+
+function shouldEnableProfiling() {
+    if (hasArg("--profile") || hasArg("--bridge-profile")) {
+        return true;
+    }
+
+    const cliProfile = getArgValue("--profile");
     if (cliProfile != null) {
         return parseBoolean(cliProfile, false);
+    }
+
+    const cliBridgeProfile = getArgValue("--bridge-profile");
+    if (cliBridgeProfile != null) {
+        return parseBoolean(cliBridgeProfile, false);
+    }
+
+    if (process.env.BUILD_PROFILE != null) {
+        return parseBoolean(process.env.BUILD_PROFILE, false);
     }
 
     return parseBoolean(process.env.BRIDGE_PROFILE, false);
 }
 
-function buildTarget(target, { minify, bridgeProfile }) {
+function getBuildDefines({ dev, profile }) {
+    return {
+        __DEV__: JSON.stringify(dev),
+        __PROFILE__: JSON.stringify(profile),
+    };
+}
+
+function buildTarget(target, { minify, dev, profile }) {
     const outDir = getBrowserDistDir(distDir, target);
 
     fs.mkdirSync(outDir, { recursive: true });
@@ -103,8 +132,17 @@ function buildTarget(target, { minify, bridgeProfile }) {
     esbuild.buildSync({
         entryPoints: {
             content: path.join(srcDir, "content", "core", "index.js"),
-            bridgeBootstrap: path.join(srcDir, "content", "bridge", "bridgeBootstrap.js"),
-            "page/chatStorePageBridge": path.join(srcDir, "page", "chatStorePageBridge.js"),
+            bridgeBootstrap: path.join(
+                srcDir,
+                "content",
+                "bridge",
+                "bridgeBootstrap.js"
+            ),
+            "page/chatStorePageBridge": path.join(
+                srcDir,
+                "page",
+                "chatStorePageBridge.js"
+            ),
         },
         bundle: true,
         outdir: outDir,
@@ -113,18 +151,11 @@ function buildTarget(target, { minify, bridgeProfile }) {
         minify,
         sourcemap: !minify,
         legalComments: "none",
-        define: {
-            "globalThis.__THREAD_OPTIMIZER_DEBUG__": "false",
-            "globalThis.__THREAD_OPTIMIZER_STORE_PROFILER__": JSON.stringify(bridgeProfile),
-            "globalThis.__THREAD_OPTIMIZER_CACHE_PROFILING__": JSON.stringify(bridgeProfile),
-            "globalThis.__THREAD_OPTIMIZER_BRANCH_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
-            "globalThis.__THREAD_OPTIMIZER_NODE_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
-            "globalThis.__THREAD_OPTIMIZER_FIND_NODE_CALLSITE_STATS__": JSON.stringify(bridgeProfile),
-        },
+        define: getBuildDefines({ dev, profile }),
     });
 
     console.log(
-        `Built ${target} extension -> ${outDir} (${minify ? "minified" : "debug"}, bridgeProfile=${bridgeProfile})`
+        `Built ${target} extension -> ${outDir} (${minify ? "minified" : "debug"}, dev=${dev}, profile=${profile})`
     );
 }
 
@@ -147,12 +178,13 @@ fs.mkdirSync(distDir, { recursive: true });
 const requestedTarget = getRequestedTarget();
 const targets = resolveBuildTargets(requestedTarget);
 const minify = shouldMinifyBuild();
-const bridgeProfile = shouldEnableBridgeProfiling();
+const dev = shouldEnableDevBuild();
+const profile = shouldEnableProfiling();
 
 for (const target of targets) {
-    buildTarget(target, { minify, bridgeProfile });
+    buildTarget(target, { minify, dev, profile });
 }
 
 console.log(
-    `Build complete for: ${targets.join(", ")} (${minify ? "minified" : "debug"}, bridgeProfile=${bridgeProfile})`
+    `Build complete for: ${targets.join(", ")} (${minify ? "minified" : "debug"}, dev=${dev}, profile=${profile})`
 );

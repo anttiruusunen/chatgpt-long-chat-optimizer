@@ -61,7 +61,6 @@ npm run test:watch
 - `src/content/pruning/prune.js` → store-native pruning request flow
 - `src/content/pruning/pruneController.js` → prune scheduling and lifecycle wrapper
 - `src/content/pruning/pruneUi.js` → startup prune mask helpers
-- `src/content/pruning/cssVisibilityWindow.js` → CSS visibility window for offscreen rendering
 - `src/content/offscreen/offscreen.js` → section visibility optimization
 - `src/content/streaming/replyTiming.js` → streaming-state detection
 - `src/content/ui/qolStyles.js` → quality-of-life CSS rules
