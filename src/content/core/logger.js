@@ -1,6 +1,6 @@
 import { state } from "../core/state.js";
 
-const PREFIX = "[Thread Optimizer]";
+const PREFIX = "[Long Chat Optimizer]";
 const SESSION_START = performance.now();
 
 /**

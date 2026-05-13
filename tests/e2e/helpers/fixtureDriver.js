@@ -141,7 +141,7 @@ async function installStorePruneBridgeMock(page) {
 
                 if (message.type === "thread-optimizer:log-store-performance") {
                     console.log(
-                        "[Thread Optimizer E2E bridge mock] store performance",
+                        "[Long Chat Optimizer E2E bridge mock] store performance",
                         window.__threadOptimizerChatStoreBridge.getPerformanceSnapshot()
                     );
                     return;

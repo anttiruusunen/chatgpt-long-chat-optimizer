@@ -10,7 +10,7 @@ import {
 describe("build-utils", () => {
     const baseManifest = {
         manifest_version: 3,
-        name: "ChatGPT Thread Optimizer",
+        name: "ChatGPT Long Chat Optimizer",
         version: "1.0.0",
         host_permissions: ["https://chatgpt.com/*"],
         browser_specific_settings: {

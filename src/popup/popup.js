@@ -77,11 +77,11 @@ function logPopupError(message, error, details) {
     }
 
     if (details === undefined) {
-        console.warn(`[Thread Optimizer popup] ${message}`, error);
+        console.warn(`[Long Chat Optimizer popup] ${message}`, error);
         return;
     }
 
-    console.warn(`[Thread Optimizer popup] ${message}`, error, details);
+    console.warn(`[Long Chat Optimizer popup] ${message}`, error, details);
 }
 
 function handlePopupError(error, fallbackMessage = "Action failed") {

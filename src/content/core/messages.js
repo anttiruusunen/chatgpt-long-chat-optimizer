@@ -196,7 +196,7 @@ export function registerRuntimeMessageHandlers({
                 const payload =
                     globalThis.__THREAD_OPTIMIZER_DEBUG__?.getState?.() ?? null;
 
-                console.log("[Thread Optimizer Debug] State", payload);
+                console.log("[Long Chat Optimizer Debug] State", payload);
 
                 sendResponse({ ok: true });
                 return true;
@@ -206,7 +206,7 @@ export function registerRuntimeMessageHandlers({
                 const payload =
                     globalThis.__THREAD_OPTIMIZER_DEBUG__?.getBuckets?.() ?? null;
 
-                console.log("[Thread Optimizer Debug] Buckets", payload);
+                console.log("[Long Chat Optimizer Debug] Buckets", payload);
 
                 sendResponse({ ok: true });
                 return true;
@@ -217,7 +217,7 @@ export function registerRuntimeMessageHandlers({
                     globalThis.__THREAD_OPTIMIZER_DEBUG__?.getLogicalSections?.() ??
                     null;
 
-                console.log("[Thread Optimizer Debug] Logical sections", payload);
+                console.log("[Long Chat Optimizer Debug] Logical sections", payload);
 
                 sendResponse({ ok: true });
                 return true;

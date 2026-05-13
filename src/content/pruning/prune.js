@@ -208,7 +208,7 @@ export function runInitialPrune(
                 refreshObservedSections?.();
             }
         } catch (error) {
-            console.error("[Thread Optimizer] Initial prune failed", error);
+            console.error("[Long Chat Optimizer] Initial prune failed", error);
         } finally {
             requestAnimationFrame(() => {
                 const latestContainer = getConversationContainer();

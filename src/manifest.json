@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Thread Optimizer for ChatGPT",
+  "name": "ChatGPT Long Chat Optimizer",
+  "short_name": "Long Chat Optimizer",
+  "description": "Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.",
   "version": "1.0.0",
-  "description": "Keeps long ChatGPT conversations responsive by pruning older visible sections and reducing DOM pressure.",
   "permissions": [
     "storage"
   ],

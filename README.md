@@ -1,8 +1,6 @@
-# Thread Optimizer for ChatGPT
+# ChatGPT Long Chat Optimizer
 
-Performance-focused browser extension for long ChatGPT conversations.
-
-Thread Optimizer improves responsiveness in large ChatGPT threads by reducing DOM pressure locally in your browser.
+Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.
 
 Features:
 - Store-native hard pruning of old conversation history

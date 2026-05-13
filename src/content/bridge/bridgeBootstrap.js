@@ -59,7 +59,7 @@ function injectBridge(doc = document) {
 
     if (!getURL) {
         console.warn(
-            "[Thread Optimizer] chrome.runtime.getURL not available, skipping injection"
+            "[Long Chat Optimizer] chrome.runtime.getURL not available, skipping injection"
         );
         return false;
     }
@@ -79,12 +79,12 @@ function injectBridge(doc = document) {
 
         script.onload = () => {
             window.__threadOptimizerChatStoreBridge.__installed = true;
-            console.log("[Thread Optimizer] Bridge installed successfully");
+            console.log("[Long Chat Optimizer] Bridge installed successfully");
         };
 
         return true;
     } catch (error) {
-        console.error("[Thread Optimizer] bridge bootstrap failed", error);
+        console.error("[Long Chat Optimizer] bridge bootstrap failed", error);
         return false;
     }
 }

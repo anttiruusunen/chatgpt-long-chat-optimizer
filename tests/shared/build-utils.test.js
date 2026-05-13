@@ -15,7 +15,7 @@ const {
 describe("build-utils", () => {
     const baseManifest = {
         manifest_version: 3,
-        name: "ChatGPT Thread Optimizer",
+        name: "ChatGPT Long Chat Optimizer",
         version: "1.0.0",
         description: "Test manifest",
         permissions: ["tabs", "storage"],

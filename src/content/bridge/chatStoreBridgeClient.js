@@ -14,7 +14,7 @@ export function postThreadOptimizerBridgeMessage(message) {
     const token = getChatStorePageBridgeToken();
 
     if (!token) {
-        debugLog("[Thread Optimizer] page bridge token unavailable");
+        debugLog("[Long Chat Optimizer] page bridge token unavailable");
         return false;
     }
 

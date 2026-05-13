@@ -240,7 +240,7 @@ export function attachObserverToContainer(container, deps) {
     maybeNotifyVisibleMessagesReady(container, "observer-attached");
 
     debugLog(
-        "[Thread Optimizer] Auto-prune observer attached to conversation container"
+        "[Long Chat Optimizer] Auto-prune observer attached to conversation container"
     );
 }
 

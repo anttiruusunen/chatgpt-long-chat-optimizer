@@ -1,7 +1,7 @@
 {
-  "name": "chatgpt-thread-optimizer",
+  "name": "chatgpt-long-chat-optimizer",
+  "description": "Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.",
   "version": "1.0.0",
-  "description": "Browser extension that optimizes ChatGPT performance by pruning old messages.",
   "type": "module",
   "private": true,
   "scripts": {
@@ -46,7 +46,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/anttiruusunen/chatgpt-thread-optimizer"
+    "url": "https://github.com/anttiruusunen/chatgpt-long-chat-optimizer"
   },
   "license": "MIT"
 }
