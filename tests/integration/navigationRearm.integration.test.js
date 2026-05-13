@@ -30,6 +30,7 @@ const mockRefs = vi.hoisted(() => {
             return Boolean(container);
         }),
         waitForContainerAndInitialPruneBase: vi.fn(),
+        resetVisibleMessagesReadyNotification: vi.fn(),
         createObserverDeps: vi.fn(
             ({ scheduleAutoPrune, getDidInitialPrune, bootstrapInitialPrune }) => ({
                 scheduleAutoPrune,
@@ -88,6 +89,8 @@ vi.mock("../../src/content/observers/observers.js", () => ({
     attachObserverToContainer: mockRefs.attachObserverToContainerBase,
     ensureObserverAttached: mockRefs.ensureObserverAttachedBase,
     waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPruneBase,
+    resetVisibleMessagesReadyNotification:
+        mockRefs.resetVisibleMessagesReadyNotification,
     createObserverDeps: mockRefs.createObserverDeps,
 }));
 
@@ -185,6 +188,7 @@ describe("navigation rearm integration", () => {
         mockRefs.attachObserverToContainerBase.mockClear();
         mockRefs.ensureObserverAttachedBase.mockClear();
         mockRefs.waitForContainerAndInitialPruneBase.mockClear();
+        mockRefs.resetVisibleMessagesReadyNotification.mockClear();
         mockRefs.createObserverDeps.mockClear();
 
         originalRAF = globalThis.requestAnimationFrame;

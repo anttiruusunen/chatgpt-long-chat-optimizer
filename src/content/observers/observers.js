@@ -199,6 +199,10 @@ export function handleObservedMutations(
     scheduleAutoPrune();
 }
 
+export function resetVisibleMessagesReadyNotification() {
+    visibleMessagesReadyPostedForContainer = null;
+}
+
 export function disconnectObserver() {
     if (state.observer) {
         state.observer.disconnect();

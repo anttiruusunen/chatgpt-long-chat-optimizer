@@ -13,6 +13,7 @@ import {
     ensureObserverAttached as ensureObserverAttachedBase,
     waitForContainerAndInitialPrune as waitForContainerAndInitialPruneBase,
     createObserverDeps,
+    resetVisibleMessagesReadyNotification,
 } from "../observers/observers.js";
 import { registerRuntimeMessageHandlers } from "./messages.js";
 import { debugLog } from "./logger.js";
@@ -119,20 +120,28 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
         const noPreviousContainer = !(previousContainer instanceof Element);
         const timedOut = performance.now() - startedAt >= MAX_WAIT_MS;
 
+        debugLog("Index: fresh-container prune poll", {
+            reason: options.reason,
+            generation,
+            activeGeneration: navigationPruneGeneration,
+            hasContainer: container instanceof Element,
+            previousGone,
+            containerChanged,
+            noPreviousContainer,
+            timedOut,
+            elapsedMs: Math.round(performance.now() - startedAt),
+        });
+
         if (
             container &&
             (noPreviousContainer || previousGone || containerChanged || timedOut)
         ) {
-            ensureObserverAttached();
+            attachObserverToContainer(container);
 
             runInitialPrune(container, {
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
-                ...initialPruneOptions,
+                ...options,
             });
-
-            if (navigationLocationKey) {
-                lastCompletedFreshNavigationLocationKey = navigationLocationKey;
-            }
 
             pendingNavigationPruneTimer = null;
             return;
@@ -151,6 +160,7 @@ function resetConversationLifecycleForNavigation() {
     clearPendingReplySettledPrune();
     clearPendingNavigationPrune();
     invalidateConversationDomCache();
+    resetVisibleMessagesReadyNotification();
     clearPendingAutoPrune();
 
     state.didInitialPrune = false;
@@ -179,23 +189,35 @@ function shouldSkipDuplicateLinkNavigationRearm(reason, locationKey) {
 }
 
 function rearmInitialPruneForNavigation(reason, locationKey = null) {
-    const isLinkNavigation = isLinkNavigationReason(reason);
-
-    if (shouldSkipDuplicateLinkNavigationRearm(reason, locationKey)) {
-        debugLog("Index: skipped duplicate link navigation rearm", {
-            reason,
-            locationKey,
-        });
-        return;
-    }
-
-    if (!isLinkNavigation) {
-        lastCompletedFreshNavigationLocationKey = null;
-    }
+    debugLog("Index: navigation rearm requested", {
+        reason,
+        locationKey,
+        hadObservedContainer: state.observedContainer instanceof Element,
+        observedContainerConnected: state.observedContainer?.isConnected ?? null,
+        currentContainer: getConversationContainer() instanceof Element,
+        didInitialPrune: state.didInitialPrune,
+    });
 
     const previousContainer = state.observedContainer || getConversationContainer();
 
     resetConversationLifecycleForNavigation();
+
+    if (state.settings.autoPrune && state.featureFlags.pruning) {
+        if (isLinkNavigationReason(reason)) {
+            debugLog("Index: rearming initial prune after navigation", {
+                reason,
+                locationKey,
+                hasContainer: false,
+                isLinkNavigation: true,
+            });
+
+            waitForFreshContainerAndInitialPrune(previousContainer, {
+                reason,
+                locationKey,
+            });
+            return;
+        }
+    }
 
     const hasContainer = ensureObserverAttached();
 
@@ -203,17 +225,10 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
         reason,
         locationKey,
         hasContainer,
-        isLinkNavigation,
+        isLinkNavigation: isLinkNavigationReason(reason),
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
-        if (isLinkNavigation) {
-            waitForFreshContainerAndInitialPrune(previousContainer, {
-                navigationLocationKey: locationKey,
-            });
-            return;
-        }
-
         if (hasContainer) {
             runInitialPrune(getConversationContainer(), {
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
