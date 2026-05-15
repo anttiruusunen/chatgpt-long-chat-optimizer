@@ -11,6 +11,10 @@ import {
     isIncompleteAssistantSection,
 } from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
+import {
+    showInitialPruneOverlay,
+    hideInitialPruneOverlay,
+} from "../ui/pruneOverlay.js";
 
 function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
@@ -156,6 +160,7 @@ export function pruneOldSections(
         visibleSectionsChanged: Boolean(pruneResult?.posted),
         placeholderChanged: false,
         posted: Boolean(pruneResult?.posted),
+        requestId: pruneResult?.requestId ?? null,
         deferred: Boolean(pruneResult?.deferred),
         reason: pruneResult?.reason,
         result: pruneResult,
@@ -163,16 +168,19 @@ export function pruneOldSections(
 }
 
 /**
- * Runs the startup prune without a visual mask.
+ * Runs the startup/navigation prune with a temporary visual mask.
  *
- * This intentionally leaves the conversation interactive while the page bridge
- * discovers the store and performs store-native hard pruning.
+ * The overlay is only used for initial-prune paths. Normal auto-prune calls
+ * pruneOldSections directly through the controller and do not show this UI.
  */
 export function runInitialPrune(
     container,
     {
         pruneOldSections,
         refreshObservedSections,
+        onPruneStarted,
+        onPruneResult,
+        onPruneFinished,
     } = {}
 ) {
     if (!state.featureFlags.pruning) return;
@@ -181,13 +189,19 @@ export function runInitialPrune(
     }
 
     requestAnimationFrame(() => {
+        let result = null;
+
         try {
-            const result = pruneOldSections?.(
+            onPruneStarted?.();
+
+            result = pruneOldSections?.(
                 state.settings.historyKeptExchanges,
                 {
                     reason: "initial-prune",
                 }
             );
+
+            onPruneResult?.(result);
 
             if (result?.deferred) {
                 debugLog("Prune: initial prune deferred", {
@@ -209,11 +223,20 @@ export function runInitialPrune(
             }
         } catch (error) {
             console.error("[Long Chat Optimizer] Initial prune failed", error);
+            onPruneFinished?.({
+                reason: "initial-prune-error",
+                error,
+                result,
+            });
         } finally {
             requestAnimationFrame(() => {
                 const latestContainer = getConversationContainer();
 
                 if (!latestContainer) {
+                    onPruneFinished?.({
+                        reason: "initial-prune-no-container",
+                        result,
+                    });
                     return;
                 }
 
@@ -223,6 +246,15 @@ export function runInitialPrune(
                     hasContainer: Boolean(latestContainer),
                     hadInitialContainer: container instanceof Element,
                 });
+
+                if (!result?.posted || result?.deferred || !result?.requestId) {
+                    onPruneFinished?.({
+                        reason: result?.deferred
+                            ? "initial-prune-deferred"
+                            : "initial-prune-no-store-request",
+                        result,
+                    });
+                }
             });
         }
     });

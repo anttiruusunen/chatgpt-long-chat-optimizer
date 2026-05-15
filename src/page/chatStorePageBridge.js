@@ -78,6 +78,9 @@ import {
 const ENABLE_DEV_DIAGNOSTICS =
     typeof __DEV__ !== "undefined" && __DEV__ === true;
 
+const RECORD_SOURCE = "thread-optimizer";
+const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
+
 (() => {
     const BRIDGE_TOKEN = getBridgeTokenFromCurrentScript();
 
@@ -92,6 +95,42 @@ const ENABLE_DEV_DIAGNOSTICS =
 
     if (window[GLOBAL_KEY]?.__installed) {
         return;
+    }
+
+    function postStorePruneCompleted({
+        requestId = null,
+        reason = "store-prune",
+        result = null,
+    } = {}) {
+        if (!requestId) {
+            return;
+        }
+
+        const targetOrigin =
+            window.location.origin && window.location.origin !== "null"
+                ? window.location.origin
+                : "*";
+
+        window.postMessage(
+            {
+                source: RECORD_SOURCE,
+                token: BRIDGE_TOKEN,
+                type: STORE_PRUNE_COMPLETED_TYPE,
+                requestId,
+                reason,
+                ok: Boolean(result?.ok),
+                result: {
+                    ok: Boolean(result?.ok),
+                    reason: result?.reason ?? null,
+                    historyKeptExchanges: result?.historyKeptExchanges ?? null,
+                    branchNodeCount: result?.branchNodeCount ?? null,
+                    requestedDeleteCount: result?.deleteNodeIds?.length || 0,
+                    deletedCount: result?.deleted?.length || 0,
+                    failedCount: result?.failed?.length || 0,
+                },
+            },
+            targetOrigin
+        );
     }
 
     function shouldAdvanceStoreEpoch(reason) {
@@ -173,6 +212,10 @@ const ENABLE_DEV_DIAGNOSTICS =
                 return {
                     ok: true,
                     value: {
+                        requestId:
+                            typeof data.requestId === "string"
+                                ? data.requestId.slice(0, 120)
+                                : null,
                         historyKeptExchanges:
                             Number.isFinite(historyKeptExchanges) &&
                             historyKeptExchanges >= 1
@@ -441,6 +484,7 @@ const ENABLE_DEV_DIAGNOSTICS =
         },
 
         queueStoreHistoryPrune({
+            requestId = null,
             historyKeptExchanges = 1,
             reason = "queued-store-prune",
         } = {}) {
@@ -450,6 +494,7 @@ const ENABLE_DEV_DIAGNOSTICS =
             );
 
             this.__pendingStoreHistoryPrune = {
+                requestId,
                 historyKeptExchanges: keepCount,
                 reason,
                 queuedAt: Date.now(),
@@ -467,6 +512,7 @@ const ENABLE_DEV_DIAGNOSTICS =
             return {
                 ok: true,
                 queued: true,
+                requestId,
                 historyKeptExchanges: keepCount,
                 reason,
             };
@@ -544,6 +590,12 @@ const ENABLE_DEV_DIAGNOSTICS =
                 });
 
                 this.__lastStoreHistoryPruneResult = result;
+
+                postStorePruneCompleted({
+                    requestId: pending.requestId,
+                    reason: `${pending.reason}:${reason}`,
+                    result,
+                });
 
                 if (ENABLE_DEV_DIAGNOSTICS) {
                     console.debug("[thread-optimizer bridge] flushed pending store history prune", {
@@ -2342,6 +2394,7 @@ const ENABLE_DEV_DIAGNOSTICS =
             if (data.type === "thread-optimizer:prune-store-history") {
                 if (!bridge.__store) {
                     const queued = bridge.queueStoreHistoryPrune({
+                        requestId: payload.requestId,
                         historyKeptExchanges: payload.historyKeptExchanges,
                         reason: payload.reason,
                     });
@@ -2363,6 +2416,12 @@ const ENABLE_DEV_DIAGNOSTICS =
                 const result = bridge.pruneStoreHistory({
                     historyKeptExchanges: payload.historyKeptExchanges,
                     reason: payload.reason,
+                });
+
+                postStorePruneCompleted({
+                    requestId: payload.requestId,
+                    reason: payload.reason,
+                    result,
                 });
 
                 if (ENABLE_DEV_DIAGNOSTICS) {

@@ -10,6 +10,11 @@ import {
     scheduleRefreshPostPruneState,
 } from "../core/conversationMaintenance.js";
 import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
+import { onStoreHistoryPruneCompleted } from "../bridge/chatStoreBridgeClient.js";
+import {
+    showInitialPruneOverlay,
+    hideInitialPruneOverlay,
+} from "../ui/pruneOverlay.js";
 
 const AUTO_PRUNE_DEBOUNCE_MS = 300;
 const PENDING_AUTO_PRUNE_CHECK_MS = 5000;
@@ -31,6 +36,56 @@ export function createPruneController({
     let pendingDeferredAutoPruneTimer = null;
     let pendingDeferredAutoPruneReason = null;
     let pendingDeferredAutoPruneLastResult = null;
+
+    let activeInitialPruneRequestId = null;
+    let removeStorePruneCompletionListener = null;
+
+    function clearInitialPruneOverlay(reason = "initial-prune-complete") {
+        activeInitialPruneRequestId = null;
+        hideInitialPruneOverlay({ reason });
+    }
+
+    function ensureStorePruneCompletionListener() {
+        if (removeStorePruneCompletionListener) {
+            return;
+        }
+
+        removeStorePruneCompletionListener = onStoreHistoryPruneCompleted(
+            ({ requestId, result }) => {
+                if (!requestId || requestId !== activeInitialPruneRequestId) {
+                    return;
+                }
+
+                debugLog("Prune controller: initial store prune completed", {
+                    requestId,
+                    result,
+                });
+
+                clearInitialPruneOverlay("store-prune-completed");
+            }
+        );
+    }
+
+    function trackInitialStorePruneOverlay(result) {
+        if (result?.deferred) {
+            clearInitialPruneOverlay("initial-prune-deferred");
+            return result;
+        }
+
+        if (!result?.posted || !result?.requestId) {
+            clearInitialPruneOverlay("initial-prune-not-posted");
+            return result;
+        }
+
+        activeInitialPruneRequestId = result.requestId;
+        ensureStorePruneCompletionListener();
+
+        debugLog("Prune controller: initial store prune overlay waiting for bridge completion", {
+            requestId: activeInitialPruneRequestId,
+        });
+
+        return result;
+    }
 
     function clearPendingDeferredAutoPrune() {
         if (pendingDeferredAutoPruneTimer) {
@@ -138,7 +193,9 @@ export function createPruneController({
     function runInitialPrune(container, options = {}) {
         const { postPruneRefreshDelayMs = 0 } = options;
 
-        return runInitialPruneBase(container, {
+        let latestInitialPruneResult = null;
+
+        runInitialPruneBase(container, {
             pruneOldSections,
             refreshObservedSections: () =>
                 scheduleRefreshPostPruneState({
@@ -148,7 +205,27 @@ export function createPruneController({
                             ? "navigation-initial-prune-refresh"
                             : "initial-prune-refresh",
                 }),
+            onPruneStarted: () => {
+                showInitialPruneOverlay({
+                    reason: options.reason || "initial-prune",
+                });
+            },
+            onPruneResult: (result) => {
+                latestInitialPruneResult = result;
+                trackInitialStorePruneOverlay(result);
+            },
+            onPruneFinished: ({ reason, result } = {}) => {
+                const finalResult = result || latestInitialPruneResult;
+
+                if (finalResult?.posted && finalResult?.requestId && !finalResult?.deferred) {
+                    return;
+                }
+
+                clearInitialPruneOverlay(reason || "initial-prune-finished");
+            },
         });
+
+        return latestInitialPruneResult;
     }
 
     function bootstrapInitialPruneFromObservedMutation() {
