@@ -132,10 +132,44 @@ async function installStorePruneBridgeMock(page) {
                 }
 
                 if (message.type === "thread-optimizer:prune-store-history") {
-                    window.__threadOptimizerChatStoreBridge.pruneStoreHistory({
+                    const result = window.__threadOptimizerChatStoreBridge.pruneStoreHistory({
                         historyKeptExchanges: message.historyKeptExchanges,
                         reason: message.reason,
                     });
+
+                    if (message.requestId) {
+                        const completedMessage = {
+                            source: "thread-optimizer",
+                            token: window.THREAD_OPTIMIZER_BRIDGE_TOKEN,
+                            type: "thread-optimizer:store-prune-completed",
+                            requestId: message.requestId,
+                            reason: message.reason || "e2e-store-prune",
+                            ok: Boolean(result?.ok),
+                            result: {
+                                ok: Boolean(result?.ok),
+                                reason: result?.reason ?? null,
+                                historyKeptExchanges: result?.historyKeptExchanges ?? null,
+                                branchNodeCount: result?.branchNodeCount ?? null,
+                                requestedDeleteCount:
+                                    result?.deleteNodeIds?.length ??
+                                    result?.requestedDeleteCount ??
+                                    0,
+                                deletedCount:
+                                    result?.deleted?.length ??
+                                    result?.deletedCount ??
+                                    0,
+                                failedCount:
+                                    result?.failed?.length ??
+                                    result?.failedCount ??
+                                    0,
+                            },
+                        };
+
+                        window.__THREAD_OPTIMIZER_E2E_BRIDGE_MESSAGES__.push(completedMessage);
+
+                        originalPostMessage(completedMessage, targetOrigin || "*");
+                    }
+
                     return;
                 }
 

@@ -11,6 +11,13 @@ function getHistoryKeptExchangesForBridge() {
     );
 }
 
+function shouldEnableStoreReadOptimizationOnPage() {
+    return (
+        state.featureFlags.storeReadOptimization === true &&
+        state.storeReadOptimizationReadyForPage === true
+    );
+}
+
 /**
  * Sends current pruning state to the page bridge once it is installed.
  *
@@ -61,7 +68,7 @@ export function syncStoreReadOptimizationToPageWithRetry(
     if (bridge?.__installed || !hasPostedWithoutBridge) {
         postThreadOptimizerBridgeMessage({
             type: "thread-optimizer:set-store-read-optimization",
-            enabled: state.featureFlags.storeReadOptimization,
+            enabled: shouldEnableStoreReadOptimizationOnPage(),
             debug: state.debugLoggingEnabled,
         });
 

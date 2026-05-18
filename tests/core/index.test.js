@@ -182,6 +182,7 @@ async function importFreshIndex() {
 
     state.debugLoggingEnabled = false;
     state.didInitialPrune = false;
+    state.storeReadOptimizationReadyForPage = false;
     state.debounceTimer = null;
     state.isAutoPruneScheduled = false;
     state.observedContainer = null;
@@ -274,6 +275,115 @@ describe("core/index", () => {
 
         expect(mockRefs.ensureReplyCompletionPoll).toHaveBeenCalledTimes(1);
         expect(mockRefs.registerRuntimeMessageHandlers).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps page store-read optimization gated off during startup initial prune", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+
+        expect(state.storeReadOptimizationReadyForPage).toBe(false);
+        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks page store-read optimization ready after initial prune finishes without a pending store request", async () => {
+        mockRefs.runInitialPrune.mockImplementation((container, options = {}) => {
+            window.__threadOptimizerState.didInitialPrune = true;
+
+            options.onPruneFinished?.({
+                reason: "initial-prune-no-store-request",
+                result: {
+                    posted: false,
+                    deferred: false,
+                },
+            });
+
+            return {};
+        });
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+
+        expect(state.storeReadOptimizationReadyForPage).toBe(true);
+        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not mark page store-read optimization ready while initial store prune is still pending", async () => {
+        mockRefs.runInitialPrune.mockImplementation((container, options = {}) => {
+            window.__threadOptimizerState.didInitialPrune = true;
+
+            const result = {
+                posted: true,
+                deferred: false,
+                requestId: "initial-prune-1",
+            };
+
+            options.onPruneResult?.(result);
+            options.onPruneFinished?.({
+                reason: "initial-prune-pending-store-request",
+                result,
+            });
+
+            return result;
+        });
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+
+        expect(state.storeReadOptimizationReadyForPage).toBe(false);
+        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks page store-read optimization ready after initial store prune completion is reported", async () => {
+        mockRefs.runInitialPrune.mockImplementation((container, options = {}) => {
+            window.__threadOptimizerState.didInitialPrune = true;
+
+            const result = {
+                posted: true,
+                deferred: false,
+                requestId: "initial-prune-1",
+            };
+
+            options.onPruneResult?.(result);
+            options.onPruneFinished?.({
+                reason: "store-prune-completed",
+                result: {
+                    ...result,
+                    completed: true,
+                },
+            });
+
+            return result;
+        });
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+
+        expect(state.storeReadOptimizationReadyForPage).toBe(true);
+        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(2);
+    });
+
+    it("disables page store-read optimization again when navigation rearms initial prune", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        state.didInitialPrune = true;
+        state.storeReadOptimizationReadyForPage = true;
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "pushState",
+            locationKey: "/c/next-chat",
+        });
+
+        expect(state.storeReadOptimizationReadyForPage).toBe(false);
+        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalled();
     });
 
     it("waits for a container when none is attached during initialization", async () => {

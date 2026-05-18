@@ -103,6 +103,38 @@ function isLinkNavigationReason(reason) {
     );
 }
 
+function syncStoreReadOptimizationForLifecycle() {
+    syncStoreReadOptimizationToPageWithRetry();
+}
+
+function markStoreReadOptimizationReadyForPage(reason) {
+    if (state.storeReadOptimizationReadyForPage) {
+        return;
+    }
+
+    state.storeReadOptimizationReadyForPage = true;
+
+    debugLog("Index: page store-read optimization ready", {
+        reason,
+    });
+
+    syncStoreReadOptimizationForLifecycle();
+}
+
+function disableStoreReadOptimizationForPage(reason) {
+    if (!state.storeReadOptimizationReadyForPage) {
+        return;
+    }
+
+    state.storeReadOptimizationReadyForPage = false;
+
+    debugLog("Index: page store-read optimization gated off", {
+        reason,
+    });
+
+    syncStoreReadOptimizationForLifecycle();
+}
+
 function trackInitialPruneResult(result) {
     pendingDeferredInitialPrune = Boolean(result?.deferred);
 
@@ -110,7 +142,32 @@ function trackInitialPruneResult(result) {
 }
 
 function runInitialPruneWithDeferredTracking(container, options = {}) {
-    return trackInitialPruneResult(runInitialPrune(container, options));
+    return runInitialPrune(container, {
+        ...options,
+
+        onPruneResult: (result) => {
+            trackInitialPruneResult(result);
+            options.onPruneResult?.(result);
+        },
+
+        onPruneFinished: (payload = {}) => {
+            const result = payload.result;
+
+            options.onPruneFinished?.(payload);
+
+            if (result?.deferred) {
+                return;
+            }
+
+            if (result?.posted && result?.requestId && !result?.completed) {
+                return;
+            }
+
+            markStoreReadOptimizationReadyForPage(
+                payload.reason || "initial-prune-finished"
+            );
+        },
+    });
 }
 
 function runInitialPruneWhenReady(container, options = {}) {
@@ -267,6 +324,7 @@ function resetConversationLifecycleForNavigation() {
     clearPendingAutoPrune();
 
     pendingDeferredInitialPrune = false;
+    disableStoreReadOptimizationForPage("navigation-reset");
     state.didInitialPrune = false;
 
     debugLog("Index: reset conversation lifecycle state for navigation");
@@ -609,6 +667,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     } else {
         clearPendingReplySettledPrune();
         pendingDeferredInitialPrune = false;
+        disableStoreReadOptimizationForPage("pruning-disabled");
         clearPendingAutoPrune();
         scheduleRefreshPostPruneState();
     }

@@ -51,6 +51,9 @@ async function waitForStoreReadOptimizationMessage(page, expected) {
         {
             type: STORE_READ_OPTIMIZATION_MESSAGE,
             ...expected,
+        },
+        {
+            timeout: 10000,
         }
     );
 }
@@ -191,14 +194,21 @@ test("feature flags: store-read optimization disabled state reaches the page bri
     });
 });
 
-test("feature flags: store-read optimization enabled state reaches the page bridge", async ({ page }) => {
-    await loadOptimizerFixture(page, {
+test("feature flags: store-read optimization enabled state reaches the page bridge after initial prune", async ({ page }) => {
+    const fixture = await loadOptimizerFixture(page, {
         settings: {
             enableStoreReadOptimization: true,
             enableDebugLogging: false,
         },
         beforeOptimizerLoad: installBridgeMessageRecorder,
     });
+
+    await waitForStoreReadOptimizationMessage(page, {
+        enabled: false,
+        debug: false,
+    });
+
+    await fixture.expectPrunedToLatestExchange();
 
     await waitForStoreReadOptimizationMessage(page, {
         enabled: true,
@@ -218,13 +228,15 @@ test("feature flags: store-read optimization enabled state reaches the page brid
 });
 
 test("feature flags: store-read optimization runtime toggle posts disabled state", async ({ page }) => {
-    await loadOptimizerFixture(page, {
+    const fixture = await loadOptimizerFixture(page, {
         settings: {
             enableStoreReadOptimization: true,
             enableDebugLogging: false,
         },
         beforeOptimizerLoad: installBridgeMessageRecorder,
     });
+
+    await fixture.expectPrunedToLatestExchange();
 
     await waitForStoreReadOptimizationMessage(page, {
         enabled: true,

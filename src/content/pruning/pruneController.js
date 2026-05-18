@@ -38,10 +38,12 @@ export function createPruneController({
     let pendingDeferredAutoPruneLastResult = null;
 
     let activeInitialPruneRequestId = null;
+    let activeInitialPruneFinishedCallback = null;
     let removeStorePruneCompletionListener = null;
 
     function clearInitialPruneOverlay(reason = "initial-prune-complete") {
         activeInitialPruneRequestId = null;
+        activeInitialPruneFinishedCallback = null;
         hideInitialPruneOverlay({ reason });
     }
 
@@ -51,14 +53,30 @@ export function createPruneController({
         }
 
         removeStorePruneCompletionListener = onStoreHistoryPruneCompleted(
-            ({ requestId, result }) => {
-                if (!requestId || requestId !== activeInitialPruneRequestId) {
+            ({ requestId, result } = {}) => {
+                const completedRequestId = requestId || result?.requestId;
+
+                if (
+                    !completedRequestId ||
+                    completedRequestId !== activeInitialPruneRequestId
+                ) {
                     return;
                 }
 
                 debugLog("Prune controller: initial store prune completed", {
-                    requestId,
+                    requestId: completedRequestId,
                     result,
+                });
+
+                activeInitialPruneFinishedCallback?.({
+                    reason: "store-prune-completed",
+                    result: {
+                        ...(result || {}),
+                        requestId: completedRequestId,
+                        posted: true,
+                        deferred: false,
+                        completed: true,
+                    },
                 });
 
                 clearInitialPruneOverlay("store-prune-completed");
@@ -193,6 +211,16 @@ export function createPruneController({
     function runInitialPrune(container, options = {}) {
         const { postPruneRefreshDelayMs = 0 } = options;
 
+        const externalOnPruneResult =
+            typeof options.onPruneResult === "function"
+                ? options.onPruneResult
+                : null;
+
+        const externalOnPruneFinished =
+            typeof options.onPruneFinished === "function"
+                ? options.onPruneFinished
+                : null;
+
         let latestInitialPruneResult = null;
 
         runInitialPruneBase(container, {
@@ -213,13 +241,28 @@ export function createPruneController({
             onPruneResult: (result) => {
                 latestInitialPruneResult = result;
                 trackInitialStorePruneOverlay(result);
+
+                externalOnPruneResult?.(result);
+
+                if (result?.posted && result?.requestId && !result?.deferred) {
+                    activeInitialPruneFinishedCallback = externalOnPruneFinished;
+                }
             },
             onPruneFinished: ({ reason, result } = {}) => {
                 const finalResult = result || latestInitialPruneResult;
 
-                if (finalResult?.posted && finalResult?.requestId && !finalResult?.deferred) {
+                if (
+                    finalResult?.posted &&
+                    finalResult?.requestId &&
+                    !finalResult?.deferred
+                ) {
                     return;
                 }
+
+                externalOnPruneFinished?.({
+                    reason: reason || "initial-prune-finished",
+                    result: finalResult,
+                });
 
                 clearInitialPruneOverlay(reason || "initial-prune-finished");
             },
@@ -265,7 +308,9 @@ export function createPruneController({
                 "Prune controller: bootstrapping initial prune from observed mutation"
             );
 
-            runInitialPrune(container);
+            waitForContainerAndInitialPrune({
+                requireConversationTurns: true,
+            });
         });
     }
 

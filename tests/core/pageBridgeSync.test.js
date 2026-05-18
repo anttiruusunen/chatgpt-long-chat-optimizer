@@ -96,6 +96,7 @@ describe("pageBridgeSync", () => {
         installPageBridge();
 
         state.featureFlags.storeReadOptimization = false;
+        state.storeReadOptimizationReadyForPage = true;
         state.debugLoggingEnabled = true;
 
         syncStoreReadOptimizationToPageWithRetry();
@@ -115,6 +116,7 @@ describe("pageBridgeSync", () => {
         installPageBridge();
 
         state.featureFlags.storeReadOptimization = true;
+        state.storeReadOptimizationReadyForPage = true;
         state.debugLoggingEnabled = false;
 
         syncStoreReadOptimizationToPageWithRetry();
@@ -132,6 +134,7 @@ describe("pageBridgeSync", () => {
         const { syncStoreReadOptimizationToPageWithRetry } = pageBridgeSyncModule;
 
         state.featureFlags.storeReadOptimization = false;
+        state.storeReadOptimizationReadyForPage = true;
         state.debugLoggingEnabled = false;
 
         syncStoreReadOptimizationToPageWithRetry(2);
@@ -161,6 +164,7 @@ describe("pageBridgeSync", () => {
         const { syncStoreReadOptimizationToPageWithRetry } = pageBridgeSyncModule;
 
         state.featureFlags.storeReadOptimization = true;
+        state.storeReadOptimizationReadyForPage = true;
         state.debugLoggingEnabled = false;
 
         syncStoreReadOptimizationToPageWithRetry(2);
@@ -172,6 +176,66 @@ describe("pageBridgeSync", () => {
             type: "thread-optimizer:set-store-read-optimization",
             enabled: true,
             debug: false,
+        });
+    });
+
+    it("gates store-read optimization off until initial prune is ready for the page", async () => {
+        const { stateModule, pageBridgeSyncModule } = await importFreshModules();
+        const { state } = stateModule;
+        const { syncStoreReadOptimizationToPageWithRetry } = pageBridgeSyncModule;
+
+        installPageBridge();
+
+        state.featureFlags.storeReadOptimization = true;
+        state.storeReadOptimizationReadyForPage = false;
+        state.debugLoggingEnabled = false;
+
+        syncStoreReadOptimizationToPageWithRetry();
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: false,
+            debug: false,
+        });
+    });
+
+    it("sends store-read optimization enabled after initial prune is ready for the page", async () => {
+        const { stateModule, pageBridgeSyncModule } = await importFreshModules();
+        const { state } = stateModule;
+        const { syncStoreReadOptimizationToPageWithRetry } = pageBridgeSyncModule;
+
+        installPageBridge();
+
+        state.featureFlags.storeReadOptimization = true;
+        state.storeReadOptimizationReadyForPage = true;
+        state.debugLoggingEnabled = false;
+
+        syncStoreReadOptimizationToPageWithRetry();
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: true,
+            debug: false,
+        });
+    });
+
+    it("keeps store-read optimization disabled when the user setting is disabled even after initial prune is ready", async () => {
+        const { stateModule, pageBridgeSyncModule } = await importFreshModules();
+        const { state } = stateModule;
+        const { syncStoreReadOptimizationToPageWithRetry } = pageBridgeSyncModule;
+
+        installPageBridge();
+
+        state.featureFlags.storeReadOptimization = false;
+        state.storeReadOptimizationReadyForPage = true;
+        state.debugLoggingEnabled = true;
+
+        syncStoreReadOptimizationToPageWithRetry();
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-store-read-optimization",
+            enabled: false,
+            debug: true,
         });
     });
 });

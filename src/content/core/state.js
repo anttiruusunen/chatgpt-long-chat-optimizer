@@ -47,6 +47,7 @@ function createDefaultState() {
 
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,
         didInitialPrune: false,
+        storeReadOptimizationReadyForPage: false,
 
         isApplyingDomChanges: false,
         offscreenLiveSection: null,
@@ -129,6 +130,7 @@ function normalizeRuntimeState() {
     ensureBooleanProperty("isAutoPruneScheduled");
     ensureBooleanProperty("isOffscreenRefreshScheduled");
     ensureBooleanProperty("isApplyingDomChanges");
+    ensureBooleanProperty("storeReadOptimizationReadyForPage");
 
     ensureProperty("offscreenLiveSection", null);
 }
