@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+import { DEFAULT_SETTINGS } from "../../src/shared/settingsDefaults.js";
+
 const mockRefs = vi.hoisted(() => ({
     storedSettings: null,
     storageSyncGet: vi.fn(),
@@ -16,14 +18,10 @@ vi.mock("../../src/shared/ext.js", () => ({
 }));
 
 const DEFAULT_POPUP_SETTINGS = {
-    historyKeptExchanges: 10,
-    enablePruning: true,
-    enableOffscreenOptimization: true,
-    enableDebugLogging: false,
-    enableStoreReadOptimization: false,
-    enableCodeBlockScrollbars: true,
-    enableUserMessageClamp: true,
+    ...DEFAULT_SETTINGS,
 };
+
+const SAVE_SETTINGS_DEBOUNCE_MS = 400;
 
 const POPUP_FLAG_IDS = [
     "enablePruning",
@@ -88,6 +86,12 @@ async function flushAsyncWork() {
     await Promise.resolve();
 }
 
+async function flushDebouncedSave() {
+    await flushAsyncWork();
+    await vi.advanceTimersByTimeAsync(SAVE_SETTINGS_DEBOUNCE_MS);
+    await flushAsyncWork();
+}
+
 async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
     vi.resetModules();
     createPopupDom();
@@ -118,22 +122,37 @@ async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
     await flushAsyncWork();
 }
 
-async function changeCheckbox(id, checked) {
+function dispatchCheckboxChange(id, checked) {
     const checkbox = document.getElementById(id);
 
     checkbox.checked = checked;
     checkbox.dispatchEvent(new Event("change", { bubbles: true }));
-
-    await flushAsyncWork();
 }
 
-async function changeHistoryKeptExchanges(value) {
+async function changeCheckbox(id, checked) {
+    dispatchCheckboxChange(id, checked);
+
+    await flushDebouncedSave();
+}
+
+function dispatchHistoryKeptExchangesInput(value) {
+    const input = document.getElementById("historyKeptExchanges");
+
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function dispatchHistoryKeptExchangesChange(value) {
     const input = document.getElementById("historyKeptExchanges");
 
     input.value = value;
     input.dispatchEvent(new Event("change", { bubbles: true }));
+}
 
-    await flushAsyncWork();
+async function changeHistoryKeptExchanges(value) {
+    dispatchHistoryKeptExchangesChange(value);
+
+    await flushDebouncedSave();
 }
 
 async function clickButton(id) {
@@ -271,6 +290,84 @@ describe("popup feature flags", () => {
         }
     );
 
+    it("debounces rapid popup setting changes into one save", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+            enablePruning: true,
+            enableCodeBlockScrollbars: true,
+            enableUserMessageClamp: true,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchCheckboxChange("enablePruning", false);
+        dispatchCheckboxChange("enableCodeBlockScrollbars", false);
+        dispatchCheckboxChange("enableUserMessageClamp", false);
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+
+        await flushDebouncedSave();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledTimes(1);
+
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 3,
+            autoPrune: true,
+            enablePruning: false,
+            enableCodeBlockScrollbars: false,
+            enableUserMessageClamp: false,
+        });
+
+        expect(getLastRuntimeMessage()).toMatchObject({
+            action: "settings-updated",
+            historyKeptExchanges: 3,
+            autoPrune: true,
+            enablePruning: false,
+            enableCodeBlockScrollbars: false,
+            enableUserMessageClamp: false,
+        });
+    });
+
+    it("debounces rapid history input changes and saves only the final value", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("4");
+        dispatchHistoryKeptExchangesInput("5");
+        dispatchHistoryKeptExchangesInput("6");
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+
+        await flushDebouncedSave();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledTimes(1);
+        expect(document.getElementById("historyKeptExchanges").value).toBe("6");
+
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 6,
+            autoPrune: true,
+        });
+
+        expect(getLastRuntimeMessage()).toMatchObject({
+            action: "settings-updated",
+            historyKeptExchanges: 6,
+            autoPrune: true,
+        });
+    });
+
     it("debug-only flags are hidden when debug logging is disabled", async () => {
         await importPopupWithSettings({
             enableDebugLogging: false,
@@ -354,7 +451,8 @@ describe("popup feature flags", () => {
 
         mockRefs.storageSyncSet.mockRejectedValueOnce(new Error("storage failed"));
 
-        await changeCheckbox("enablePruning", false);
+        dispatchCheckboxChange("enablePruning", false);
+        await flushDebouncedSave();
 
         expect(document.getElementById("status").textContent).toBe(
             "storage failed"
@@ -370,7 +468,8 @@ describe("popup feature flags", () => {
 
         mockRefs.storageSyncSet.mockRejectedValueOnce(new Error("storage failed"));
 
-        await changeCheckbox("enablePruning", false);
+        dispatchCheckboxChange("enablePruning", false);
+        await flushDebouncedSave();
 
         expect(document.getElementById("status").textContent).toBe(
             "storage failed"
@@ -498,5 +597,110 @@ describe("popup feature flags", () => {
         });
 
         expect(document.getElementById("historyKeptExchanges").value).toBe("10");
+    });
+
+    it("loads store read optimization as enabled from shared defaults on fresh storage", async () => {
+        await importPopupWithSettings();
+
+        expect(document.getElementById("enableStoreReadOptimization").checked).toBe(
+            true
+        );
+    });
+
+    it("passes shared defaults to storage when loading popup settings", async () => {
+        await importPopupWithSettings();
+
+        expect(mockRefs.storageSyncGet).toHaveBeenCalledWith(DEFAULT_SETTINGS);
+    });
+
+    it("debounces rapid mixed popup changes into one final merged save", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+            enablePruning: true,
+            enableDebugLogging: false,
+            enableStoreReadOptimization: true,
+            enableCodeBlockScrollbars: true,
+            enableUserMessageClamp: true,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("4");
+        dispatchHistoryKeptExchangesInput("8");
+        dispatchCheckboxChange("enablePruning", false);
+        dispatchCheckboxChange("enableCodeBlockScrollbars", false);
+        dispatchCheckboxChange("enableDebugLogging", true);
+        dispatchCheckboxChange("enableStoreReadOptimization", false);
+        dispatchCheckboxChange("enableStoreReadOptimization", true);
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+
+        await flushDebouncedSave();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledTimes(1);
+
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 8,
+            autoPrune: true,
+            enablePruning: false,
+            enableDebugLogging: true,
+            enableStoreReadOptimization: true,
+            enableCodeBlockScrollbars: false,
+            enableUserMessageClamp: true,
+        });
+
+        expect(getLastRuntimeMessage()).toMatchObject({
+            action: "settings-updated",
+            historyKeptExchanges: 8,
+            autoPrune: true,
+            enablePruning: false,
+            enableDebugLogging: true,
+            enableStoreReadOptimization: true,
+            enableCodeBlockScrollbars: false,
+            enableUserMessageClamp: true,
+        });
+    });
+
+    it("keeps resetting the debounce window until popup changes settle", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+            enablePruning: true,
+            enableCodeBlockScrollbars: true,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchCheckboxChange("enablePruning", false);
+
+        await vi.advanceTimersByTimeAsync(SAVE_SETTINGS_DEBOUNCE_MS - 1);
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+
+        dispatchCheckboxChange("enableCodeBlockScrollbars", false);
+
+        await vi.advanceTimersByTimeAsync(SAVE_SETTINGS_DEBOUNCE_MS - 1);
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledTimes(1);
+
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 3,
+            autoPrune: true,
+            enablePruning: false,
+            enableCodeBlockScrollbars: false,
+        });
     });
 });

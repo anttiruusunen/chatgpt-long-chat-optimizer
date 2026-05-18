@@ -1,17 +1,10 @@
+import { DEFAULT_SETTINGS } from "../../shared/settingsDefaults.js";
+
 export const STATE_KEY = "__threadOptimizerState";
 
 export const OFFSCREEN_OPT_ATTR = "data-thread-optimizer-offscreen-opt";
 
-export const DEFAULT_SETTINGS = {
-    historyKeptExchanges: 10,
-    autoPrune: true,
-    enablePruning: true,
-    enableOffscreenOptimization: true,
-    enableDebugLogging: false,
-    enableStoreReadOptimization: true,
-    enableCodeBlockScrollbars: true,
-    enableUserMessageClamp: true,
-};
+export { DEFAULT_SETTINGS };
 
 function createDefaultFeatureFlags() {
     return {

@@ -4,20 +4,12 @@ import {
     storageSyncGet,
     storageSyncSet,
 } from "../shared/ext.js";
+import { DEFAULT_SETTINGS } from "../shared/settingsDefaults.js";
 
 const IS_DEV_BUILD = typeof __DEV__ !== "undefined" && __DEV__ === true;
 
-const DEFAULT_SETTINGS = {
-    historyKeptExchanges: 10,
-    enablePruning: true,
-    enableOffscreenOptimization: true,
-    enableDebugLogging: false,
-    enableStoreReadOptimization: false,
-    enableCodeBlockScrollbars: true,
-    enableUserMessageClamp: true,
-};
-
 const STATUS_TIMEOUT_MS = 2000;
+const SAVE_SETTINGS_DEBOUNCE_MS = 400;
 
 const elements = {
     historyKeptExchanges: document.getElementById("historyKeptExchanges"),
@@ -37,6 +29,7 @@ const elements = {
 };
 
 let statusTimer = null;
+let pendingSaveTimer = null;
 
 function assertRequiredElements() {
     const missing = Object.entries(elements)
@@ -105,6 +98,14 @@ function getNormalizedHistoryKeptExchanges() {
         normalizePositiveInt(elements.historyKeptExchanges.value) ??
         DEFAULT_SETTINGS.historyKeptExchanges
     );
+}
+
+function normalizeHistoryKeptExchangesField() {
+    const normalized = getNormalizedHistoryKeptExchanges();
+
+    elements.historyKeptExchanges.value = String(normalized);
+
+    return normalized;
 }
 
 function updateFieldStates() {
@@ -221,6 +222,8 @@ function collectSettingsFromForm() {
  * react immediately without requiring a reload.
  */
 async function saveSettings() {
+    normalizeHistoryKeptExchangesField();
+
     const formState = collectSettingsFromForm();
 
     if (!formState.ok) {
@@ -248,6 +251,25 @@ async function saveSettings() {
     updateDebugVisibility();
 
     setStatus("Saved");
+}
+
+function clearPendingSettingsSave() {
+    if (pendingSaveTimer) {
+        clearTimeout(pendingSaveTimer);
+        pendingSaveTimer = null;
+    }
+}
+
+function scheduleSettingsSave() {
+    clearPendingSettingsSave();
+
+    pendingSaveTimer = setTimeout(() => {
+        pendingSaveTimer = null;
+
+        Promise.resolve(saveSettings()).catch((error) => {
+            handlePopupError(error);
+        });
+    }, SAVE_SETTINGS_DEBOUNCE_MS);
 }
 
 async function sendDebugAction(action, successMessage) {
@@ -282,25 +304,25 @@ function bindInfoButtons() {
 }
 
 function bindEvents() {
-    bindEvent(elements.historyKeptExchanges, "input", updateFieldStates);
-
-    bindEvent(elements.historyKeptExchanges, "change", async () => {
-        const normalized = getNormalizedHistoryKeptExchanges();
-
-        elements.historyKeptExchanges.value = String(normalized);
-
-        await saveSettings();
+    bindEvent(elements.historyKeptExchanges, "input", () => {
+        updateFieldStates();
+        scheduleSettingsSave();
     });
 
-    bindEvent(elements.enablePruning, "change", saveSettings);
-    bindEvent(elements.enableOffscreenOptimization, "change", saveSettings);
-    bindEvent(elements.enableStoreReadOptimization, "change", saveSettings);
-    bindEvent(elements.enableCodeBlockScrollbars, "change", saveSettings);
-    bindEvent(elements.enableUserMessageClamp, "change", saveSettings);
+    bindEvent(elements.historyKeptExchanges, "change", () => {
+        normalizeHistoryKeptExchangesField();
+        scheduleSettingsSave();
+    });
 
-    bindEvent(elements.enableDebugLogging, "change", async () => {
+    bindEvent(elements.enablePruning, "change", scheduleSettingsSave);
+    bindEvent(elements.enableOffscreenOptimization, "change", scheduleSettingsSave);
+    bindEvent(elements.enableStoreReadOptimization, "change", scheduleSettingsSave);
+    bindEvent(elements.enableCodeBlockScrollbars, "change", scheduleSettingsSave);
+    bindEvent(elements.enableUserMessageClamp, "change", scheduleSettingsSave);
+
+    bindEvent(elements.enableDebugLogging, "change", () => {
         updateDebugVisibility();
-        await saveSettings();
+        scheduleSettingsSave();
     });
 
     bindEvent(elements.logDebugState, "click", () =>
