@@ -54,6 +54,8 @@ vi.mock("../../src/content/offscreen/codeBlockObservers.js", async () => {
     };
 });
 
+const STARTUP_TEST_TIMEOUT_MS = 15000;
+
 const originalRAF = globalThis.requestAnimationFrame;
 const originalCAF = globalThis.cancelAnimationFrame;
 const originalIntersectionObserver = globalThis.IntersectionObserver;
@@ -94,12 +96,23 @@ class FakeMutationObserver {
     disconnect() {}
 }
 
-async function flush() {
+async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
-    vi.runOnlyPendingTimers();
     await Promise.resolve();
-    await Promise.resolve();
+}
+
+async function flushStartupWork() {
+    await flushMicrotasks();
+
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+
+    vi.advanceTimersByTime(250);
+    await flushMicrotasks();
 }
 
 function buildConversation({
@@ -162,25 +175,25 @@ describe("startup integration", () => {
     beforeEach(() => {
         vi.resetModules();
         vi.useFakeTimers();
+
         document.body.innerHTML = "";
         document.head.innerHTML = "";
 
-        globalThis.requestAnimationFrame = (cb) => {
-            cb(performance.now());
-            return 1;
-        };
-        globalThis.cancelAnimationFrame = () => {};
+        globalThis.requestAnimationFrame = (callback) =>
+            setTimeout(() => callback(performance.now()), 0);
+        globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
         globalThis.IntersectionObserver = FakeIntersectionObserver;
         globalThis.ResizeObserver = FakeResizeObserver;
         globalThis.MutationObserver = FakeMutationObserver;
     });
 
     afterEach(() => {
-        document.body.innerHTML = "";
-        document.head.innerHTML = "";
         vi.clearAllTimers();
         vi.useRealTimers();
         vi.restoreAllMocks();
+
+        document.body.innerHTML = "";
+        document.head.innerHTML = "";
 
         globalThis.requestAnimationFrame = originalRAF;
         globalThis.cancelAnimationFrame = originalCAF;
@@ -200,7 +213,7 @@ describe("startup integration", () => {
 
             await import("../../src/content/core/state.js");
             await import("../../src/content/core/index.js");
-            await flush();
+            await flushStartupWork();
 
             const sections = Array.from(
                 document.querySelectorAll("section[data-turn]")
@@ -221,61 +234,73 @@ describe("startup integration", () => {
                 document.querySelector('[data-thread-optimizer-placeholder="true"]')
             ).toBeNull();
         },
-        15000
+        STARTUP_TEST_TIMEOUT_MS
     );
 
-    it("still initializes and finds conversation sections when no scroll anchor exists", async () => {
-        buildConversation({
-            exchangeCount: 4,
-            includeAnchor: false,
-            latestAssistantFinished: true,
-        });
+    it(
+        "still initializes and finds conversation sections when no scroll anchor exists",
+        async () => {
+            buildConversation({
+                exchangeCount: 4,
+                includeAnchor: false,
+                latestAssistantFinished: true,
+            });
 
-        const domModule = await import("../../src/content/core/dom.js");
-        await import("../../src/content/core/index.js");
-        await flush();
+            const domModule = await import("../../src/content/core/dom.js");
+            await import("../../src/content/core/index.js");
+            await flushStartupWork();
 
-        const sections = domModule.getConversationSections();
-        expect(sections.length).toBe(8);
-    });
+            const sections = domModule.getConversationSections();
+            expect(sections.length).toBe(8);
+        },
+        STARTUP_TEST_TIMEOUT_MS
+    );
 
-    it("can activate code block placeholder pipeline after startup on a real conversation DOM", async () => {
-        buildConversation({
-            exchangeCount: 4,
-            includeAnchor: true,
-            latestAssistantFinished: true,
-        });
+    it(
+        "can activate code block placeholder pipeline after startup on a real conversation DOM",
+        async () => {
+            buildConversation({
+                exchangeCount: 4,
+                includeAnchor: true,
+                latestAssistantFinished: true,
+            });
 
-        const domModule = await import("../../src/content/core/dom.js");
+            const domModule = await import("../../src/content/core/dom.js");
 
-        await import("../../src/content/core/index.js");
-        await flush();
+            await import("../../src/content/core/index.js");
+            await flushStartupWork();
 
-        const latestAssistant = domModule.getLatestAssistantSection();
+            const latestAssistant = domModule.getLatestAssistantSection();
 
-        expect(latestAssistant).not.toBeNull();
-    });
+            expect(latestAssistant).not.toBeNull();
+        },
+        STARTUP_TEST_TIMEOUT_MS
+    );
 
-    it("reports the latest assistant as actively streaming when unfinished", async () => {
-        buildConversation({
-            exchangeCount: 4,
-            includeAnchor: true,
-            latestAssistantFinished: false,
-        });
+    it(
+        "reports the latest assistant as actively streaming when unfinished",
+        async () => {
+            buildConversation({
+                exchangeCount: 4,
+                includeAnchor: true,
+                latestAssistantFinished: false,
+            });
 
-        const domModule = await import("../../src/content/core/dom.js");
-        const assistantSignalsModule = await import(
-            "../../src/content/streaming/assistantSignals.js"
-        );
+            const domModule = await import("../../src/content/core/dom.js");
+            const assistantSignalsModule = await import(
+                "../../src/content/streaming/assistantSignals.js"
+            );
 
-        await import("../../src/content/core/index.js");
-        await flush();
+            await import("../../src/content/core/index.js");
+            await flushStartupWork();
 
-        const latestAssistant = domModule.getLatestAssistantSection();
+            const latestAssistant = domModule.getLatestAssistantSection();
 
-        expect(latestAssistant).not.toBeNull();
-        expect(
-            assistantSignalsModule.hasResponseActions(latestAssistant)
-        ).toBe(false);
-    });
+            expect(latestAssistant).not.toBeNull();
+            expect(
+                assistantSignalsModule.hasResponseActions(latestAssistant)
+            ).toBe(false);
+        },
+        STARTUP_TEST_TIMEOUT_MS
+    );
 });

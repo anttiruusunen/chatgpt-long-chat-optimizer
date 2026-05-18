@@ -141,15 +141,29 @@ function replaceConversationDom({ withTurns = true } = {}) {
     return createConversationContainer({ withTurns });
 }
 
-async function flush() {
+async function flushMicrotasks() {
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 }
 
 async function flushScheduledWork() {
-    await flush();
+    await flushMicrotasks();
     vi.advanceTimersByTime(0);
-    await flush();
+    await flushMicrotasks();
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+}
+
+async function waitForStartupToSettle() {
+    await flushScheduledWork();
+
+    expect(
+        mockRefs.runInitialPruneBase.mock.calls.length +
+            mockRefs.waitForContainerAndInitialPruneBase.mock.calls.length
+    ).toBeGreaterThan(0);
+
+    await flushScheduledWork();
 }
 
 async function advanceNavigationDetection() {
@@ -188,7 +202,7 @@ function clearNavigationMocks() {
 
 async function importIndexAndClearStartupPruneCount() {
     await import("../../src/content/core/index.js");
-    await flushScheduledWork();
+    await waitForStartupToSettle();
 
     clearNavigationMocks();
 }
