@@ -1,3 +1,65 @@
+const ACTIVE_GENERATION_SELECTORS = [
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="Stop streaming"]',
+    'button[aria-label="Stop response"]',
+    'button[aria-label="Stop"]',
+    '[data-testid="stop-button"]',
+    '[data-testid="composer-stop-button"]',
+    '[data-testid*="stop-generating"]',
+    '[data-testid*="stop-streaming"]',
+    '[data-testid*="thinking"]',
+    '[data-testid*="loading"]',
+    '[data-testid*="spinner"]',
+    '[aria-busy="true"]',
+    '[role="progressbar"]',
+    '[data-streaming="true"]',
+];
+
+const ACTIVE_STATUS_SELECTORS = [
+    '[role="status"]',
+    '[aria-live]',
+    '[data-testid*="status"]',
+    '[data-testid*="thinking"]',
+    '[data-testid*="loading"]',
+];
+
+const ACTIVE_STATUS_TEXT_PATTERNS = [
+    /\bthinking\b/i,
+    /\breasoning\b/i,
+    /\banalyzing\b/i,
+    /\bsearching\b/i,
+    /\bworking\b/i,
+    /\bgenerating\b/i,
+];
+
+export function hasAssistantActiveGenerationState(root = document) {
+    if (!(root instanceof Element) && root !== document) {
+        return false;
+    }
+
+    for (const selector of ACTIVE_GENERATION_SELECTORS) {
+        if (root.querySelector?.(selector)) {
+            return true;
+        }
+    }
+
+    const statusElements = Array.from(
+        root.querySelectorAll?.(ACTIVE_STATUS_SELECTORS.join(",")) || []
+    );
+
+    return statusElements.some((element) => {
+        const text = (element.textContent || "").trim();
+
+        if (!text) {
+            return false;
+        }
+
+        return ACTIVE_STATUS_TEXT_PATTERNS.some((pattern) =>
+            pattern.test(text)
+        );
+    });
+}
+
 export function hasResponseActions(section) {
     if (!(section instanceof Element)) {
         return false;
@@ -52,6 +114,10 @@ export function isIncompleteAssistantSection(section) {
 
     if (section.getAttribute("data-turn") !== "assistant") {
         return false;
+    }
+
+    if (hasAssistantActiveGenerationState(section)) {
+        return true;
     }
 
     return !hasResponseActions(section) && !hasAssistantErrorState(section);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
     hasResponseActions,
+    hasAssistantActiveGenerationState,
     isIncompleteAssistantSection,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
@@ -185,5 +186,54 @@ describe("assistantSignals", () => {
 
         expect(hasResponseActions(section)).toBe(true);
         expect(isIncompleteAssistantSection(section)).toBe(false);
+    });
+
+    it("detects active generation from a stop generating button", () => {
+        const root = document.createElement("div");
+        const button = document.createElement("button");
+
+        button.setAttribute("aria-label", "Stop generating");
+        root.appendChild(button);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    });
+
+    it("detects active generation from thinking status UI", () => {
+        const root = document.createElement("div");
+        const status = document.createElement("div");
+
+        status.setAttribute("role", "status");
+        status.textContent = "Thinking";
+
+        root.appendChild(status);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    });
+
+    it("does not detect active generation from ordinary message text", () => {
+        const root = document.createElement("div");
+        const message = document.createElement("p");
+
+        message.textContent = "I was thinking about this yesterday.";
+        root.appendChild(message);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(false);
+    });
+
+    it("treats active assistant generation as incomplete even when actions are present", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+
+        const actions = document.createElement("div");
+        actions.setAttribute("aria-label", "Response actions");
+
+        const stopButton = document.createElement("button");
+        stopButton.setAttribute("aria-label", "Stop generating");
+
+        section.appendChild(actions);
+        section.appendChild(stopButton);
+
+        expect(hasResponseActions(section)).toBe(true);
+        expect(isIncompleteAssistantSection(section)).toBe(true);
     });
 });

@@ -7,6 +7,7 @@ import {
 import { debugLog } from "../core/logger.js";
 import { requestStoreHistoryPrune } from "../bridge/chatStoreBridgeClient.js";
 import {
+    hasAssistantActiveGenerationState,
     hasAssistantFeedbackState,
     isIncompleteAssistantSection,
 } from "../streaming/assistantSignals.js";
@@ -67,6 +68,20 @@ function requestStorePruneWithBridge({
             posted: false,
             deferred: true,
             reason: "reply streaming",
+            historyKeptExchanges: keepCount,
+        };
+    }
+
+    if (hasAssistantActiveGenerationState(document)) {
+        debugLog("Prune: deferred store pruning during active assistant generation", {
+            historyKeptExchanges: keepCount,
+            reason,
+        });
+
+        return {
+            posted: false,
+            deferred: true,
+            reason: "assistant generation active",
             historyKeptExchanges: keepCount,
         };
     }

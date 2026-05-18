@@ -172,4 +172,56 @@ describe("pruneController", () => {
             reason: "navigation-initial-prune-refresh",
         });
     });
+
+    it("retries auto-prune after active-generation deferral clears", async () => {
+        const { state, createPruneController } = await loadController();
+
+        state.settings.autoPrune = true;
+        state.settings.historyKeptExchanges = 1;
+        state.featureFlags.pruning = true;
+        state.didInitialPrune = true;
+        state.isApplyingDomChanges = false;
+        state.isAutoPruneScheduled = false;
+        state.debounceTimer = null;
+
+        mockRefs.pruneOldSectionsBase
+            .mockReturnValueOnce({
+                visibleSectionsChanged: false,
+                placeholderChanged: false,
+                posted: false,
+                deferred: true,
+                reason: "assistant generation active",
+            })
+            .mockReturnValueOnce({
+                visibleSectionsChanged: true,
+                placeholderChanged: false,
+                posted: true,
+                deferred: false,
+                reason: null,
+            });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.scheduleAutoPrune("reply-settled-idle");
+
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(1);
+        expect(mockRefs.pruneOldSectionsBase.mock.results[0].value).toMatchObject({
+            deferred: true,
+            reason: "assistant generation active",
+        });
+
+        await vi.advanceTimersByTimeAsync(5000);
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(2);
+        expect(mockRefs.pruneOldSectionsBase.mock.calls[1][0]).toBe(1);
+        expect(state.isAutoPruneScheduled).toBe(false);
+        expect(state.debounceTimer).toBe(null);
+    });
 });

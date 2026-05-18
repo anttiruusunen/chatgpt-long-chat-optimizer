@@ -312,4 +312,43 @@ describe("replyTiming", () => {
 
         expect(onReplyStarted).toHaveBeenCalledTimes(1);
     });
+
+    it("does not complete timing while active generation UI is still present", async () => {
+        const { assistant2 } = buildConversationDom();
+        const { textarea } = addComposer();
+
+        const onReplySettled = vi.fn();
+        installReplyTimingListeners({ onReplySettled });
+
+        textarea.dispatchEvent(
+            new KeyboardEvent("keydown", {
+                key: "Enter",
+                bubbles: true,
+            })
+        );
+
+        addResponseActions(assistant2);
+
+        const stopButton = document.createElement("button");
+        stopButton.setAttribute("aria-label", "Stop generating");
+        document.body.appendChild(stopButton);
+
+        ensureReplyCompletionPoll();
+
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(state.replyTiming.pending).toBe(true);
+        expect(onReplySettled).not.toHaveBeenCalled();
+
+        stopButton.remove();
+
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(state.replyTiming.pending).toBe(false);
+        expect(onReplySettled).toHaveBeenCalledTimes(1);
+    });
 });

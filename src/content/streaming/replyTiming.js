@@ -4,6 +4,7 @@ import { debugLog } from "../core/logger.js";
 import {
     hasResponseActions,
     hasAssistantErrorState,
+    hasAssistantActiveGenerationState,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
 } from "./assistantSignals.js";
@@ -14,9 +15,17 @@ let onReplyStartedCallback = null;
 let onReplySettledCallback = null;
 
 function latestAssistantHasSettledSignal() {
+    if (hasAssistantActiveGenerationState(document)) {
+        return false;
+    }
+
     const latestAssistant = getLatestAssistantSection();
 
     if (!latestAssistant) {
+        return false;
+    }
+
+    if (hasAssistantActiveGenerationState(latestAssistant)) {
         return false;
     }
 

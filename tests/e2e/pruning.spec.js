@@ -20,7 +20,7 @@ test("clicking the remaining chat does not restore old turns", async ({ page }) 
 
     await fixture.expectPrunedToLatestExchange();
 
-    await fixture.latestAssistant().click();
+    await fixture.latestAssistant().click({ force: true });
 
     await expect(fixture.turns()).toHaveCount(2);
 });
