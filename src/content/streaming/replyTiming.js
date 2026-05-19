@@ -11,6 +11,7 @@ import {
 
 const REPLY_COMPLETION_POLL_MS = 200;
 
+let onBeforeReplyStartedCallback = null;
 let onReplyStartedCallback = null;
 let onReplySettledCallback = null;
 
@@ -48,8 +49,10 @@ function stopReplyCompletionPoll() {
 
 function startReplyTimer(trigger) {
     if (isReplyStreaming()) {
-        return;
+        return false;
     }
+
+    onBeforeReplyStartedCallback?.({ trigger });
 
     state.replyTiming.pending = true;
     state.replyTiming.startedAt = performance.now();
@@ -59,8 +62,10 @@ function startReplyTimer(trigger) {
 
     debugLog("Reply timing: started", { trigger });
 
-    onReplyStartedCallback?.();
+    onReplyStartedCallback?.({ trigger });
     ensureReplyCompletionPoll();
+
+    return true;
 }
 
 function finishReplyTimerIfPending(source) {
@@ -80,7 +85,10 @@ function finishReplyTimerIfPending(source) {
         durationSeconds: (state.replyTiming.lastDurationMs / 1000).toFixed(2),
     });
 
-    onReplySettledCallback?.();
+    onReplySettledCallback?.({
+        trigger: state.replyTiming.trigger,
+        source,
+    });
 }
 
 /**
@@ -141,9 +149,14 @@ function handleComposerClick(event) {
 }
 
 export function installReplyTimingListeners({
+    onBeforeReplyStarted,
     onReplyStarted,
     onReplySettled,
 } = {}) {
+    onBeforeReplyStartedCallback =
+        typeof onBeforeReplyStarted === "function"
+            ? onBeforeReplyStarted
+            : null;
     onReplyStartedCallback =
         typeof onReplyStarted === "function" ? onReplyStarted : null;
     onReplySettledCallback =

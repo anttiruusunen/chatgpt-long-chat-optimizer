@@ -12,10 +12,6 @@ import {
     isIncompleteAssistantSection,
 } from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
-import {
-    showInitialPruneOverlay,
-    hideInitialPruneOverlay,
-} from "../ui/pruneOverlay.js";
 
 function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
@@ -183,10 +179,7 @@ export function pruneOldSections(
 }
 
 /**
- * Runs the startup/navigation prune with a temporary visual mask.
- *
- * The overlay is only used for initial-prune paths. Normal auto-prune calls
- * pruneOldSections directly through the controller and do not show this UI.
+ * Runs the startup/navigation prune.
  */
 export function runInitialPrune(
     container,

@@ -11,6 +11,11 @@ const mockRefs = vi.hoisted(() => ({
     waitForContainerAndInitialPrune: vi.fn(),
     ensureObserverAttached: vi.fn(),
     withDomMutationGuard: vi.fn((fn) => fn()),
+
+    showInitialPruneOverlay: vi.fn(),
+    hideInitialPruneOverlay: vi.fn(),
+
+    storePruneCompletionListeners: [],
 }));
 
 vi.mock("../../src/content/pruning/prune.js", () => ({
@@ -35,6 +40,26 @@ vi.mock("../../src/content/core/dom.js", () => ({
     getConversationContainer: mockRefs.getConversationContainer,
 }));
 
+vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
+    onStoreHistoryPruneCompleted: vi.fn((listener) => {
+        mockRefs.storePruneCompletionListeners.push(listener);
+
+        return () => {
+            mockRefs.storePruneCompletionListeners =
+                mockRefs.storePruneCompletionListeners.filter(
+                    (current) => current !== listener
+                );
+        };
+    }),
+}));
+
+vi.mock("../../src/content/ui/pruneOverlay.js", () => ({
+    showPruneOverlay: mockRefs.showInitialPruneOverlay,
+    hidePruneOverlay: mockRefs.hideInitialPruneOverlay,
+    showInitialPruneOverlay: mockRefs.showInitialPruneOverlay,
+    hideInitialPruneOverlay: mockRefs.hideInitialPruneOverlay,
+}));
+
 async function loadController() {
     const stateModule = await import("../../src/content/core/state.js");
     const controllerModule = await import("../../src/content/pruning/pruneController.js");
@@ -49,6 +74,8 @@ describe("pruneController", () => {
     beforeEach(() => {
         vi.resetModules();
         vi.useFakeTimers();
+
+        mockRefs.storePruneCompletionListeners = [];
 
         for (const value of Object.values(mockRefs)) {
             if (typeof value?.mockReset === "function") {
@@ -66,7 +93,7 @@ describe("pruneController", () => {
         vi.restoreAllMocks();
     });
 
-    it("retries auto-prune after latest-assistant deferral clears", async () => {
+    it("retries auto-prune after latest-assistant deferral clears without showing overlay", async () => {
         const { state, createPruneController } = await loadController();
 
         state.settings.autoPrune = true;
@@ -89,6 +116,7 @@ describe("pruneController", () => {
                 visibleSectionsChanged: true,
                 placeholderChanged: false,
                 posted: true,
+                requestId: "auto-prune-request",
                 deferred: false,
                 reason: null,
             });
@@ -109,11 +137,29 @@ describe("pruneController", () => {
             reason: "latest-assistant-incomplete",
         });
 
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+
         await vi.advanceTimersByTimeAsync(5000);
         await vi.advanceTimersByTimeAsync(300);
 
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(2);
         expect(mockRefs.pruneOldSectionsBase.mock.calls[1][0]).toBe(1);
+
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+
+        expect(mockRefs.storePruneCompletionListeners).toHaveLength(1);
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "auto-prune-request",
+            result: {
+                ok: true,
+                requestId: "auto-prune-request",
+            },
+        });
+
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
 
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -143,6 +189,9 @@ describe("pruneController", () => {
             expect.objectContaining({
                 pruneOldSections: expect.any(Function),
                 refreshObservedSections: expect.any(Function),
+                onPruneStarted: expect.any(Function),
+                onPruneResult: expect.any(Function),
+                onPruneFinished: expect.any(Function),
             })
         );
     });
@@ -173,7 +222,7 @@ describe("pruneController", () => {
         });
     });
 
-    it("retries auto-prune after active-generation deferral clears", async () => {
+    it("retries auto-prune after active-generation deferral clears without showing overlay", async () => {
         const { state, createPruneController } = await loadController();
 
         state.settings.autoPrune = true;
@@ -196,6 +245,7 @@ describe("pruneController", () => {
                 visibleSectionsChanged: true,
                 placeholderChanged: false,
                 posted: true,
+                requestId: "active-generation-request",
                 deferred: false,
                 reason: null,
             });
@@ -216,12 +266,98 @@ describe("pruneController", () => {
             reason: "assistant generation active",
         });
 
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+
         await vi.advanceTimersByTimeAsync(5000);
         await vi.advanceTimersByTimeAsync(300);
 
         expect(mockRefs.pruneOldSectionsBase).toHaveBeenCalledTimes(2);
         expect(mockRefs.pruneOldSectionsBase.mock.calls[1][0]).toBe(1);
+
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "active-generation-request",
+            result: {
+                ok: true,
+                requestId: "active-generation-request",
+            },
+        });
+
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+
         expect(state.isAutoPruneScheduled).toBe(false);
         expect(state.debounceTimer).toBe(null);
+    });
+
+    it("keeps initial prune overlay visible until matching store prune completion", async () => {
+        const { createPruneController } = await loadController();
+
+        const container = document.createElement("main");
+        const onPruneFinished = vi.fn();
+
+        mockRefs.pruneOldSectionsBase.mockReturnValue({
+            visibleSectionsChanged: true,
+            placeholderChanged: false,
+            posted: true,
+            requestId: "initial-prune-request",
+            deferred: false,
+            reason: null,
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.runInitialPrune(container, {
+            onPruneFinished,
+        });
+
+        const deps = mockRefs.runInitialPruneBase.mock.calls[0][1];
+
+        deps.pruneOldSections(1, {
+            reason: "initial-prune",
+        });
+
+        deps.onPruneResult({
+            posted: true,
+            deferred: false,
+            requestId: "initial-prune-request",
+        });
+
+        deps.onPruneFinished({
+            reason: "initial-prune-finished",
+            result: {
+                posted: true,
+                deferred: false,
+                requestId: "initial-prune-request",
+            },
+        });
+
+        expect(mockRefs.showInitialPruneOverlay).toHaveBeenCalledTimes(1);
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(onPruneFinished).not.toHaveBeenCalled();
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "initial-prune-request",
+            result: {
+                ok: true,
+                requestId: "initial-prune-request",
+            },
+        });
+
+        expect(onPruneFinished).toHaveBeenCalledWith(
+            expect.objectContaining({
+                reason: "store-prune-completed",
+            })
+        );
+        expect(mockRefs.hideInitialPruneOverlay).toHaveBeenCalledWith({
+            reason: "store-prune-completed",
+            requestId: "initial-prune-request",
+        });
     });
 });

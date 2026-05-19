@@ -12,11 +12,11 @@ import {
 import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
 import { onStoreHistoryPruneCompleted } from "../bridge/chatStoreBridgeClient.js";
 import {
-    showInitialPruneOverlay,
-    hideInitialPruneOverlay,
+    showPruneOverlay,
+    hidePruneOverlay,
 } from "../ui/pruneOverlay.js";
 
-const AUTO_PRUNE_DEBOUNCE_MS = 300;
+const AUTO_PRUNE_DEBOUNCE_MS = 100;
 const PENDING_AUTO_PRUNE_CHECK_MS = 5000;
 
 function getSafeHistoryKeptExchanges(value) {
@@ -25,6 +25,10 @@ function getSafeHistoryKeptExchanges(value) {
 
 function isPruneDeferred(result) {
     return Boolean(result?.pruneDeferred || result?.deferred);
+}
+
+function isInitialPruneReason(reason) {
+    return reason === "initial-prune";
 }
 
 export function createPruneController({
@@ -37,15 +41,8 @@ export function createPruneController({
     let pendingDeferredAutoPruneReason = null;
     let pendingDeferredAutoPruneLastResult = null;
 
-    let activeInitialPruneRequestId = null;
-    let activeInitialPruneFinishedCallback = null;
     let removeStorePruneCompletionListener = null;
-
-    function clearInitialPruneOverlay(reason = "initial-prune-complete") {
-        activeInitialPruneRequestId = null;
-        activeInitialPruneFinishedCallback = null;
-        hideInitialPruneOverlay({ reason });
-    }
+    const activeStorePruneRequests = new Map();
 
     function ensureStorePruneCompletionListener() {
         if (removeStorePruneCompletionListener) {
@@ -56,19 +53,27 @@ export function createPruneController({
             ({ requestId, result } = {}) => {
                 const completedRequestId = requestId || result?.requestId;
 
-                if (
-                    !completedRequestId ||
-                    completedRequestId !== activeInitialPruneRequestId
-                ) {
+                if (!completedRequestId) {
                     return;
                 }
 
-                debugLog("Prune controller: initial store prune completed", {
+                const activeRequest =
+                    activeStorePruneRequests.get(completedRequestId);
+
+                if (!activeRequest) {
+                    return;
+                }
+
+                activeStorePruneRequests.delete(completedRequestId);
+
+                debugLog("Prune controller: store prune completed", {
                     requestId: completedRequestId,
                     result,
+                    reason: activeRequest.reason,
+                    showOverlay: activeRequest.showOverlay,
                 });
 
-                activeInitialPruneFinishedCallback?.({
+                activeRequest.onFinished?.({
                     reason: "store-prune-completed",
                     result: {
                         ...(result || {}),
@@ -79,30 +84,60 @@ export function createPruneController({
                     },
                 });
 
-                clearInitialPruneOverlay("store-prune-completed");
+                if (activeRequest.showOverlay) {
+                    hidePruneOverlay({
+                        reason: "store-prune-completed",
+                        requestId: completedRequestId,
+                    });
+                }
             }
         );
     }
 
-    function trackInitialStorePruneOverlay(result) {
-        if (result?.deferred) {
-            clearInitialPruneOverlay("initial-prune-deferred");
-            return result;
+    function trackStorePruneRequest(
+        result,
+        {
+            reason,
+            onFinished,
+            showOverlay = false,
+        } = {}
+    ) {
+        if (!result?.posted || !result?.requestId || result?.deferred) {
+            return false;
         }
 
-        if (!result?.posted || !result?.requestId) {
-            clearInitialPruneOverlay("initial-prune-not-posted");
-            return result;
-        }
-
-        activeInitialPruneRequestId = result.requestId;
         ensureStorePruneCompletionListener();
 
-        debugLog("Prune controller: initial store prune overlay waiting for bridge completion", {
-            requestId: activeInitialPruneRequestId,
+        const existingRequest =
+            activeStorePruneRequests.get(result.requestId) || {};
+
+        activeStorePruneRequests.set(result.requestId, {
+            ...existingRequest,
+            reason: reason || existingRequest.reason || result.reason,
+            onFinished: onFinished || existingRequest.onFinished || null,
+            showOverlay:
+                Boolean(existingRequest.showOverlay) || Boolean(showOverlay),
         });
 
-        return result;
+        debugLog("Prune controller: waiting for store prune completion", {
+            requestId: result.requestId,
+            reason,
+            showOverlay,
+        });
+
+        return true;
+    }
+
+    function finishLocalPrune(result, { reason, showOverlay }) {
+        if (result?.posted && result?.requestId && !result?.deferred) {
+            return;
+        }
+
+        if (showOverlay) {
+            hidePruneOverlay({
+                reason: result?.reason || reason || "prune-complete",
+            });
+        }
     }
 
     function clearPendingDeferredAutoPrune() {
@@ -188,6 +223,14 @@ export function createPruneController({
         historyKeptExchanges = state.settings.historyKeptExchanges,
         options = {}
     ) {
+        const reason = options.reason || "prune-old-sections";
+        const showOverlay =
+            options.showOverlay === true || isInitialPruneReason(reason);
+
+        if (showOverlay) {
+            showPruneOverlay({ reason });
+        }
+
         const runPrune = () =>
             pruneOldSectionsBase(
                 getSafeHistoryKeptExchanges(historyKeptExchanges),
@@ -198,14 +241,35 @@ export function createPruneController({
                 }
             );
 
-        const result =
-            typeof withDomMutationGuard === "function"
-                ? withDomMutationGuard(runPrune)
-                : runPrune();
+        let result = null;
 
-        syncAfterPrune("prune-old-sections");
+        try {
+            result =
+                typeof withDomMutationGuard === "function"
+                    ? withDomMutationGuard(runPrune)
+                    : runPrune();
 
-        return result;
+            trackStorePruneRequest(result, {
+                reason,
+                showOverlay,
+            });
+            finishLocalPrune(result, {
+                reason,
+                showOverlay,
+            });
+
+            syncAfterPrune("prune-old-sections");
+
+            return result;
+        } catch (error) {
+            if (showOverlay) {
+                hidePruneOverlay({
+                    reason: "prune-error",
+                });
+            }
+
+            throw error;
+        }
     }
 
     function runInitialPrune(container, options = {}) {
@@ -233,20 +297,17 @@ export function createPruneController({
                             ? "navigation-initial-prune-refresh"
                             : "initial-prune-refresh",
                 }),
-            onPruneStarted: () => {
-                showInitialPruneOverlay({
-                    reason: options.reason || "initial-prune",
-                });
-            },
+            onPruneStarted: () => {},
             onPruneResult: (result) => {
                 latestInitialPruneResult = result;
-                trackInitialStorePruneOverlay(result);
+
+                trackStorePruneRequest(result, {
+                    reason: options.reason || "initial-prune",
+                    onFinished: externalOnPruneFinished,
+                    showOverlay: true,
+                });
 
                 externalOnPruneResult?.(result);
-
-                if (result?.posted && result?.requestId && !result?.deferred) {
-                    activeInitialPruneFinishedCallback = externalOnPruneFinished;
-                }
             },
             onPruneFinished: ({ reason, result } = {}) => {
                 const finalResult = result || latestInitialPruneResult;
@@ -263,8 +324,6 @@ export function createPruneController({
                     reason: reason || "initial-prune-finished",
                     result: finalResult,
                 });
-
-                clearInitialPruneOverlay(reason || "initial-prune-finished");
             },
         });
 
@@ -365,7 +424,11 @@ export function createPruneController({
                 }
 
                 const pruneResult = pruneOldSections(
-                    state.settings.historyKeptExchanges
+                    state.settings.historyKeptExchanges,
+                    {
+                        reason,
+                        showOverlay: false,
+                    }
                 );
 
                 debugLog("Prune controller: auto-prune result", {

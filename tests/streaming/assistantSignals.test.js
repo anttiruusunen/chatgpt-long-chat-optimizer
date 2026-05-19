@@ -1,13 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
     hasResponseActions,
     hasAssistantActiveGenerationState,
+    hasAssistantErrorState,
+    hasAssistantFeedbackState,
     isIncompleteAssistantSection,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
+    getActiveComposerElement,
+    getComposerDraftText,
+    hasActiveComposerDraft,
+    moveActiveComposerCaretToEnd,
+    installComposerCaretStartGuard,
 } from "../../src/content/streaming/assistantSignals.js";
 
 describe("assistantSignals", () => {
+    beforeEach(() => {
+        document.body.innerHTML = "";
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = "";
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
     it("detects standard response actions by aria-label", () => {
         const section = document.createElement("section");
         const actions = document.createElement("div");
@@ -59,14 +76,117 @@ describe("assistantSignals", () => {
         expect(hasResponseActions(section)).toBe(false);
     });
 
-    it("returns false for invalid inputs", () => {
+    it("returns false for invalid response-action inputs", () => {
         expect(hasResponseActions(null)).toBe(false);
         expect(hasResponseActions(undefined)).toBe(false);
         expect(hasResponseActions("not-an-element")).toBe(false);
     });
 
+    it("detects assistant error text", () => {
+        const section = document.createElement("section");
+        section.textContent = "Something went wrong";
+
+        expect(hasAssistantErrorState(section)).toBe(true);
+    });
+
+    it("detects assistant error role alert", () => {
+        const section = document.createElement("section");
+        const alert = document.createElement("div");
+        alert.setAttribute("role", "alert");
+        section.appendChild(alert);
+
+        expect(hasAssistantErrorState(section)).toBe(true);
+    });
+
+    it("returns false for invalid assistant error inputs", () => {
+        expect(hasAssistantErrorState(null)).toBe(false);
+        expect(hasAssistantErrorState(undefined)).toBe(false);
+        expect(hasAssistantErrorState("not-an-element")).toBe(false);
+    });
+
+    it("detects active generation from stop button", () => {
+        const root = document.createElement("div");
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "Stop generating");
+        root.appendChild(button);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    });
+
+    it("detects active generation from busy state", () => {
+        const root = document.createElement("div");
+        const busy = document.createElement("div");
+        busy.setAttribute("aria-busy", "true");
+        root.appendChild(busy);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    });
+
+    it("detects active generation from thinking status text", () => {
+        const root = document.createElement("div");
+        const status = document.createElement("div");
+        status.setAttribute("role", "status");
+        status.textContent = "Thinking";
+        root.appendChild(status);
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    });
+
+    it("returns false when active generation signals are absent", () => {
+        const root = document.createElement("div");
+        root.textContent = "Settled response";
+
+        expect(hasAssistantActiveGenerationState(root)).toBe(false);
+    });
+
+    it("treats an assistant without response actions as incomplete", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+        section.textContent = "Still streaming";
+
+        expect(isIncompleteAssistantSection(section)).toBe(true);
+    });
+
+    it("treats an assistant with active generation state as incomplete", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+
+        const status = document.createElement("div");
+        status.setAttribute("role", "status");
+        status.textContent = "Thinking";
+        section.appendChild(status);
+
+        expect(isIncompleteAssistantSection(section)).toBe(true);
+    });
+
+    it("treats an assistant with response actions as complete", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "assistant");
+
+        const actions = document.createElement("div");
+        actions.setAttribute("aria-label", "Response actions");
+        section.appendChild(actions);
+
+        expect(isIncompleteAssistantSection(section)).toBe(false);
+    });
+
+    it("does not treat non-assistant sections as incomplete assistant sections", () => {
+        const section = document.createElement("section");
+        section.setAttribute("data-turn", "user");
+        section.textContent = "User message";
+
+        expect(isIncompleteAssistantSection(section)).toBe(false);
+    });
+
+    it("returns false for invalid incomplete-assistant inputs", () => {
+        expect(isIncompleteAssistantSection(null)).toBe(false);
+        expect(isIncompleteAssistantSection(undefined)).toBe(false);
+        expect(isIncompleteAssistantSection("not-an-element")).toBe(false);
+    });
+
     it("recognizes textarea as a likely composer input", () => {
         const textarea = document.createElement("textarea");
+
         expect(isLikelyComposerInput(textarea)).toBe(true);
     });
 
@@ -95,43 +215,47 @@ describe("assistantSignals", () => {
     });
 
     it("returns false for non-composer elements", () => {
-        const el = document.createElement("div");
-        expect(isLikelyComposerInput(el)).toBe(false);
+        const div = document.createElement("div");
+
+        expect(isLikelyComposerInput(div)).toBe(false);
+        expect(isLikelyComposerInput(null)).toBe(false);
     });
 
-    it("finds the closest composer submit button by id", () => {
-        const button = document.createElement("button");
-        button.id = "composer-submit-button";
-
-        const child = document.createElement("span");
-        button.appendChild(child);
-
-        expect(getClosestComposerSubmitButton(child)).toBe(button);
-    });
-
-    it("finds the closest composer submit button by submit type", () => {
-        const button = document.createElement("button");
-        button.type = "submit";
-
-        const child = document.createElement("span");
-        button.appendChild(child);
-
-        expect(getClosestComposerSubmitButton(child)).toBe(button);
-    });
-
-    it("finds the closest composer submit button by aria-label", () => {
+    it("finds closest composer submit button", () => {
         const button = document.createElement("button");
         button.setAttribute("aria-label", "Send message");
 
-        const child = document.createElement("span");
-        button.appendChild(child);
+        const icon = document.createElement("span");
+        button.appendChild(icon);
 
-        expect(getClosestComposerSubmitButton(child)).toBe(button);
+        expect(getClosestComposerSubmitButton(icon)).toBe(button);
     });
 
-    it("returns null when no submit button is found", () => {
-        const el = document.createElement("div");
-        expect(getClosestComposerSubmitButton(el)).toBeNull();
+    it("finds composer submit button by id", () => {
+        const button = document.createElement("button");
+        button.id = "composer-submit-button";
+
+        const icon = document.createElement("span");
+        button.appendChild(icon);
+
+        expect(getClosestComposerSubmitButton(icon)).toBe(button);
+    });
+
+    it("finds composer submit button by submit type", () => {
+        const button = document.createElement("button");
+        button.type = "submit";
+
+        const icon = document.createElement("span");
+        button.appendChild(icon);
+
+        expect(getClosestComposerSubmitButton(icon)).toBe(button);
+    });
+
+    it("returns null when no composer submit button exists", () => {
+        const div = document.createElement("div");
+
+        expect(getClosestComposerSubmitButton(div)).toBeNull();
+        expect(getClosestComposerSubmitButton(null)).toBeNull();
     });
 
     it("does not treat a standalone Copy button as response actions", () => {
@@ -154,86 +278,250 @@ describe("assistantSignals", () => {
         expect(hasResponseActions(section)).toBe(false);
     });
 
-    it("treats the dedicated response actions container as response actions", () => {
+    it("detects assistant feedback state by test id", () => {
         const section = document.createElement("section");
+        const title = document.createElement("div");
+        title.setAttribute("data-testid", "paragen-feedback-title");
+        section.appendChild(title);
 
-        const actions = document.createElement("div");
-        actions.setAttribute("aria-label", "Response actions");
-        section.appendChild(actions);
-
-        expect(hasResponseActions(section)).toBe(true);
+        expect(hasAssistantFeedbackState(section)).toBe(true);
     });
 
-    it("treats the dedicated response actions test id as response actions", () => {
+    it("detects assistant feedback state by text", () => {
         const section = document.createElement("section");
+        section.textContent = "Which response do you prefer?";
 
-        const actions = document.createElement("div");
-        actions.setAttribute("data-testid", "response-actions");
-        section.appendChild(actions);
-
-        expect(hasResponseActions(section)).toBe(true);
+        expect(hasAssistantFeedbackState(section)).toBe(true);
     });
 
-    it("treats paragen preference buttons as settled response actions", () => {
+    it("returns false when assistant feedback state is absent", () => {
         const section = document.createElement("section");
-        section.setAttribute("data-turn", "assistant");
+        section.textContent = "Normal assistant response";
 
-        const preferButton = document.createElement("button");
-        preferButton.setAttribute("data-testid", "paragen-prefer-response-button");
-        preferButton.textContent = "Choose this response";
-
-        section.appendChild(preferButton);
-
-        expect(hasResponseActions(section)).toBe(true);
-        expect(isIncompleteAssistantSection(section)).toBe(false);
+        expect(hasAssistantFeedbackState(section)).toBe(false);
+        expect(hasAssistantFeedbackState(null)).toBe(false);
     });
 
-    it("detects active generation from a stop generating button", () => {
-        const root = document.createElement("div");
+    it("gets active composer element from focused contenteditable prompt", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        document.body.appendChild(composer);
+
+        composer.focus();
+
+        expect(getActiveComposerElement()).toBe(composer);
+    });
+
+    it("gets active composer element from focused descendant", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+
+        const child = document.createElement("span");
+        composer.appendChild(child);
+        document.body.appendChild(composer);
+
+        child.focus();
+
+        expect(getActiveComposerElement()).toBe(composer);
+    });
+
+    it("falls back to composer element when active element is not composer", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        document.body.appendChild(composer);
+
         const button = document.createElement("button");
+        document.body.appendChild(button);
+        button.focus();
 
-        button.setAttribute("aria-label", "Stop generating");
-        root.appendChild(button);
-
-        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+        expect(getActiveComposerElement()).toBe(composer);
     });
 
-    it("detects active generation from thinking status UI", () => {
-        const root = document.createElement("div");
-        const status = document.createElement("div");
-
-        status.setAttribute("role", "status");
-        status.textContent = "Thinking";
-
-        root.appendChild(status);
-
-        expect(hasAssistantActiveGenerationState(root)).toBe(true);
+    it("returns empty composer draft text when no composer exists", () => {
+        expect(getComposerDraftText()).toBe("");
+        expect(hasActiveComposerDraft()).toBe(false);
     });
 
-    it("does not detect active generation from ordinary message text", () => {
-        const root = document.createElement("div");
-        const message = document.createElement("p");
+    it("detects active composer draft text from contenteditable prompt", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        composer.textContent = "hello draft";
+        document.body.appendChild(composer);
 
-        message.textContent = "I was thinking about this yesterday.";
-        root.appendChild(message);
+        composer.focus();
 
-        expect(hasAssistantActiveGenerationState(root)).toBe(false);
+        expect(getComposerDraftText()).toBe("hello draft");
+        expect(hasActiveComposerDraft()).toBe(true);
     });
 
-    it("treats active assistant generation as incomplete even when actions are present", () => {
-        const section = document.createElement("section");
-        section.setAttribute("data-turn", "assistant");
+    it("ignores whitespace-only composer draft text", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        composer.textContent = "   ";
+        document.body.appendChild(composer);
 
-        const actions = document.createElement("div");
-        actions.setAttribute("aria-label", "Response actions");
+        composer.focus();
 
-        const stopButton = document.createElement("button");
-        stopButton.setAttribute("aria-label", "Stop generating");
+        expect(getComposerDraftText()).toBe("   ");
+        expect(hasActiveComposerDraft()).toBe(false);
+    });
 
-        section.appendChild(actions);
-        section.appendChild(stopButton);
+    it("detects active composer draft text from textarea prompt", () => {
+        const composer = document.createElement("textarea");
+        composer.id = "prompt-textarea";
+        composer.value = "textarea draft";
+        document.body.appendChild(composer);
 
-        expect(hasResponseActions(section)).toBe(true);
-        expect(isIncompleteAssistantSection(section)).toBe(true);
+        composer.focus();
+
+        expect(getComposerDraftText()).toBe("textarea draft");
+        expect(hasActiveComposerDraft()).toBe(true);
+    });
+
+    it("detects active composer draft text from input prompt", () => {
+        const composer = document.createElement("input");
+        composer.id = "prompt-textarea";
+        composer.value = "input draft";
+        document.body.appendChild(composer);
+
+        composer.focus();
+
+        expect(getComposerDraftText()).toBe("input draft");
+        expect(hasActiveComposerDraft()).toBe(true);
+    });
+
+    it("moves textarea composer caret to end", () => {
+        const composer = document.createElement("textarea");
+        composer.id = "prompt-textarea";
+        composer.value = "hello world";
+        document.body.appendChild(composer);
+
+        composer.focus();
+        composer.setSelectionRange(0, 0);
+
+        expect(moveActiveComposerCaretToEnd()).toBe(true);
+        expect(composer.selectionStart).toBe(11);
+        expect(composer.selectionEnd).toBe(11);
+    });
+
+    it("moves input composer caret to end", () => {
+        const composer = document.createElement("input");
+        composer.id = "prompt-textarea";
+        composer.value = "hello world";
+        document.body.appendChild(composer);
+
+        composer.focus();
+        composer.setSelectionRange(0, 0);
+
+        expect(moveActiveComposerCaretToEnd()).toBe(true);
+        expect(composer.selectionStart).toBe(11);
+        expect(composer.selectionEnd).toBe(11);
+    });
+
+    it("moves contenteditable composer caret to end", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        composer.textContent = "hello world";
+        document.body.appendChild(composer);
+
+        composer.focus();
+
+        expect(moveActiveComposerCaretToEnd()).toBe(true);
+
+        const selection = window.getSelection();
+        const range = selection.getRangeAt(0);
+
+        expect(range.startContainer).toBe(composer.firstChild);
+        expect(range.startOffset).toBe(11);
+    });
+
+    it("does not move composer caret when focus is outside composer and there is no draft", () => {
+        const composer = document.createElement("textarea");
+        composer.id = "prompt-textarea";
+        composer.value = "";
+        document.body.appendChild(composer);
+
+        const button = document.createElement("button");
+        document.body.appendChild(button);
+        button.focus();
+
+        expect(moveActiveComposerCaretToEnd()).toBe(false);
+    });
+
+    it("guard repairs composer caret at start before input", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        composer.textContent = "hello world";
+        document.body.appendChild(composer);
+
+        composer.focus();
+
+        const range = document.createRange();
+        range.setStart(composer.firstChild, 0);
+        range.collapse(true);
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        const cleanup = installComposerCaretStartGuard();
+
+        composer.dispatchEvent(
+            new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: "!",
+            })
+        );
+
+        const repairedRange = selection.getRangeAt(0);
+
+        expect(repairedRange.startContainer).toBe(composer.firstChild);
+        expect(repairedRange.startOffset).toBe(11);
+
+        cleanup();
+    });
+
+    it("guard cleanup removes beforeinput repair", () => {
+        const composer = document.createElement("div");
+        composer.id = "prompt-textarea";
+        composer.setAttribute("contenteditable", "true");
+        composer.textContent = "hello world";
+        document.body.appendChild(composer);
+
+        composer.focus();
+
+        const cleanup = installComposerCaretStartGuard();
+        cleanup();
+
+        const range = document.createRange();
+        range.setStart(composer.firstChild, 0);
+        range.collapse(true);
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        composer.dispatchEvent(
+            new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: "!",
+            })
+        );
+
+        const currentRange = selection.getRangeAt(0);
+
+        expect(currentRange.startContainer).toBe(composer.firstChild);
+        expect(currentRange.startOffset).toBe(0);
     });
 });

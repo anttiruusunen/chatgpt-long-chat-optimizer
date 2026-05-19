@@ -24,7 +24,7 @@ describe("prune overlay", () => {
         );
 
         expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain("Pruning messages");
+        expect(overlay.textContent).toContain("Optimizing chat");
         expect(
             document.getElementById("long-chat-optimizer-prune-overlay-style")
         ).toBeTruthy();

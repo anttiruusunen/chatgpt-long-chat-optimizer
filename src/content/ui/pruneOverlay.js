@@ -1,7 +1,9 @@
 const OVERLAY_ID = "long-chat-optimizer-prune-overlay";
 const STYLE_ID = "long-chat-optimizer-prune-overlay-style";
+const HOST_ATTR = "data-long-chat-optimizer-prune-overlay-host";
 
 let activeOverlayCount = 0;
+let activeOverlayHost = null;
 
 function ensureOverlayStyle() {
     if (document.getElementById(STYLE_ID)) {
@@ -11,16 +13,25 @@ function ensureOverlayStyle() {
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
+        [${HOST_ATTR}="true"] {
+            position: relative !important;
+        }
+
         #${OVERLAY_ID} {
-            position: fixed;
+            position: absolute;
             inset: 0;
             z-index: 2147483647;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(15, 23, 42, 0.42);
+            background: rgba(15, 23, 42, 0.28);
             backdrop-filter: blur(2px);
             pointer-events: auto;
+            cursor: wait;
+        }
+
+        #${OVERLAY_ID}.long-chat-optimizer-prune-overlay-fixed {
+            position: fixed;
         }
 
         #${OVERLAY_ID} .long-chat-optimizer-prune-card {
@@ -72,7 +83,7 @@ function ensureOverlayStyle() {
 
         @media (prefers-color-scheme: dark) {
             #${OVERLAY_ID} {
-                background: rgba(2, 6, 23, 0.52);
+                background: rgba(2, 6, 23, 0.34);
             }
 
             #${OVERLAY_ID} .long-chat-optimizer-prune-card {
@@ -98,19 +109,48 @@ function ensureOverlayStyle() {
     document.head.appendChild(style);
 }
 
-function createOverlay() {
+function getOverlayHost() {
+    const thread = document.querySelector("#thread");
+
+    if (thread instanceof HTMLElement) {
+        return {
+            element: thread,
+            fixed: false,
+        };
+    }
+
+    const main = document.querySelector("main");
+
+    if (main instanceof HTMLElement) {
+        return {
+            element: main,
+            fixed: false,
+        };
+    }
+
+    return {
+        element: document.documentElement,
+        fixed: true,
+    };
+}
+
+function createOverlay({ fixed = false } = {}) {
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
     overlay.setAttribute("role", "status");
     overlay.setAttribute("aria-live", "polite");
     overlay.setAttribute("aria-label", "Pruning messages");
 
+    if (fixed) {
+        overlay.classList.add("long-chat-optimizer-prune-overlay-fixed");
+    }
+
     overlay.innerHTML = `
         <div class="long-chat-optimizer-prune-card">
             <div class="long-chat-optimizer-prune-spinner" aria-hidden="true"></div>
             <div class="long-chat-optimizer-prune-text">
-                <div class="long-chat-optimizer-prune-title">Pruning messages…</div>
-                <div class="long-chat-optimizer-prune-subtitle">Long chats can take a moment.</div>
+                <div class="long-chat-optimizer-prune-title">Optimizing chat…</div>
+                <div class="long-chat-optimizer-prune-subtitle">This usually takes a moment.</div>
             </div>
         </div>
     `;
@@ -118,7 +158,7 @@ function createOverlay() {
     return overlay;
 }
 
-export function showInitialPruneOverlay() {
+export function showPruneOverlay() {
     activeOverlayCount += 1;
 
     ensureOverlayStyle();
@@ -127,10 +167,14 @@ export function showInitialPruneOverlay() {
         return;
     }
 
-    document.documentElement.appendChild(createOverlay());
+    const { element: host, fixed } = getOverlayHost();
+
+    activeOverlayHost = host;
+    activeOverlayHost.setAttribute(HOST_ATTR, "true");
+    activeOverlayHost.appendChild(createOverlay({ fixed }));
 }
 
-export function hideInitialPruneOverlay() {
+export function hidePruneOverlay() {
     activeOverlayCount = Math.max(0, activeOverlayCount - 1);
 
     if (activeOverlayCount > 0) {
@@ -138,10 +182,33 @@ export function hideInitialPruneOverlay() {
     }
 
     document.getElementById(OVERLAY_ID)?.remove();
+
+    if (activeOverlayHost instanceof HTMLElement) {
+        activeOverlayHost.removeAttribute(HOST_ATTR);
+    }
+
+    activeOverlayHost = null;
+}
+
+export function showInitialPruneOverlay(options) {
+    showPruneOverlay(options);
+}
+
+export function hideInitialPruneOverlay(options) {
+    hidePruneOverlay(options);
+}
+
+export function resetPruneOverlayForTests() {
+    activeOverlayCount = 0;
+    activeOverlayHost = null;
+    document.getElementById(OVERLAY_ID)?.remove();
+    document.getElementById(STYLE_ID)?.remove();
+
+    for (const host of document.querySelectorAll(`[${HOST_ATTR}]`)) {
+        host.removeAttribute(HOST_ATTR);
+    }
 }
 
 export function resetInitialPruneOverlayForTests() {
-    activeOverlayCount = 0;
-    document.getElementById(OVERLAY_ID)?.remove();
-    document.getElementById(STYLE_ID)?.remove();
+    resetPruneOverlayForTests();
 }

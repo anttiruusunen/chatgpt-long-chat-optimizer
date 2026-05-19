@@ -45,32 +45,11 @@ import {
 import { createPruneController } from "../pruning/pruneController.js";
 
 const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
-const REPLY_SETTLED_PRUNE_DELAY_MS = 3000;
 
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
-let pendingReplySettledPruneTimer = null;
 let pendingDeferredInitialPrune = false;
 let lastCompletedFreshNavigationLocationKey = null;
-
-function clearPendingReplySettledPrune() {
-    if (pendingReplySettledPruneTimer) {
-        clearTimeout(pendingReplySettledPruneTimer);
-        pendingReplySettledPruneTimer = null;
-    }
-}
-
-function scheduleReplySettledPrune() {
-    clearPendingReplySettledPrune();
-
-    pendingReplySettledPruneTimer = setTimeout(() => {
-        pendingReplySettledPruneTimer = null;
-
-        if (state.settings.autoPrune && state.featureFlags.pruning) {
-            scheduleAutoPrune("reply-settled-idle");
-        }
-    }, REPLY_SETTLED_PRUNE_DELAY_MS);
-}
 
 installDomMutationGuard();
 
@@ -317,7 +296,6 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
  * Clears per-conversation lifecycle state before a new thread is initialized.
  */
 function resetConversationLifecycleForNavigation() {
-    clearPendingReplySettledPrune();
     clearPendingNavigationPrune();
     invalidateConversationDomCache();
     resetVisibleMessagesReadyNotification();
@@ -500,17 +478,24 @@ async function initialize() {
     syncPruningStateToPageBridge();
 
     installReplyTimingListeners({
+        onBeforeReplyStarted: () => {
+            if (
+                state.settings.autoPrune &&
+                state.featureFlags.pruning &&
+                state.didInitialPrune
+            ) {
+                pruneOldSections(state.settings.historyKeptExchanges, {
+                    reason: "before-send",
+                    showOverlay: false,
+                    guardComposerCaret: false,
+                });
+            }
+        },
         onReplyStarted: () => {
-            clearPendingReplySettledPrune();
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
-            const retriedInitialPrune =
-                retryIncompleteInitialPruneAfterReplySettled();
-
-            if (!retriedInitialPrune) {
-                scheduleReplySettledPrune();
-            }
+            retryIncompleteInitialPruneAfterReplySettled();
 
             scheduleConversationChromeSync({
                 reason: "reply-settled",
@@ -665,7 +650,6 @@ ext.storage.onChanged.addListener((changes, areaName) => {
             );
         }
     } else {
-        clearPendingReplySettledPrune();
         pendingDeferredInitialPrune = false;
         disableStoreReadOptimizationForPage("pruning-disabled");
         clearPendingAutoPrune();
