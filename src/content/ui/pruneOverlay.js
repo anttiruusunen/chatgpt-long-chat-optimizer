@@ -1,4 +1,11 @@
+import {
+    startPruneOverlayWatchdog,
+    stopPruneOverlayWatchdog,
+    resetPruneOverlayWatchdogForTests,
+} from "./pruneOverlayWatchdog.js";
+
 const OVERLAY_ID = "long-chat-optimizer-prune-overlay";
+const CARD_ID = "long-chat-optimizer-prune-overlay-card";
 const STYLE_ID = "long-chat-optimizer-prune-overlay-style";
 const HOST_ATTR = "data-long-chat-optimizer-prune-overlay-host";
 
@@ -20,10 +27,8 @@ function ensureOverlayStyle() {
         #${OVERLAY_ID} {
             position: absolute;
             inset: 0;
-            z-index: 2147483647;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            z-index: 2147483646;
+            display: block;
             background: rgba(15, 23, 42, 0.28);
             backdrop-filter: blur(2px);
             pointer-events: auto;
@@ -34,14 +39,19 @@ function ensureOverlayStyle() {
             position: fixed;
         }
 
-        #${OVERLAY_ID} .long-chat-optimizer-prune-card {
+        #${CARD_ID} {
+            position: fixed;
+            top: 28vh;
+            left: 50%;
+            z-index: 2147483647;
             display: flex;
             align-items: center;
             gap: 12px;
-            max-width: 280px;
+            width: max-content;
+            max-width: min(340px, calc(100vw - 32px));
             padding: 14px 16px;
             border-radius: 14px;
-            background: rgba(255, 255, 255, 0.96);
+            background: rgba(255, 255, 255, 0.98);
             color: #111827;
             box-shadow:
                 0 18px 45px rgba(15, 23, 42, 0.28),
@@ -52,9 +62,11 @@ function ensureOverlayStyle() {
                 BlinkMacSystemFont,
                 "Segoe UI",
                 sans-serif;
+            transform: translateX(-50%);
+            pointer-events: none;
         }
 
-        #${OVERLAY_ID} .long-chat-optimizer-prune-spinner {
+        #${CARD_ID} .long-chat-optimizer-prune-spinner {
             width: 22px;
             height: 22px;
             flex: 0 0 auto;
@@ -64,19 +76,19 @@ function ensureOverlayStyle() {
             animation: long-chat-optimizer-prune-spin 0.8s linear infinite;
         }
 
-        #${OVERLAY_ID} .long-chat-optimizer-prune-text {
+        #${CARD_ID} .long-chat-optimizer-prune-text {
             display: flex;
             flex-direction: column;
             gap: 2px;
             line-height: 1.25;
         }
 
-        #${OVERLAY_ID} .long-chat-optimizer-prune-title {
+        #${CARD_ID} .long-chat-optimizer-prune-title {
             font-size: 14px;
             font-weight: 650;
         }
 
-        #${OVERLAY_ID} .long-chat-optimizer-prune-subtitle {
+        #${CARD_ID} .long-chat-optimizer-prune-subtitle {
             font-size: 12px;
             color: #4b5563;
         }
@@ -86,15 +98,15 @@ function ensureOverlayStyle() {
                 background: rgba(2, 6, 23, 0.34);
             }
 
-            #${OVERLAY_ID} .long-chat-optimizer-prune-card {
-                background: rgba(17, 24, 39, 0.96);
+            #${CARD_ID} {
+                background: rgba(17, 24, 39, 0.98);
                 color: #f9fafb;
                 box-shadow:
                     0 18px 45px rgba(0, 0, 0, 0.42),
                     0 0 0 1px rgba(255, 255, 255, 0.08);
             }
 
-            #${OVERLAY_ID} .long-chat-optimizer-prune-subtitle {
+            #${CARD_ID} .long-chat-optimizer-prune-subtitle {
                 color: #d1d5db;
             }
         }
@@ -137,51 +149,89 @@ function getOverlayHost() {
 function createOverlay({ fixed = false } = {}) {
     const overlay = document.createElement("div");
     overlay.id = OVERLAY_ID;
-    overlay.setAttribute("role", "status");
-    overlay.setAttribute("aria-live", "polite");
-    overlay.setAttribute("aria-label", "Pruning messages");
 
     if (fixed) {
         overlay.classList.add("long-chat-optimizer-prune-overlay-fixed");
     }
 
-    overlay.innerHTML = `
-        <div class="long-chat-optimizer-prune-card">
-            <div class="long-chat-optimizer-prune-spinner" aria-hidden="true"></div>
-            <div class="long-chat-optimizer-prune-text">
-                <div class="long-chat-optimizer-prune-title">Optimizing chat…</div>
-                <div class="long-chat-optimizer-prune-subtitle">This usually takes a moment.</div>
-            </div>
+    return overlay;
+}
+
+function createOverlayCard() {
+    const card = document.createElement("div");
+    card.id = CARD_ID;
+    card.setAttribute("role", "status");
+    card.setAttribute("aria-live", "polite");
+    card.setAttribute("aria-label", "Clearing old messages");
+
+    card.innerHTML = `
+        <div class="long-chat-optimizer-prune-spinner" aria-hidden="true"></div>
+        <div class="long-chat-optimizer-prune-text">
+            <div class="long-chat-optimizer-prune-title">Clearing old messages…</div>
+            <div class="long-chat-optimizer-prune-subtitle">Keeping your recent chat ready.</div>
         </div>
     `;
 
-    return overlay;
+    return card;
+}
+
+function removeHostMarkerIfDetached() {
+    if (
+        activeOverlayHost instanceof HTMLElement &&
+        !activeOverlayHost.isConnected
+    ) {
+        activeOverlayHost.removeAttribute(HOST_ATTR);
+        activeOverlayHost = null;
+    }
+}
+
+function ensureOverlayMounted() {
+    if (activeOverlayCount <= 0) {
+        return;
+    }
+
+    ensureOverlayStyle();
+    removeHostMarkerIfDetached();
+
+    let overlay = document.getElementById(OVERLAY_ID);
+
+    if (!overlay || !overlay.isConnected) {
+        overlay?.remove();
+
+        const { element: host, fixed } = getOverlayHost();
+
+        activeOverlayHost = host;
+        activeOverlayHost.setAttribute(HOST_ATTR, "true");
+        activeOverlayHost.appendChild(createOverlay({ fixed }));
+    }
+
+    let card = document.getElementById(CARD_ID);
+
+    if (!card || !card.isConnected) {
+        card?.remove();
+        document.body.appendChild(createOverlayCard());
+    }
 }
 
 export function showPruneOverlay() {
     activeOverlayCount += 1;
 
-    ensureOverlayStyle();
-
-    if (document.getElementById(OVERLAY_ID)) {
-        return;
-    }
-
-    const { element: host, fixed } = getOverlayHost();
-
-    activeOverlayHost = host;
-    activeOverlayHost.setAttribute(HOST_ATTR, "true");
-    activeOverlayHost.appendChild(createOverlay({ fixed }));
+    ensureOverlayMounted();
+    startPruneOverlayWatchdog(ensureOverlayMounted);
 }
 
 export function hidePruneOverlay() {
     activeOverlayCount = Math.max(0, activeOverlayCount - 1);
 
     if (activeOverlayCount > 0) {
+        ensureOverlayMounted();
         return;
     }
 
+    stopPruneOverlayWatchdog();
+
     document.getElementById(OVERLAY_ID)?.remove();
+    document.getElementById(CARD_ID)?.remove();
 
     if (activeOverlayHost instanceof HTMLElement) {
         activeOverlayHost.removeAttribute(HOST_ATTR);
@@ -201,7 +251,12 @@ export function hideInitialPruneOverlay(options) {
 export function resetPruneOverlayForTests() {
     activeOverlayCount = 0;
     activeOverlayHost = null;
+
+    stopPruneOverlayWatchdog();
+    resetPruneOverlayWatchdogForTests();
+
     document.getElementById(OVERLAY_ID)?.remove();
+    document.getElementById(CARD_ID)?.remove();
     document.getElementById(STYLE_ID)?.remove();
 
     for (const host of document.querySelectorAll(`[${HOST_ATTR}]`)) {

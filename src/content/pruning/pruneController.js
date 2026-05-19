@@ -42,6 +42,8 @@ export function createPruneController({
     let pendingDeferredAutoPruneLastResult = null;
 
     let removeStorePruneCompletionListener = null;
+    let isInitialPruneOverlayShown = false;
+
     const activeStorePruneRequests = new Map();
 
     function ensureStorePruneCompletionListener() {
@@ -85,13 +87,41 @@ export function createPruneController({
                 });
 
                 if (activeRequest.showOverlay) {
-                    hidePruneOverlay({
+                    hideInitialPrunePendingOverlay({
                         reason: "store-prune-completed",
                         requestId: completedRequestId,
                     });
                 }
             }
         );
+    }
+
+    function showInitialPrunePendingOverlay({
+        reason = "waiting-for-initial-prune",
+    } = {}) {
+        if (isInitialPruneOverlayShown) {
+            return;
+        }
+
+        isInitialPruneOverlayShown = true;
+
+        showPruneOverlay({
+            reason,
+        });
+    }
+
+    function hideInitialPrunePendingOverlay({
+        reason = "initial-prune-complete",
+    } = {}) {
+        if (!isInitialPruneOverlayShown) {
+            return;
+        }
+
+        isInitialPruneOverlayShown = false;
+
+        hidePruneOverlay({
+            reason,
+        });
     }
 
     function trackStorePruneRequest(
@@ -134,7 +164,7 @@ export function createPruneController({
         }
 
         if (showOverlay) {
-            hidePruneOverlay({
+            hideInitialPrunePendingOverlay({
                 reason: result?.reason || reason || "prune-complete",
             });
         }
@@ -228,7 +258,7 @@ export function createPruneController({
             options.showOverlay === true || isInitialPruneReason(reason);
 
         if (showOverlay) {
-            showPruneOverlay({ reason });
+            showInitialPrunePendingOverlay({ reason });
         }
 
         const runPrune = () =>
@@ -263,7 +293,7 @@ export function createPruneController({
             return result;
         } catch (error) {
             if (showOverlay) {
-                hidePruneOverlay({
+                hideInitialPrunePendingOverlay({
                     reason: "prune-error",
                 });
             }
@@ -297,7 +327,11 @@ export function createPruneController({
                             ? "navigation-initial-prune-refresh"
                             : "initial-prune-refresh",
                 }),
-            onPruneStarted: () => {},
+            onPruneStarted: () => {
+                showInitialPrunePendingOverlay({
+                    reason: options.reason || "initial-prune",
+                });
+            },
             onPruneResult: (result) => {
                 latestInitialPruneResult = result;
 
@@ -324,6 +358,12 @@ export function createPruneController({
                     reason: reason || "initial-prune-finished",
                     result: finalResult,
                 });
+
+                if (state.didInitialPrune) {
+                    hideInitialPrunePendingOverlay({
+                        reason: reason || "initial-prune-finished",
+                    });
+                }
             },
         });
 
@@ -467,5 +507,6 @@ export function createPruneController({
         bootstrapInitialPruneFromObservedMutation,
         clearPendingAutoPrune,
         scheduleAutoPrune,
+        showInitialPrunePendingOverlay,
     };
 }

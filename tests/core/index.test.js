@@ -46,6 +46,7 @@ const mockRefs = vi.hoisted(() => ({
     bootstrapInitialPruneFromObservedMutation: vi.fn(),
     clearPendingAutoPrune: vi.fn(),
     scheduleAutoPrune: vi.fn(),
+    showInitialPrunePendingOverlay: vi.fn(),
 }));
 
 vi.mock("../../src/shared/ext.js", () => ({
@@ -224,6 +225,8 @@ function resetMocks() {
             mockRefs.bootstrapInitialPruneFromObservedMutation,
         clearPendingAutoPrune: mockRefs.clearPendingAutoPrune,
         scheduleAutoPrune: mockRefs.scheduleAutoPrune,
+        showInitialPrunePendingOverlay:
+            mockRefs.showInitialPrunePendingOverlay,
     });
 }
 
@@ -399,6 +402,9 @@ describe("core/index", () => {
                 requireConversationTurns: true,
             })
         );
+        expect(mockRefs.showInitialPrunePendingOverlay).toHaveBeenCalledWith({
+            reason: "waiting-for-initial-prune",
+        });
     });
 
     it("waits for conversation turns when an empty container exists during initialization", async () => {
@@ -416,6 +422,9 @@ describe("core/index", () => {
                 requireConversationTurns: true,
             })
         );
+        expect(mockRefs.showInitialPrunePendingOverlay).toHaveBeenCalledWith({
+            reason: "waiting-for-initial-prune",
+        });
     });
 
     it("schedules only maintenance when pruning is disabled at startup", async () => {
@@ -432,12 +441,27 @@ describe("core/index", () => {
 
         expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
         expect(mockRefs.scheduleRefreshPostPruneState).toHaveBeenCalledTimes(1);
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
     });
 
     it("handles reply lifecycle callbacks", async () => {
         await importFreshIndex();
 
+        const state = window.__threadOptimizerState;
         const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        options.onBeforeReplyStarted();
+
+        expect(mockRefs.pruneOldSections).toHaveBeenCalledWith(
+            state.settings.historyKeptExchanges,
+            {
+                reason: "before-send",
+                showOverlay: false,
+                guardComposerCaret: false,
+            }
+        );
 
         options.onReplyStarted();
 
@@ -445,6 +469,7 @@ describe("core/index", () => {
 
         options.onReplySettled();
 
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,

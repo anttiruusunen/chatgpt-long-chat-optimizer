@@ -82,6 +82,14 @@ function isLinkNavigationReason(reason) {
     );
 }
 
+function shouldShowInitialPrunePendingOverlay() {
+    return (
+        state.settings.autoPrune &&
+        state.featureFlags.pruning &&
+        !state.didInitialPrune
+    );
+}
+
 function syncStoreReadOptimizationForLifecycle() {
     syncStoreReadOptimizationToPageWithRetry();
 }
@@ -226,6 +234,12 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
     const POLL_MS = 100;
 
     clearPendingNavigationPrune();
+
+    if (shouldShowInitialPrunePendingOverlay()) {
+        showInitialPrunePendingOverlay({
+            reason: `${reason}:waiting-for-fresh-container`,
+        });
+    }
 
     function attempt() {
         if (generation !== navigationPruneGeneration) {
@@ -428,6 +442,12 @@ function waitForContainerAndInitialPrune(options = {}) {
         ...initialPruneOptions
     } = options;
 
+    if (requireConversationTurns && shouldShowInitialPrunePendingOverlay()) {
+        showInitialPrunePendingOverlay({
+            reason: initialPruneOptions.reason || "waiting-for-initial-prune",
+        });
+    }
+
     return waitForContainerAndInitialPruneBase({
         attachObserverToContainer,
         runInitialPrune: (container) =>
@@ -448,6 +468,7 @@ const {
     bootstrapInitialPruneFromObservedMutation,
     clearPendingAutoPrune,
     scheduleAutoPrune,
+    showInitialPrunePendingOverlay,
 } = pruneController;
 
 configureConversationMaintenance({

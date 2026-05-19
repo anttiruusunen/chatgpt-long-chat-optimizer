@@ -357,7 +357,6 @@ describe("pruneController", () => {
         );
         expect(mockRefs.hideInitialPruneOverlay).toHaveBeenCalledWith({
             reason: "store-prune-completed",
-            requestId: "initial-prune-request",
         });
     });
 });
