@@ -162,6 +162,10 @@ function createEmptyConversationContainer() {
     return document.createElement("main");
 }
 
+function setTestLocation(path = "/c/current-chat") {
+    window.history.replaceState({}, "", path);
+}
+
 async function importFreshIndex() {
     vi.resetModules();
 
@@ -232,6 +236,7 @@ function resetMocks() {
 
 describe("core/index", () => {
     beforeEach(() => {
+        setTestLocation("/c/current-chat");
         document.body.innerHTML = "";
         delete window.__threadOptimizerState;
         resetMocks();
@@ -239,6 +244,7 @@ describe("core/index", () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        setTestLocation("/c/current-chat");
         document.body.innerHTML = "";
         delete window.__threadOptimizerState;
         resetMocks();
@@ -389,7 +395,7 @@ describe("core/index", () => {
         expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalled();
     });
 
-    it("waits for a container when none is attached during initialization", async () => {
+    it("waits for a container when none is attached during initialization for an existing chat URL", async () => {
         mockRefs.ensureObserverAttached.mockReturnValue(false);
         mockRefs.getConversationContainer.mockReturnValue(null);
 
@@ -407,7 +413,7 @@ describe("core/index", () => {
         });
     });
 
-    it("waits for conversation turns when an empty container exists during initialization", async () => {
+    it("waits for conversation turns when an empty container exists during initialization for an existing chat URL", async () => {
         mockRefs.ensureObserverAttached.mockReturnValue(true);
         mockRefs.getConversationContainer.mockReturnValue(
             createEmptyConversationContainer()
@@ -425,6 +431,79 @@ describe("core/index", () => {
         expect(mockRefs.showInitialPrunePendingOverlay).toHaveBeenCalledWith({
             reason: "waiting-for-initial-prune",
         });
+    });
+
+    it("does not show initial prune overlay or wait for turns when opening ChatGPT to a new chat", async () => {
+        setTestLocation("/");
+        mockRefs.ensureObserverAttached.mockReturnValue(false);
+        mockRefs.getConversationContainer.mockReturnValue(null);
+
+        await importFreshIndex();
+
+        expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledWith(
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+    });
+
+    it("does not show initial prune overlay or wait for turns when navigating to New chat", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        state.didInitialPrune = true;
+        state.observedContainer = createReadyConversationContainer();
+
+        mockRefs.showInitialPrunePendingOverlay.mockClear();
+        mockRefs.waitForContainerAndInitialPrune.mockClear();
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledWith(
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
+    });
+
+    it("does not show initial prune overlay or wait for turns when sidebar navigation lands on an empty chat route", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        state.didInitialPrune = true;
+        state.observedContainer = createReadyConversationContainer();
+
+        mockRefs.showInitialPrunePendingOverlay.mockClear();
+        mockRefs.waitForContainerAndInitialPrune.mockClear();
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "sidebar-click",
+            locationKey: "/",
+        });
+
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledWith(
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
     });
 
     it("schedules only maintenance when pruning is disabled at startup", async () => {

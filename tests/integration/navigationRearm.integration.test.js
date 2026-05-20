@@ -406,9 +406,23 @@ describe("navigation rearm integration", () => {
 
             expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
 
-            const container = document.querySelector("main > div > div");
-            appendConversationTurns(container);
+            clearNavigationMocks();
 
+            const recentsLink = document.createElement("a");
+            recentsLink.href = "/c/real-chat-after-new";
+            recentsLink.textContent = "Real chat after new";
+            document.body.appendChild(recentsLink);
+
+            dispatchClick(recentsLink);
+            navigateTo("/c/real-chat-after-new");
+
+            await advanceNavigationDetection();
+
+            expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
+
+            replaceConversationDom({ withTurns: true });
+
+            await advanceFreshContainerPoll();
             await advanceFreshContainerPoll();
 
             expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);

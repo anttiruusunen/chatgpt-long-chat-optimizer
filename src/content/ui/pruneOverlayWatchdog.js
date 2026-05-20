@@ -4,7 +4,19 @@ let overlayWatchdogRepair = null;
 
 const WATCHDOG_INTERVAL_MS = 250;
 
+function canUseDocument() {
+    return (
+        typeof document !== "undefined" &&
+        document.documentElement instanceof Element &&
+        document.body instanceof HTMLElement
+    );
+}
+
 function runRepair() {
+    if (!canUseDocument()) {
+        return;
+    }
+
     if (typeof overlayWatchdogRepair !== "function") {
         return;
     }
@@ -15,13 +27,13 @@ function runRepair() {
 export function startPruneOverlayWatchdog(repair) {
     overlayWatchdogRepair = typeof repair === "function" ? repair : null;
 
-    if (!overlayWatchdogRepair) {
+    if (!overlayWatchdogRepair || !canUseDocument()) {
         return;
     }
 
     runRepair();
 
-    if (!overlayWatchdogObserver) {
+    if (!overlayWatchdogObserver && typeof MutationObserver !== "undefined") {
         overlayWatchdogObserver = new MutationObserver(() => {
             runRepair();
         });

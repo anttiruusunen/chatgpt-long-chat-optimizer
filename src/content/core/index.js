@@ -72,14 +72,60 @@ function containerHasConversationTurns(container) {
     );
 }
 
+function normalizeLocationPath(locationKey = null) {
+    const fallbackPath =
+        typeof window !== "undefined" && window.location
+            ? `${window.location.pathname || "/"}${window.location.search || ""}`
+            : "/";
+
+    const rawLocationKey =
+        typeof locationKey === "string" && locationKey.trim()
+            ? locationKey.trim()
+            : fallbackPath;
+
+    try {
+        const url = new URL(rawLocationKey, window.location.origin);
+        return `${url.pathname || "/"}${url.search || ""}`;
+    } catch {
+        return rawLocationKey;
+    }
+}
+
+function isNewChatNavigationReason(reason) {
+    return reason === "new-chat-click" || reason === "new-chat-click-followup";
+}
+
+function isImmediateNewChatNavigationReason(reason) {
+    return reason === "new-chat-click";
+}
+
+function isNewChatLocationKey(locationKey = null) {
+    const path = normalizeLocationPath(locationKey);
+    return path === "/" || path.startsWith("/?");
+}
+
 function isLinkNavigationReason(reason) {
     return (
         reason === "conversation-link-click" ||
         reason === "conversation-link-click-followup" ||
         reason === "sidebar-click" ||
-        reason === "new-chat-click" ||
-        reason === "new-chat-click-followup"
+        isNewChatNavigationReason(reason)
     );
+}
+
+function hasExplicitLocationKey(locationKey) {
+    return typeof locationKey === "string" && locationKey.trim().length > 0;
+}
+
+function isEmptyChatNavigation(reason, locationKey = null) {
+    return (
+        isImmediateNewChatNavigationReason(reason) ||
+        (hasExplicitLocationKey(locationKey) && isNewChatLocationKey(locationKey))
+    );
+}
+
+function shouldRequireConversationTurnsForInitialPrune(locationKey = null) {
+    return !isNewChatLocationKey(locationKey);
 }
 
 function shouldShowInitialPrunePendingOverlay() {
@@ -120,6 +166,17 @@ function disableStoreReadOptimizationForPage(reason) {
     });
 
     syncStoreReadOptimizationForLifecycle();
+}
+
+function markEmptyChatReadyForPage(reason) {
+    pendingDeferredInitialPrune = false;
+    state.didInitialPrune = true;
+
+    markStoreReadOptimizationReadyForPage(reason);
+
+    debugLog("Index: empty chat lifecycle ready", {
+        reason,
+    });
 }
 
 function trackInitialPruneResult(result) {
@@ -212,12 +269,12 @@ function retryIncompleteInitialPruneAfterReplySettled() {
 }
 
 /**
- * Link/sidebar/new-chat navigation can briefly leave the old conversation
- * container in the DOM, or mount a new empty container before real turns appear.
+ * Link/sidebar navigation can briefly leave the old conversation container in
+ * the DOM, or mount a new empty container before real turns appear.
  *
  * Wait for a fresh container with actual conversation turns before running
- * initial prune. This prevents empty New Chat containers from consuming the
- * initial-prune lifecycle.
+ * initial prune. New/empty chat destinations are excluded because they may
+ * legitimately never have turns.
  */
 function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
     const {
@@ -235,7 +292,10 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 
     clearPendingNavigationPrune();
 
-    if (shouldShowInitialPrunePendingOverlay()) {
+    if (
+        shouldShowInitialPrunePendingOverlay() &&
+        !isEmptyChatNavigation(reason, locationKey)
+    ) {
         showInitialPrunePendingOverlay({
             reason: `${reason}:waiting-for-fresh-container`,
         });
@@ -293,7 +353,9 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
             waitForContainerAndInitialPrune({
                 ...initialPruneOptions,
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
-                requireConversationTurns: true,
+                requireConversationTurns:
+                    shouldRequireConversationTurnsForInitialPrune(locationKey),
+                locationKey,
             });
 
             pendingNavigationPruneTimer = null;
@@ -327,6 +389,14 @@ function shouldSkipDuplicateLinkNavigationRearm(reason, locationKey) {
         return false;
     }
 
+    if (!state.didInitialPrune) {
+        return false;
+    }
+
+    if (isEmptyChatNavigation(reason, locationKey)) {
+        return false;
+    }
+
     if (!locationKey) {
         return false;
     }
@@ -336,7 +406,6 @@ function shouldSkipDuplicateLinkNavigationRearm(reason, locationKey) {
     }
 
     return (
-        state.didInitialPrune &&
         state.observedContainer instanceof Element &&
         state.observedContainer.isConnected
     );
@@ -366,6 +435,23 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
     resetConversationLifecycleForNavigation();
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
+        if (isEmptyChatNavigation(reason, locationKey)) {
+            lastCompletedFreshNavigationLocationKey = null;
+
+            debugLog("Index: completed empty chat navigation without initial prune", {
+                reason,
+                locationKey,
+            });
+
+            waitForContainerAndInitialPrune({
+                locationKey,
+                requireConversationTurns: false,
+            });
+
+            markEmptyChatReadyForPage("empty-chat-navigation");
+            return;
+        }
+
         if (isLinkNavigationReason(reason)) {
             debugLog("Index: rearming initial prune after navigation", {
                 reason,
@@ -402,7 +488,9 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
         } else {
             waitForContainerAndInitialPrune({
                 postPruneRefreshDelayMs: NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS,
-                requireConversationTurns: true,
+                requireConversationTurns:
+                    shouldRequireConversationTurnsForInitialPrune(locationKey),
+                locationKey,
             });
         }
 
@@ -410,7 +498,9 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
     }
 
     if (!hasContainer) {
-        waitForContainerAndInitialPrune();
+        waitForContainerAndInitialPrune({
+            locationKey,
+        });
         return;
     }
 
@@ -439,10 +529,15 @@ function ensureObserverAttached() {
 function waitForContainerAndInitialPrune(options = {}) {
     const {
         requireConversationTurns = false,
+        locationKey = null,
         ...initialPruneOptions
     } = options;
 
-    if (requireConversationTurns && shouldShowInitialPrunePendingOverlay()) {
+    if (
+        requireConversationTurns &&
+        shouldShowInitialPrunePendingOverlay() &&
+        !isNewChatLocationKey(locationKey)
+    ) {
         showInitialPrunePendingOverlay({
             reason: initialPruneOptions.reason || "waiting-for-initial-prune",
         });
@@ -535,24 +630,36 @@ async function initialize() {
     const hasContainer = ensureObserverAttached();
     const container = hasContainer ? getConversationContainer() : null;
     const hasTurns = containerHasConversationTurns(container);
+    const initialLocationKey = normalizeLocationPath();
 
     debugLog("Index: initialize", {
         settings: state.settings,
         featureFlags: state.featureFlags,
         hasContainer,
         hasTurns,
+        locationKey: initialLocationKey,
     });
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (hasContainer && hasTurns) {
             runInitialPruneWithDeferredTracking(container);
         } else {
+            const requireConversationTurns =
+                shouldRequireConversationTurnsForInitialPrune(initialLocationKey);
+
             waitForContainerAndInitialPrune({
-                requireConversationTurns: true,
+                requireConversationTurns,
+                locationKey: initialLocationKey,
             });
+
+            if (!requireConversationTurns) {
+                markEmptyChatReadyForPage("empty-chat-initialize");
+            }
         }
     } else if (!hasContainer) {
-        waitForContainerAndInitialPrune();
+        waitForContainerAndInitialPrune({
+            locationKey: initialLocationKey,
+        });
     } else {
         scheduleRefreshPostPruneState();
     }
@@ -657,13 +764,22 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (!state.didInitialPrune) {
             const container = getConversationContainer();
+            const locationKey = normalizeLocationPath();
 
             if (container && containerHasConversationTurns(container)) {
                 runInitialPruneWithDeferredTracking(container);
             } else {
+                const requireConversationTurns =
+                    shouldRequireConversationTurnsForInitialPrune(locationKey);
+
                 waitForContainerAndInitialPrune({
-                    requireConversationTurns: true,
+                    requireConversationTurns,
+                    locationKey,
                 });
+
+                if (!requireConversationTurns) {
+                    markEmptyChatReadyForPage("empty-chat-storage-changed");
+                }
             }
         } else {
             scheduleAutoPrune(
