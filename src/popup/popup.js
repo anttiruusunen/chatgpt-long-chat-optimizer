@@ -30,6 +30,7 @@ const elements = {
 
 let statusTimer = null;
 let pendingSaveTimer = null;
+let pendingSavePromise = null;
 
 function assertRequiredElements() {
     const missing = Object.entries(elements)
@@ -215,12 +216,6 @@ function collectSettingsFromForm() {
     };
 }
 
-/**
- * Saves settings to extension storage, then best-effort notifies the current tab.
- *
- * Storage remains the source of truth; the runtime message makes the active page
- * react immediately without requiring a reload.
- */
 async function saveSettings() {
     normalizeHistoryKeptExchangesField();
 
@@ -260,16 +255,35 @@ function clearPendingSettingsSave() {
     }
 }
 
+function runSaveSettingsSafely() {
+    pendingSavePromise = Promise.resolve(saveSettings())
+        .catch((error) => {
+            handlePopupError(error);
+        })
+        .finally(() => {
+            pendingSavePromise = null;
+        });
+
+    return pendingSavePromise;
+}
+
 function scheduleSettingsSave() {
     clearPendingSettingsSave();
 
     pendingSaveTimer = setTimeout(() => {
         pendingSaveTimer = null;
-
-        Promise.resolve(saveSettings()).catch((error) => {
-            handlePopupError(error);
-        });
+        runSaveSettingsSafely();
     }, SAVE_SETTINGS_DEBOUNCE_MS);
+}
+
+function flushPendingSettingsSave() {
+    if (!pendingSaveTimer) {
+        return pendingSavePromise;
+    }
+
+    clearPendingSettingsSave();
+
+    return runSaveSettingsSafely();
 }
 
 async function sendDebugAction(action, successMessage) {
@@ -303,6 +317,26 @@ function bindInfoButtons() {
     });
 }
 
+function bindCloseFlushEvents() {
+    window.addEventListener("blur", () => {
+        flushPendingSettingsSave();
+    });
+
+    window.addEventListener("pagehide", () => {
+        flushPendingSettingsSave();
+    });
+
+    window.addEventListener("beforeunload", () => {
+        flushPendingSettingsSave();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            flushPendingSettingsSave();
+        }
+    });
+}
+
 function bindEvents() {
     bindEvent(elements.historyKeptExchanges, "input", () => {
         updateFieldStates();
@@ -312,6 +346,10 @@ function bindEvents() {
     bindEvent(elements.historyKeptExchanges, "change", () => {
         normalizeHistoryKeptExchangesField();
         scheduleSettingsSave();
+    });
+
+    bindEvent(elements.historyKeptExchanges, "blur", () => {
+        flushPendingSettingsSave();
     });
 
     bindEvent(elements.enablePruning, "change", scheduleSettingsSave);
@@ -342,6 +380,7 @@ function bindEvents() {
     );
 
     bindInfoButtons();
+    bindCloseFlushEvents();
 }
 
 async function init() {

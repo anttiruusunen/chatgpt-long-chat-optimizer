@@ -8,6 +8,7 @@ const OVERLAY_ID = "long-chat-optimizer-prune-overlay";
 const CARD_ID = "long-chat-optimizer-prune-overlay-card";
 const STYLE_ID = "long-chat-optimizer-prune-overlay-style";
 const HOST_ATTR = "data-long-chat-optimizer-prune-overlay-host";
+const HIDE_BUTTON_CLASS = "long-chat-optimizer-prune-hide";
 
 let activeOverlayCount = 0;
 let activeOverlayHost = null;
@@ -48,7 +49,7 @@ function ensureOverlayStyle() {
             align-items: center;
             gap: 12px;
             width: max-content;
-            max-width: min(340px, calc(100vw - 32px));
+            max-width: min(380px, calc(100vw - 32px));
             padding: 14px 16px;
             border-radius: 14px;
             background: rgba(255, 255, 255, 0.98);
@@ -63,7 +64,7 @@ function ensureOverlayStyle() {
                 "Segoe UI",
                 sans-serif;
             transform: translateX(-50%);
-            pointer-events: none;
+            pointer-events: auto;
         }
 
         #${CARD_ID} .long-chat-optimizer-prune-spinner {
@@ -80,6 +81,7 @@ function ensureOverlayStyle() {
             display: flex;
             flex-direction: column;
             gap: 2px;
+            min-width: 0;
             line-height: 1.25;
         }
 
@@ -91,6 +93,29 @@ function ensureOverlayStyle() {
         #${CARD_ID} .long-chat-optimizer-prune-subtitle {
             font-size: 12px;
             color: #4b5563;
+        }
+
+        #${CARD_ID} .${HIDE_BUTTON_CLASS} {
+            flex: 0 0 auto;
+            margin-left: 4px;
+            padding: 5px 8px;
+            border: 1px solid rgba(15, 23, 42, 0.14);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.86);
+            color: #374151;
+            font: inherit;
+            font-size: 12px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        #${CARD_ID} .${HIDE_BUTTON_CLASS}:hover {
+            background: rgba(243, 244, 246, 0.96);
+        }
+
+        #${CARD_ID} .${HIDE_BUTTON_CLASS}:focus-visible {
+            outline: 2px solid #2563eb;
+            outline-offset: 2px;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -108,6 +133,16 @@ function ensureOverlayStyle() {
 
             #${CARD_ID} .long-chat-optimizer-prune-subtitle {
                 color: #d1d5db;
+            }
+
+            #${CARD_ID} .${HIDE_BUTTON_CLASS} {
+                border-color: rgba(255, 255, 255, 0.14);
+                background: rgba(31, 41, 55, 0.86);
+                color: #f3f4f6;
+            }
+
+            #${CARD_ID} .${HIDE_BUTTON_CLASS}:hover {
+                background: rgba(55, 65, 81, 0.96);
             }
         }
 
@@ -168,9 +203,23 @@ function createOverlayCard() {
         <div class="long-chat-optimizer-prune-spinner" aria-hidden="true"></div>
         <div class="long-chat-optimizer-prune-text">
             <div class="long-chat-optimizer-prune-title">Clearing old messages…</div>
-            <div class="long-chat-optimizer-prune-subtitle">Keeping your recent chat ready.</div>
+            <div class="long-chat-optimizer-prune-subtitle">You can hide this notice. Cleanup will continue.</div>
         </div>
+        <button
+            class="${HIDE_BUTTON_CLASS}"
+            type="button"
+            aria-label="Hide clearing old messages notice"
+        >Hide</button>
     `;
+
+    card
+        .querySelector(`.${HIDE_BUTTON_CLASS}`)
+        ?.addEventListener("click", () => {
+            hidePruneOverlay({
+                force: true,
+                reason: "user-hidden",
+            });
+        });
 
     return card;
 }
@@ -220,8 +269,12 @@ export function showPruneOverlay() {
     startPruneOverlayWatchdog(ensureOverlayMounted);
 }
 
-export function hidePruneOverlay() {
-    activeOverlayCount = Math.max(0, activeOverlayCount - 1);
+export function hidePruneOverlay(options = {}) {
+    if (options.force) {
+        activeOverlayCount = 0;
+    } else {
+        activeOverlayCount = Math.max(0, activeOverlayCount - 1);
+    }
 
     if (activeOverlayCount > 0) {
         ensureOverlayMounted();

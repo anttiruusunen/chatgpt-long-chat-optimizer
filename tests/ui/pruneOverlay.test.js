@@ -32,6 +32,7 @@ describe("prune overlay", () => {
         expect(overlay).toBeTruthy();
         expect(card).toBeTruthy();
         expect(card.textContent).toContain("Clearing old messages");
+        expect(card.textContent).toContain("Hide");
         expect(
             document.getElementById("long-chat-optimizer-prune-overlay-style")
         ).toBeTruthy();
@@ -94,5 +95,50 @@ describe("prune overlay", () => {
         expect(
             document.getElementById("long-chat-optimizer-prune-overlay-card")
         ).toBeNull();
+    });
+
+    it("lets the user hide an active overlay without waiting for prune completion", async () => {
+        showInitialPruneOverlay();
+
+        document
+            .querySelector(
+                "#long-chat-optimizer-prune-overlay-card .long-chat-optimizer-prune-hide"
+            )
+            .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeNull();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeNull();
+
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeNull();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeNull();
+    });
+
+    it("can show the overlay again after the user hides a previous one", () => {
+        showInitialPruneOverlay();
+
+        document
+            .querySelector(
+                "#long-chat-optimizer-prune-overlay-card .long-chat-optimizer-prune-hide"
+            )
+            .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+        showInitialPruneOverlay();
+
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeTruthy();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeTruthy();
     });
 });

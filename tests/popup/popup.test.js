@@ -703,4 +703,150 @@ describe("popup feature flags", () => {
             enableCodeBlockScrollbars: false,
         });
     });
+
+    it("flushes pending history input save when the popup loses focus", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("7");
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+
+        window.dispatchEvent(new Event("blur"));
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledTimes(1);
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 7,
+            autoPrune: true,
+        });
+    });
+
+    it("flushes pending history input save on pagehide", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("8");
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+
+        window.dispatchEvent(new Event("pagehide"));
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 8,
+            autoPrune: true,
+        });
+    });
+
+    it("flushes pending history input save on beforeunload", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("9");
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+
+        window.dispatchEvent(new Event("beforeunload"));
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 9,
+            autoPrune: true,
+        });
+    });
+
+    it("flushes pending history input save when the history field blurs", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("11");
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+
+        document
+            .getElementById("historyKeptExchanges")
+            .dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 11,
+            autoPrune: true,
+        });
+    });
+
+    it("normalizes pending invalid history input when the popup closes", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("not-a-number");
+
+        await flushAsyncWork();
+
+        window.dispatchEvent(new Event("blur"));
+
+        await flushAsyncWork();
+
+        expect(document.getElementById("historyKeptExchanges").value).toBe(
+            String(DEFAULT_SETTINGS.historyKeptExchanges)
+        );
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: DEFAULT_SETTINGS.historyKeptExchanges,
+            autoPrune: true,
+        });
+    });
+
+    it("does not save again on close when there is no pending debounced change", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 3,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        window.dispatchEvent(new Event("blur"));
+
+        await flushAsyncWork();
+
+        expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
+        expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
+    });
 });
