@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ChatGPT Long Chat Optimizer",
   "short_name": "Long Chat Optimizer",
-  "description": "Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.",
+  "description": "Reduce slowdown in long ChatGPT conversations by managing older visible chat turns locally.",
   "version": "1.0.0",
   "permissions": [
     "storage"

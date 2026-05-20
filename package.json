@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-long-chat-optimizer",
-  "description": "Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.",
+  "description": "Reduce slowdown in long ChatGPT conversations by managing older visible chat turns locally.",
   "version": "1.0.0",
   "type": "module",
   "private": true,
