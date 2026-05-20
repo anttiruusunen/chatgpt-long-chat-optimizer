@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-long-chat-optimizer",
   "description": "Reduce slowdown in long ChatGPT conversations by managing older visible chat turns locally.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "private": true,
   "scripts": {
