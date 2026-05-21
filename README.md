@@ -1,18 +1,19 @@
 # ChatGPT Long Chat Optimizer
 
-Speed up long ChatGPT conversations by pruning old chat turns and reducing page slowdown.
+Speed up long ChatGPT conversations by hiding older visible chat turns from the current page and reducing page slowdown.
 
 This extension is an independent third-party project and is not affiliated with OpenAI.
 
+Older turns are hidden from the currently loaded page, not deleted from your saved ChatGPT conversation. To show more older turns again, increase “Recent exchanges kept” or turn off the optimization.
+
 ## Features
 
-- Store-native hard pruning of old conversation history
-- CSS-driven offscreen rendering optimization
-- Streaming-aware pruning deferral
-- Pre-send pruning to avoid composer caret jumps while typing
-- Prune overlay with a user-hide escape hatch
-- Long prompt and code block scrollbar quality-of-life styles
-- Popup settings for pruning, history limit, offscreen optimization, debug logging, store-read optimization, code scrollbars, and user-message clamping
+- Hide older visible chat turns from the current page to reduce slowdown
+- Automatically hide older visible turns when existing long chats load
+- Pre-send optimization to avoid composer caret jumps while typing
+- Optional browser-native offscreen rendering optimization
+- Optional scrollbars for long prompts and large code blocks
+- Popup settings for recent exchanges kept, message hiding, scrollbars, and advanced performance options
 
 ---
 
@@ -222,15 +223,15 @@ npm run export:code
 
 - `src/content/core/index.js` → main content-script orchestrator
 - `src/content/core/navigation.js` → ChatGPT route/navigation watcher
-- `src/content/pruning/prune.js` → store-native pruning request flow
-- `src/content/pruning/pruneController.js` → prune scheduling and lifecycle wrapper
-- `src/content/ui/pruneOverlay.js` → visible pruning overlay and Hide action
-- `src/content/ui/pruneOverlayWatchdog.js` → keeps active prune overlay mounted if the host app removes it
+- `src/content/pruning/prune.js` → store-native message hiding request flow
+- `src/content/pruning/pruneController.js` → message hiding scheduling and lifecycle wrapper
+- `src/content/ui/pruneOverlay.js` → visible message-hiding notice and Hide action
+- `src/content/ui/pruneOverlayWatchdog.js` → keeps the active message-hiding notice mounted if the host app removes it
 - `src/content/offscreen/offscreen.js` → section visibility optimization
 - `src/content/streaming/replyTiming.js` → streaming-state detection
 - `src/content/streaming/assistantSignals.js` → assistant/composer state helpers
 - `src/content/ui/qolStyles.js` → quality-of-life CSS rules
-- `src/page/chatStorePageBridge.js` → page-context store optimization and pruning bridge
+- `src/page/chatStorePageBridge.js` → page-context store optimization and message-hiding bridge
 - `src/popup/popup.js` → extension popup settings UI
 - `scripts/build.cjs` → browser-target build script
 - `scripts/package-release.cjs` → release zip packaging

@@ -197,18 +197,18 @@ function createOverlayCard() {
     card.id = CARD_ID;
     card.setAttribute("role", "status");
     card.setAttribute("aria-live", "polite");
-    card.setAttribute("aria-label", "Clearing old messages");
+    card.setAttribute("aria-label", "Hiding older messages");
 
     card.innerHTML = `
         <div class="long-chat-optimizer-prune-spinner" aria-hidden="true"></div>
         <div class="long-chat-optimizer-prune-text">
-            <div class="long-chat-optimizer-prune-title">Clearing old messages…</div>
-            <div class="long-chat-optimizer-prune-subtitle">You can hide this notice. Cleanup will continue.</div>
+            <div class="long-chat-optimizer-prune-title">Hiding older messages…</div>
+            <div class="long-chat-optimizer-prune-subtitle">Older turns are hidden from this page, not deleted from your saved chat.</div>
         </div>
         <button
             class="${HIDE_BUTTON_CLASS}"
             type="button"
-            aria-label="Hide clearing old messages notice"
+            aria-label="Dismiss hiding older messages notice"
         >Hide</button>
     `;
 

@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-long-chat-optimizer",
-  "description": "Reduce slowdown in long ChatGPT conversations by managing older visible chat turns locally.",
+  "description": "Reduce slowdown in long ChatGPT conversations by hiding older visible chat turns from the current page.",
   "version": "1.0.1",
   "type": "module",
   "private": true,
