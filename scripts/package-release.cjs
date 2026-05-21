@@ -14,6 +14,14 @@ function getArgValue(name, fallback = null) {
     return arg ? arg.slice(prefix.length) : fallback;
 }
 
+function resolveFromRoot(value, fallback) {
+    if (!value) {
+        return fallback;
+    }
+
+    return path.isAbsolute(value) ? value : path.join(rootDir, value);
+}
+
 function walkFiles(dir, baseDir = dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     const files = [];
@@ -69,9 +77,14 @@ function assertBuiltExtension(target, distTargetDir) {
     }
 }
 
-function packageTarget(target, outputOverride = null) {
-    const distTargetDir = path.join(rootDir, "dist", target);
-    const releaseDir = path.join(rootDir, "release");
+function packageTarget(target, options = {}) {
+    const {
+        distRoot = path.join(rootDir, "dist"),
+        releaseDir = path.join(rootDir, "release"),
+        outputOverride = null,
+    } = options;
+
+    const distTargetDir = path.join(distRoot, target);
     const outputPath =
         outputOverride ||
         path.join(
@@ -109,6 +122,11 @@ function packageTarget(target, outputOverride = null) {
 
 const requestedTarget = getArgValue("--target", "all");
 const outputOverride = getArgValue("--out", null);
+const distRoot = resolveFromRoot(getArgValue("--dist-dir", null), path.join(rootDir, "dist"));
+const releaseDir = resolveFromRoot(
+    getArgValue("--release-dir", null),
+    path.join(rootDir, "release")
+);
 const targets = resolveBuildTargets(requestedTarget);
 
 if (outputOverride && targets.length > 1) {
@@ -116,5 +134,9 @@ if (outputOverride && targets.length > 1) {
 }
 
 for (const target of targets) {
-    packageTarget(target, outputOverride);
+    packageTarget(target, {
+        distRoot,
+        releaseDir,
+        outputOverride,
+    });
 }

@@ -19,6 +19,14 @@ function hasArg(name) {
     return process.argv.includes(name);
 }
 
+function resolveFromRoot(value, fallback) {
+    if (!value) {
+        return fallback;
+    }
+
+    return path.isAbsolute(value) ? value : path.join(rootDir, value);
+}
+
 function fail(message, details = []) {
     const renderedDetails = details.length
         ? `\n${details.map((item) => `- ${item}`).join("\n")}`
@@ -27,12 +35,11 @@ function fail(message, details = []) {
     throw new Error(`${message}${renderedDetails}`);
 }
 
-function getZipPathForTarget(target, zipOverride = null) {
+function getZipPathForTarget(target, releaseDir, zipOverride = null) {
     return (
         zipOverride ||
         path.join(
-            rootDir,
-            "release",
+            releaseDir,
             `${packageJson.name}-${target}-v${packageJson.version}.zip`
         )
     );
@@ -80,6 +87,9 @@ function verifyZipForTarget(target, zipPath, { allowSourceMaps = false } = {}) {
         /^release\//,
         /^\.git\//,
         /^\.github\//,
+        /^icons\/icon-256\.png$/i,
+        /^icons\/icon-512\.png$/i,
+        /^icons\/.*(?:256|512).*\.png$/i,
         /(^|\/)\.DS_Store$/,
         /(^|\/)Thumbs\.db$/,
         /(^|\/)package\.json$/,
@@ -193,6 +203,10 @@ function verifyZipForTarget(target, zipPath, { allowSourceMaps = false } = {}) {
 
 const requestedTarget = getArgValue("--target", "all");
 const zipOverride = getArgValue("--zip", null);
+const releaseDir = resolveFromRoot(
+    getArgValue("--release-dir", null),
+    path.join(rootDir, "release")
+);
 const allowSourceMaps = hasArg("--allow-source-maps");
 const targets = resolveBuildTargets(requestedTarget);
 
@@ -201,7 +215,7 @@ if (zipOverride && targets.length > 1) {
 }
 
 for (const target of targets) {
-    verifyZipForTarget(target, getZipPathForTarget(target, zipOverride), {
+    verifyZipForTarget(target, getZipPathForTarget(target, releaseDir, zipOverride), {
         allowSourceMaps,
     });
 }
