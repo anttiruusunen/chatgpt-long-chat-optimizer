@@ -31,7 +31,10 @@ describe("prune overlay", () => {
 
         expect(overlay).toBeTruthy();
         expect(card).toBeTruthy();
-        expect(card.textContent).toContain("Clearing old messages");
+        expect(card.textContent).toContain("Hiding older messages");
+        expect(card.textContent).toContain(
+            "Older turns are hidden from this page, not deleted from your saved chat."
+        );
         expect(card.textContent).toContain("Hide");
         expect(
             document.getElementById("long-chat-optimizer-prune-overlay-style")
@@ -59,7 +62,7 @@ describe("prune overlay", () => {
 
         expect(overlay).toBeTruthy();
         expect(card).toBeTruthy();
-        expect(card.textContent).toContain("Clearing old messages");
+        expect(card.textContent).toContain("Hiding older messages");
     });
 
     it("hides the overlay when pruning completes", () => {
