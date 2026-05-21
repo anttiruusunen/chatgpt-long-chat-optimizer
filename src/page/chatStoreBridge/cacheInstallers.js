@@ -172,6 +172,20 @@ function isSafeForExistingNodeStableCache(node) {
     return role === "user";
 }
 
+function isSafeForGetNodeByIdOrMessageIdCache(node) {
+    if (!node) {
+        return false;
+    }
+
+    if (isLiveOrAsyncNode(node)) {
+        return false;
+    }
+
+    const role = getNodeRole(node);
+
+    return role === "user";
+}
+
 export const cacheInstallerMethods = {
     ensureNodeObjectCache() {
         const store = requireStore(this);
@@ -549,14 +563,9 @@ export const cacheInstallerMethods = {
             if (!id) return node ?? null;
 
             if (!node?.id) {
-                aliasCache.set(id, null);
-
                 if (ENABLE_CACHE_PROFILING) {
-                    stats.writes += 1;
                     stats.nullWrites += 1;
                 }
-
-                updateCachedCount(stats, aliasCache.cache);
 
                 return null;
             }
@@ -607,7 +616,7 @@ export const cacheInstallerMethods = {
 
                     const result = original.call(store, id) ?? null;
 
-                    if (readNodeStatus(result) === "in_progress") {
+                    if (!isSafeForGetNodeByIdOrMessageIdCache(result)) {
                         if (ENABLE_CACHE_PROFILING) stats.inProgressBypasses += 1;
                         return result;
                     }
