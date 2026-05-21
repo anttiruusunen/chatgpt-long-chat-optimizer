@@ -126,6 +126,52 @@ function readNodeStatus(node) {
     return node?.message?.status ?? node?.status ?? null;
 }
 
+function getNodeMessage(node) {
+    return node?.message && typeof node.message === "object"
+        ? node.message
+        : node;
+}
+
+function getNodeRole(node) {
+    const message = getNodeMessage(node);
+    return message?.author?.role ?? message?.role ?? node?.author?.role ?? null;
+}
+
+function getNodeMetadata(node) {
+    const message = getNodeMessage(node);
+    return message?.metadata ?? node?.metadata ?? {};
+}
+
+function isLiveOrAsyncNode(node) {
+    const message = getNodeMessage(node);
+    const status = message?.status ?? node?.status ?? null;
+    const metadata = getNodeMetadata(node);
+
+    return (
+        status === "in_progress" ||
+        Boolean(metadata.is_loading_message) ||
+        Boolean(metadata.async_task_id) ||
+        Boolean(metadata.async_completion_id)
+    );
+}
+
+function isSafeForExistingNodeStableCache(node) {
+    if (!node) {
+        return false;
+    }
+
+    if (isLiveOrAsyncNode(node)) {
+        return false;
+    }
+
+    const role = getNodeRole(node);
+
+    // Conservative: only cache user turns for now.
+    // Assistant/tool/system nodes can mutate after first appearing,
+    // especially image-generation and async tool responses.
+    return role === "user";
+}
+
 export const cacheInstallerMethods = {
     ensureNodeObjectCache() {
         const store = requireStore(this);
@@ -387,10 +433,7 @@ export const cacheInstallerMethods = {
 
                     const result = original.call(store, id) ?? null;
 
-                    if (
-                        result !== null &&
-                        readNodeStatus(result) !== "in_progress"
-                    ) {
+                    if (isSafeForExistingNodeStableCache(result)) {
                         set(id, result);
                     }
 
