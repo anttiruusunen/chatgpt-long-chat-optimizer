@@ -87,6 +87,15 @@ function syncPageBridgeRuntimeState() {
         ),
     });
 
+    postToPageBridge("thread-optimizer:set-initial-load-hiding", {
+        enabled: state.featureFlags.pruning === true,
+        historyKeptExchanges: getSafeHistoryKeptExchanges(
+            state.settings.historyKeptExchanges,
+            1
+        ),
+        debug: state.debugLoggingEnabled === true,
+    });
+
     postToPageBridge("thread-optimizer:set-store-read-optimization", {
         enabled: state.featureFlags.storeReadOptimization,
         debug: state.debugLoggingEnabled,

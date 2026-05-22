@@ -1,6 +1,18 @@
+import { DEFAULT_SETTINGS } from "../../shared/settingsDefaults.js";
+import { storageSyncGet } from "../../shared/ext.js";
+
 const PAGE_SCRIPT_PATH = "page/chatStorePageBridge.js";
 const PAGE_SCRIPT_ID = "thread-optimizer-chat-store-page-bridge-script";
 const PAGE_BRIDGE_TOKEN_ATTR = "data-thread-optimizer-chat-store-page-bridge-token";
+
+const EARLY_INITIAL_LOAD_HIDING_SETTINGS_ATTR =
+    "data-thread-optimizer-initial-load-hiding-settings";
+const EARLY_INITIAL_LOAD_HIDING_SETTINGS_EVENT =
+    "thread-optimizer:initial-load-hiding-settings";
+const EARLY_SETTINGS_SYNC_RETRIES = 40;
+const EARLY_SETTINGS_SYNC_RETRY_DELAY_MS = 50;
+
+
 
 const IS_DEV_BUILD = typeof __DEV__ !== "undefined" && __DEV__ === true;
 
@@ -30,6 +42,108 @@ function createBridgeToken() {
     return Array.from(bytes, (byte) =>
         byte.toString(16).padStart(2, "0")
     ).join("");
+}
+
+function normalizePositiveInt(value, fallback) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+
+    const rounded = Math.floor(number);
+
+    return rounded >= 1 ? rounded : fallback;
+}
+
+function normalizeInitialLoadHidingSettings(settings = {}) {
+    return {
+        enabled: Boolean(settings.enablePruning),
+        historyKeptExchanges: normalizePositiveInt(
+            settings.historyKeptExchanges,
+            DEFAULT_SETTINGS.historyKeptExchanges
+        ),
+        debug: Boolean(settings.enableDebugLogging),
+    };
+}
+
+async function loadInitialLoadHidingSettings() {
+    try {
+        const stored = await storageSyncGet(DEFAULT_SETTINGS);
+
+        return normalizeInitialLoadHidingSettings(stored);
+    } catch (error) {
+        devWarn(
+            "[Long Chat Optimizer] failed to load early initial-load hiding settings; sending disabled fallback",
+            error
+        );
+
+        return {
+            enabled: false,
+            historyKeptExchanges: DEFAULT_SETTINGS.historyKeptExchanges,
+            debug: false,
+        };
+    }
+}
+
+let earlyInitialLoadHidingSettingsSyncStarted = false;
+
+function postInitialLoadHidingSettings(settings) {
+    if (
+        typeof document === "undefined" ||
+        !document.documentElement ||
+        typeof document.dispatchEvent !== "function"
+    ) {
+        return false;
+    }
+
+    const root = document.documentElement;
+
+    root.setAttribute(
+        EARLY_INITIAL_LOAD_HIDING_SETTINGS_ATTR,
+        JSON.stringify({
+            enabled: Boolean(settings.enabled),
+            historyKeptExchanges: settings.historyKeptExchanges,
+            debug: Boolean(settings.debug),
+        })
+    );
+
+    document.dispatchEvent(
+        new Event(EARLY_INITIAL_LOAD_HIDING_SETTINGS_EVENT)
+    );
+
+    return true;
+}
+
+async function syncInitialLoadHidingSettingsEarly() {
+    if (earlyInitialLoadHidingSettingsSyncStarted) {
+        return;
+    }
+
+    earlyInitialLoadHidingSettingsSyncStarted = true;
+
+    const settings = await loadInitialLoadHidingSettings();
+
+    let attempts = 0;
+
+    function postRepeatedly() {
+        const posted = postInitialLoadHidingSettings(settings);
+
+        if (!posted) {
+            return;
+        }
+
+        attempts += 1;
+
+        if (attempts < EARLY_SETTINGS_SYNC_RETRIES) {
+            window.setTimeout(
+                postRepeatedly,
+                EARLY_SETTINGS_SYNC_RETRY_DELAY_MS
+            );
+        }
+    }
+
+    postRepeatedly();
 }
 
 /**
@@ -83,10 +197,12 @@ function injectBridge(doc = document) {
             window.THREAD_OPTIMIZER_BRIDGE_TOKEN
         );
 
+
         (doc.head || doc.documentElement).appendChild(script);
 
         script.onload = () => {
             window.__threadOptimizerChatStoreBridge.__installed = true;
+            syncInitialLoadHidingSettingsEarly();
         };
 
         return true;
@@ -97,13 +213,19 @@ function injectBridge(doc = document) {
 }
 
 /**
- * Ensure injection happens once DOM is ready.
+ * Inject as early as possible.
+ *
+ * The page bridge installs a dormant fetch interceptor immediately. The early
+ * settings sync below wakes it up only after the real popup settings have been
+ * loaded from extension storage.
  */
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => injectBridge());
-} else {
-    injectBridge();
+if (!injectBridge() && document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => injectBridge(), {
+        once: true,
+    });
 }
+
+syncInitialLoadHidingSettingsEarly();
 
 /**
  * Helpers used by other modules (e.g. bridge client)

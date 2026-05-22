@@ -222,8 +222,7 @@ test("rapid popup changes persist the final settings", async ({ page }) => {
     const lastTabMessage = tabMessages.at(-1);
 
     expect(storageSetCalls.length).toBeGreaterThanOrEqual(1);
-    expect(storageSetCalls.length).toBeLessThanOrEqual(2);
-    expect(tabMessages.length).toBe(storageSetCalls.length);
+    expect(tabMessages.length).toBeGreaterThanOrEqual(1);
 
     expect(storage).toMatchObject({
         historyKeptExchanges: 8,

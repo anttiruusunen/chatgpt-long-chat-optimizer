@@ -238,4 +238,51 @@ describe("pageBridgeSync", () => {
             debug: true,
         });
     });
+    it("sends initial-load hiding state together with pruning state", async () => {
+        const { stateModule, pageBridgeSyncModule } = await importFreshModules();
+        const { state } = stateModule;
+        const { syncPruningStateToPageBridge } = pageBridgeSyncModule;
+
+        installPageBridge();
+
+        state.featureFlags.pruning = true;
+        state.settings.historyKeptExchanges = 5;
+        state.debugLoggingEnabled = true;
+
+        syncPruningStateToPageBridge();
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-pruning-state",
+            enabled: true,
+            historyKeptExchanges: 5,
+        });
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-initial-load-hiding",
+            enabled: true,
+            historyKeptExchanges: 5,
+            debug: true,
+        });
+    });
+
+    it("can sync only initial-load hiding state to the page bridge", async () => {
+        const { stateModule, pageBridgeSyncModule } = await importFreshModules();
+        const { state } = stateModule;
+        const { syncInitialLoadHidingToPageBridge } = pageBridgeSyncModule;
+
+        installPageBridge();
+
+        state.featureFlags.pruning = false;
+        state.settings.historyKeptExchanges = 9;
+        state.debugLoggingEnabled = true;
+
+        syncInitialLoadHidingToPageBridge();
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-initial-load-hiding",
+            enabled: false,
+            historyKeptExchanges: 9,
+            debug: true,
+        });
+    });
+
 });

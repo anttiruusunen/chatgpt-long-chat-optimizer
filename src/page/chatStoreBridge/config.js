@@ -73,6 +73,7 @@ export const MESSAGE_TYPES = new Set([
     "thread-optimizer:prune-store-history",
     "thread-optimizer:log-store-performance",
     "thread-optimizer:set-store-read-optimization",
+    "thread-optimizer:set-initial-load-hiding",
     "thread-optimizer:visible-messages-ready",
 ]);
 

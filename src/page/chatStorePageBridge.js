@@ -75,11 +75,60 @@ import {
     cacheInstallerMethods,
 } from "./chatStoreBridge/cacheInstallers.js";
 
+import {
+    getInitialLoadHidingState,
+    installInitialLoadHiding,
+    setInitialLoadHidingState,
+} from "./chatStoreBridge/initialLoadHiding.js";
+
 const ENABLE_DEV_DIAGNOSTICS =
     typeof __DEV__ !== "undefined" && __DEV__ === true;
 
 const RECORD_SOURCE = "thread-optimizer";
 const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
+
+const EARLY_INITIAL_LOAD_HIDING_SETTINGS_ATTR =
+    "data-thread-optimizer-initial-load-hiding-settings";
+const EARLY_INITIAL_LOAD_HIDING_SETTINGS_EVENT =
+    "thread-optimizer:initial-load-hiding-settings";
+
+
+
+function normalizeInitialLoadHistoryKeptExchanges(value, fallback = 1) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+
+    return Math.max(1, Math.floor(number));
+}
+
+function readInitialLoadHidingSettingsFromDom() {
+    const raw = document.documentElement?.getAttribute(
+        EARLY_INITIAL_LOAD_HIDING_SETTINGS_ATTR
+    );
+
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        const historyKeptExchanges = normalizeInitialLoadHistoryKeptExchanges(
+            parsed?.historyKeptExchanges,
+            1
+        );
+
+        return {
+            enabled: Boolean(parsed?.enabled),
+            historyKeptExchanges,
+            debug: Boolean(parsed?.debug),
+        };
+    } catch {
+        return null;
+    }
+}
 
 (() => {
     const BRIDGE_TOKEN = getBridgeTokenFromCurrentScript();
@@ -96,6 +145,12 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
     if (window[GLOBAL_KEY]?.__installed) {
         return;
     }
+
+    installInitialLoadHiding({
+        enabled: false,
+        historyKeptExchanges: 1,
+        debug: ENABLE_DEBUG,
+    });
 
     function postStorePruneCompleted({
         requestId = null,
@@ -246,6 +301,23 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
                 };
             }
 
+            case "thread-optimizer:set-initial-load-hiding": {
+                const historyKeptExchanges = Number(data.historyKeptExchanges);
+
+                return {
+                    ok: true,
+                    value: {
+                        enabled: Boolean(data.enabled),
+                        debug: Boolean(data.debug),
+                        historyKeptExchanges:
+                            Number.isFinite(historyKeptExchanges) &&
+                            historyKeptExchanges >= 1
+                                ? Math.floor(historyKeptExchanges)
+                                : 10,
+                    },
+                };
+            }
+
             case "thread-optimizer:visible-messages-ready": {
                 return {
                     ok: true,
@@ -378,6 +450,7 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
                 installed: true,
                 version: this.__version,
                 hasStore: Boolean(this.__store),
+                initialLoadHiding: getInitialLoadHidingState(),
                 found: this.__found,
                 debug: ENABLE_DEBUG,
                 registeredAt: this.__registeredAt,
@@ -1216,6 +1289,18 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
                 estimatedTurnCount: getEstimatedConversationTurnCount(),
                 minimumNodeCount: getExpectedMinimumStoreNodeCount(),
             };
+        },
+
+        setInitialLoadHidingState({
+            enabled,
+            historyKeptExchanges,
+            debug,
+        } = {}) {
+            return setInitialLoadHidingState({
+                enabled,
+                historyKeptExchanges,
+                debug,
+            });
         },
 
         discoverNow() {
@@ -2356,6 +2441,29 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
 
     window[GLOBAL_KEY] = bridge;
 
+    function applyInitialLoadHidingSettingsFromDom() {
+        const settings = readInitialLoadHidingSettingsFromDom();
+
+        if (!settings) {
+            return false;
+        }
+
+        bridge.setInitialLoadHidingState({
+            enabled: settings.enabled,
+            historyKeptExchanges: settings.historyKeptExchanges,
+            debug: settings.debug,
+        });
+
+        return true;
+    }
+
+    document.addEventListener(
+        EARLY_INITIAL_LOAD_HIDING_SETTINGS_EVENT,
+        applyInitialLoadHidingSettingsFromDom
+    );
+
+    applyInitialLoadHidingSettingsFromDom();
+
     window.addEventListener(
         "message",
         (event) => {
@@ -2387,6 +2495,16 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
 
                 bridge.flushPendingStoreHistoryPrune?.("pruning-state-updated");
                 bridge.scheduleStartupStorePrune?.("pruning-state-updated");
+
+                return;
+            }
+
+            if (data.type === "thread-optimizer:set-initial-load-hiding") {
+                bridge.setInitialLoadHidingState({
+                    enabled: payload.enabled,
+                    historyKeptExchanges: payload.historyKeptExchanges,
+                    debug: payload.debug,
+                });
 
                 return;
             }

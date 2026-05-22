@@ -11,6 +11,10 @@ function getHistoryKeptExchangesForBridge() {
     );
 }
 
+function shouldEnableInitialLoadHidingOnPage() {
+    return state.featureFlags.pruning === true;
+}
+
 function shouldEnableStoreReadOptimizationOnPage() {
     return (
         state.featureFlags.storeReadOptimization === true &&
@@ -38,12 +42,44 @@ export function syncPruningStateToPageBridge(retries = 10) {
             historyKeptExchanges: getHistoryKeptExchangesForBridge(),
         });
 
+        postThreadOptimizerBridgeMessage({
+            type: "thread-optimizer:set-initial-load-hiding",
+            enabled: shouldEnableInitialLoadHidingOnPage(),
+            historyKeptExchanges: getHistoryKeptExchangesForBridge(),
+            debug: state.debugLoggingEnabled === true,
+        });
+
         return;
     }
 
     if (retries > 0) {
         setTimeout(() => {
             syncPruningStateToPageBridge(retries - 1);
+        }, BRIDGE_SYNC_RETRY_DELAY_MS);
+    }
+}
+
+export function syncInitialLoadHidingToPageBridge(retries = 10) {
+    if (typeof window === "undefined") {
+        return;
+    }
+
+    const bridge = window.__threadOptimizerChatStoreBridge;
+
+    if (bridge?.__installed) {
+        postThreadOptimizerBridgeMessage({
+            type: "thread-optimizer:set-initial-load-hiding",
+            enabled: shouldEnableInitialLoadHidingOnPage(),
+            historyKeptExchanges: getHistoryKeptExchangesForBridge(),
+            debug: state.debugLoggingEnabled === true,
+        });
+
+        return;
+    }
+
+    if (retries > 0) {
+        setTimeout(() => {
+            syncInitialLoadHidingToPageBridge(retries - 1);
         }, BRIDGE_SYNC_RETRY_DELAY_MS);
     }
 }

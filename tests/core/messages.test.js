@@ -666,4 +666,47 @@ describe("core/messages", () => {
             debug: true,
         });
     });
+    it("settings-updated sends initial-load hiding state to the page bridge", async () => {
+        const { stateModule, messagesModule } = await importFreshModules();
+        const { state, DEFAULT_SETTINGS } = stateModule;
+
+        state.settings = {
+            ...DEFAULT_SETTINGS,
+            historyKeptExchanges: 3,
+            enablePruning: true,
+            enableDebugLogging: true,
+        };
+
+        state.featureFlags.pruning = true;
+        state.debugLoggingEnabled = true;
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            syncFeatureFlagsFromSettings: createFeatureFlagSyncMock(state),
+        });
+
+        const sendResponse = vi.fn();
+
+        const returned = listener(
+            {
+                action: "settings-updated",
+                autoPrune: true,
+                enablePruning: false,
+                historyKeptExchanges: 8,
+                enableDebugLogging: true,
+            },
+            {},
+            sendResponse
+        );
+
+        expect(returned).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+
+        expect(mockRefs.postThreadOptimizerBridgeMessage).toHaveBeenCalledWith({
+            type: "thread-optimizer:set-initial-load-hiding",
+            enabled: false,
+            historyKeptExchanges: 8,
+            debug: true,
+        });
+    });
+
 });

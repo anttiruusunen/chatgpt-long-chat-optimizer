@@ -852,4 +852,112 @@ describe("chatStorePageBridge", () => {
         expect(result.repairedParents).toBeGreaterThan(0);
         expect(fakeStore.getNodeIfExists("node-1").children).not.toContain("node-2");
     });
+    it("starts initial-load hiding dormant until settings are received", () => {
+        window.fetch = vi.fn(() =>
+            Promise.resolve(
+                new Response("{}", {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                })
+            )
+        );
+
+        loadBridgeWithCurrentScript(script);
+
+        expect(window[BRIDGE_GLOBAL].status().initialLoadHiding).toMatchObject({
+            installed: true,
+            enabled: false,
+            settingsReady: false,
+            historyKeptExchanges: 1,
+        });
+    });
+
+    it("applies early initial-load hiding settings already present on the DOM before the page bridge loads", () => {
+        window.fetch = vi.fn();
+
+        document.documentElement.setAttribute(
+            "data-thread-optimizer-initial-load-hiding-settings",
+            JSON.stringify({
+                enabled: true,
+                historyKeptExchanges: 5,
+                debug: true,
+            })
+        );
+
+        loadBridgeWithCurrentScript(script);
+
+        expect(window[BRIDGE_GLOBAL].status().initialLoadHiding).toMatchObject({
+            installed: true,
+            enabled: true,
+            settingsReady: true,
+            historyKeptExchanges: 5,
+            debug: true,
+        });
+    });
+
+    it("applies early initial-load hiding settings from the DOM event after the page bridge loads", () => {
+        window.fetch = vi.fn();
+
+        loadBridgeWithCurrentScript(script);
+
+        document.documentElement.setAttribute(
+            "data-thread-optimizer-initial-load-hiding-settings",
+            JSON.stringify({
+                enabled: true,
+                historyKeptExchanges: 4,
+                debug: false,
+            })
+        );
+
+        document.dispatchEvent(
+            new Event("thread-optimizer:initial-load-hiding-settings")
+        );
+
+        expect(window[BRIDGE_GLOBAL].status().initialLoadHiding).toMatchObject({
+            installed: true,
+            enabled: true,
+            settingsReady: true,
+            historyKeptExchanges: 4,
+            debug: false,
+        });
+    });
+
+    it("ignores invalid early initial-load hiding DOM settings", () => {
+        window.fetch = vi.fn();
+
+        document.documentElement.setAttribute(
+            "data-thread-optimizer-initial-load-hiding-settings",
+            "{not-json"
+        );
+
+        loadBridgeWithCurrentScript(script);
+
+        expect(window[BRIDGE_GLOBAL].status().initialLoadHiding).toMatchObject({
+            installed: true,
+            enabled: false,
+            settingsReady: false,
+            historyKeptExchanges: 1,
+        });
+    });
+
+    it("applies runtime initial-load hiding settings from trusted bridge messages", () => {
+        window.fetch = vi.fn();
+
+        loadBridgeWithCurrentScript(script);
+
+        dispatchValidBridgeMessage("thread-optimizer:set-initial-load-hiding", {
+            enabled: true,
+            historyKeptExchanges: 6,
+            debug: true,
+        });
+
+        expect(window[BRIDGE_GLOBAL].status().initialLoadHiding).toMatchObject({
+            installed: true,
+            enabled: true,
+            settingsReady: true,
+            historyKeptExchanges: 6,
+            debug: true,
+        });
+    });
+
 });
