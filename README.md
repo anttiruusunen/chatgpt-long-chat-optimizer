@@ -1,19 +1,39 @@
 # ChatGPT Long Chat Optimizer
 
-Speed up long ChatGPT conversations by hiding older visible chat turns from the current page and reducing page slowdown.
+Keep long ChatGPT conversations fast from the moment they load — and responsive as you keep chatting.
+
+Long Chat Optimizer keeps only your selected recent exchanges active on the current ChatGPT page. Older turns are hidden from the current page and removed from the page's local active conversation state, but they are not deleted from your saved ChatGPT conversation.
 
 This extension is an independent third-party project and is not affiliated with OpenAI.
 
-Older turns are hidden from the currently loaded page, not deleted from your saved ChatGPT conversation. To show more older turns again, increase “Recent exchanges kept” or turn off the optimization.
+To show more older turns again, increase "Recent exchanges kept" or turn off the optimization and reload or reopen the chat.
 
 ## Features
 
-- Hide older visible chat turns from the current page to reduce slowdown
-- Automatically hide older visible turns when existing long chats load
-- Pre-send optimization to avoid composer caret jumps while typing
-- Optional browser-native offscreen rendering optimization
+- Fast initial load for long chats by keeping only recent exchanges active before the page renders
+- Immediate long-chat pruning while you use ChatGPT — no reload-only workflow
+- More than visual hiding: reduces both visible page weight and local active conversation state
+- Targeted render/read caches for hot ChatGPT page lookups in long conversations
+- Browser-native offscreen rendering optimization for out-of-view exchanges
 - Optional scrollbars for long prompts and large code blocks
-- Popup settings for recent exchanges kept, message hiding, scrollbars, and advanced performance options
+- Popup controls for recent exchanges kept, speedup behavior, scrollbars, and advanced performance options
+- Older turns are hidden from the current page, not deleted from your saved conversation
+
+## How it works
+
+Long Chat Optimizer uses several local performance layers:
+
+1. Initial-load hiding trims older conversation mapping data before the current page renders.
+2. Store-native pruning removes older active-branch nodes from the page's local conversation graph after load and during use.
+3. DOM pruning keeps hidden older turns out of the visible page.
+4. Targeted caches speed up repeated page lookups in long conversations.
+5. Optional offscreen rendering and scrollbars improve day-to-day usability.
+
+All optimizations are local to the current browser page. Your saved ChatGPT conversation is not deleted.
+
+## Privacy
+
+Long Chat Optimizer runs locally in your browser. It does not collect, sell, transmit, or share your conversation data.
 
 ---
 
@@ -231,7 +251,8 @@ npm run export:code
 - `src/content/streaming/replyTiming.js` → streaming-state detection
 - `src/content/streaming/assistantSignals.js` → assistant/composer state helpers
 - `src/content/ui/qolStyles.js` → quality-of-life CSS rules
-- `src/page/chatStorePageBridge.js` → page-context store optimization and message-hiding bridge
+- `src/page/chatStorePageBridge.js` → page-context initial-load hiding, store optimization, and message-hiding bridge
+- `src/page/chatStoreBridge/initialLoadHiding.js` → current-page conversation payload trimming before initial render
 - `src/popup/popup.js` → extension popup settings UI
 - `scripts/build.cjs` → browser-target build script
 - `scripts/package-release.cjs` → release zip packaging

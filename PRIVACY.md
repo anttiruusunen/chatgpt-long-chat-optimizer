@@ -2,15 +2,17 @@
 
 Thread Optimizer for ChatGPT does not collect, sell, transmit, or share personal data.
 
-The extension runs locally in your browser and only operates on ChatGPT conversation pages to improve rendering performance by hiding older visible chat turns from the current page, applying offscreen visibility optimization, and managing local UI behavior.
+The extension runs locally in your browser and only operates on ChatGPT conversation pages to improve rendering performance by keeping recent exchanges active, hiding older turns from the current page, optimizing initial long-chat loading, applying offscreen visibility optimization, and managing local UI behavior.
 
 ## Data handled locally
 
-The extension may temporarily process the content and structure of the currently open ChatGPT page in browser memory so it can optimize rendering. This data is not sent to the developer, any server, or any third party.
+The extension may temporarily process the content and structure of the currently open ChatGPT page, including local conversation response data received by the page, in browser memory so it can optimize rendering. This data is not sent to the developer, any server, or any third party.
+
+Older turns may be hidden from the currently loaded page or removed from the page's local active conversation state, but they are not deleted from your saved ChatGPT conversation.
 
 ## Storage
 
-The extension stores user settings locally in browser extension storage, such as message-hiding preferences and feature toggles.
+The extension stores user settings locally in browser extension storage, such as recent exchanges kept, message-hiding preferences, and feature toggles.
 
 ## Network access
 

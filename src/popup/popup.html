@@ -194,12 +194,12 @@
         </div>
 
         <div class="hint">
-            Keep the newest exchanges active and hide older ones on the current ChatGPT page.
+            Keep this many recent exchanges active when long chats load and as you continue chatting.
         </div>
 
         <div id="historyKeptInfo" class="details" hidden>
             <p>
-                An exchange means one user message plus the assistant reply. A value of 1 keeps only the newest exchange active, which gives the biggest speedup in very long chats.
+                An exchange means one user message plus the assistant reply. Lower values keep less old content active on the current page and usually give the biggest speedup in very long chats.
             </p>
         </div>
     </div>
@@ -209,7 +209,7 @@
             <input id="enablePruning" type="checkbox" />
             <label class="flagLabel" for="enablePruning">
                 <strong>Speed up long chats</strong>
-                <span class="summary">Automatically hide older visible chat turns on the current page.</span>
+                <span class="summary">Load long chats faster and keep recent messages responsive.</span>
             </label>
             <button
                 class="infoButton"
@@ -221,7 +221,7 @@
             >?</button>
             <div id="enablePruningInfo" class="details" hidden>
                 <p>
-                    This keeps ChatGPT responsive by reducing how much old conversation content the page has to keep rendered. Older turns are hidden from the current page, not deleted from your saved ChatGPT conversation. To show more older turns again, increase “Recent exchanges kept” or turn off this setting.
+                    This keeps only recent exchanges active on the current page, trims old page state before long chats render, and continues pruning while you chat. Older turns are hidden from this page, not deleted from your saved ChatGPT conversation.
                 </p>
             </div>
         </div>
@@ -299,7 +299,7 @@
             <input id="enableOffscreenOptimization" type="checkbox" />
             <label class="flagLabel" for="enableOffscreenOptimization">
                 <strong>Reduce offscreen rendering work</strong>
-                <span class="summary">Let the browser skip layout work for older chat sections that are far away.</span>
+                <span class="summary">Let the browser skip layout work for chat sections far away from view.</span>
             </label>
             <button
                 class="infoButton"
@@ -319,8 +319,8 @@
         <div class="flagRow">
             <input id="enableStoreReadOptimization" type="checkbox" />
             <label class="flagLabel" for="enableStoreReadOptimization">
-                <strong>Speed up ChatGPT conversation lookups</strong>
-                <span class="summary">Cache repeated internal lookups during very long conversations.</span>
+                <strong>Speed up repeated page lookups</strong>
+                <span class="summary">Cache hot ChatGPT lookups during very long conversations.</span>
             </label>
             <button
                 class="infoButton"

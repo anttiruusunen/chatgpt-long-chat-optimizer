@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-long-chat-optimizer",
-  "description": "Reduce slowdown in long ChatGPT conversations by hiding older visible chat turns from the current page.",
+  "description": "Make long ChatGPT chats load faster and stay responsive by keeping only recent exchanges active.",
   "version": "1.0.3",
   "type": "module",
   "private": true,

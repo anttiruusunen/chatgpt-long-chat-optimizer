@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ChatGPT Long Chat Optimizer",
   "short_name": "Long Chat Optimizer",
-  "description": "Reduce slowdown in long ChatGPT conversations by hiding older visible chat turns from the current page.",
+  "description": "Make long ChatGPT chats load faster and stay responsive by keeping only recent exchanges active.",
   "version": "1.0.3",
   "permissions": [
     "storage"
