@@ -148,8 +148,8 @@ function getNodeRole(node) {
     return node?.message?.author?.role ?? node?.message?.role ?? null;
 }
 
-function isExchangeRole(role) {
-    return role === "user" || role === "assistant";
+function isExchangeBoundaryRole(role) {
+    return role === "user";
 }
 
 function cloneNode(node) {
@@ -235,11 +235,13 @@ function findSuffixStartIndexForRecentExchanges(branchOldestFirst, keepExchanges
     for (let i = branchOldestFirst.length - 1; i >= 0; i -= 1) {
         const role = getNodeRole(branchOldestFirst[i]);
 
-        if (isExchangeRole(role)) {
-            exchangeCount += 1;
+        if (!isExchangeBoundaryRole(role)) {
+            continue;
         }
 
-        if (exchangeCount >= keepExchanges * 2) {
+        exchangeCount += 1;
+
+        if (exchangeCount >= keepExchanges) {
             return i;
         }
     }
