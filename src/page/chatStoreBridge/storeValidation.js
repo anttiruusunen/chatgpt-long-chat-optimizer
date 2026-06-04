@@ -1,4 +1,5 @@
 import {
+    findStoreNodeByMessageId,
     getNodeDirect,
     getStoreCurrentLeafId,
     getStoreNodeCount,
@@ -63,7 +64,7 @@ export function looksLikeStore(value) {
         return (
             typeof value.deleteNode === "function" &&
             typeof value.getNodeIfExists === "function" &&
-            typeof value.messageIdToExistingNodeId === "function"
+            getStoreNodeCount(value) > 0
         );
     } catch {
         return false;
@@ -105,10 +106,28 @@ export function candidateStoreCanResolveVisibleNewestNode(store) {
     }
 
     try {
-        const nodeId = store.messageIdToExistingNodeId?.call(
-            store,
-            newestMessageId
-        );
+        let nodeId = null;
+        let node = null;
+        let resolver = "none";
+
+        if (typeof store.messageIdToExistingNodeId === "function") {
+            nodeId = store.messageIdToExistingNodeId.call(store, newestMessageId);
+            resolver = "messageIdToExistingNodeId";
+
+            const nodeCache = window.__threadOptimizerChatStoreBridge?.__nodeObjectCacheApi;
+
+            node = nodeId
+                ? nodeCache
+                    ? nodeCache.resolve(nodeId)
+                    : getNodeDirect(store, nodeId)
+                : null;
+        }
+
+        if (!node) {
+            node = findStoreNodeByMessageId(store, newestMessageId);
+            nodeId = node?.id ?? null;
+            resolver = "nodes-fallback";
+        }
 
         if (!nodeId) {
             return {
@@ -118,12 +137,6 @@ export function candidateStoreCanResolveVisibleNewestNode(store) {
                 nodeId: null,
             };
         }
-
-        const nodeCache = window.__threadOptimizerChatStoreBridge?.__nodeObjectCacheApi;
-
-        const node = nodeCache
-            ? nodeCache.resolve(nodeId)
-            : getNodeDirect(store, nodeId);
 
         if (!node) {
             return {
@@ -139,6 +152,7 @@ export function candidateStoreCanResolveVisibleNewestNode(store) {
             newestMessageId,
             nodeId,
             node,
+            resolver,
         };
     } catch (error) {
         return {

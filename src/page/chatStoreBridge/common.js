@@ -44,15 +44,58 @@ export function getStoreCurrentLeafId(store) {
     }
 }
 
-export function getStoreNodeCount(store) {
+export function getStoreNodeValues(store) {
     try {
-        const nodes = store.nodes;
-        if (nodes instanceof Map) return nodes.size;
-        if (Array.isArray(nodes)) return nodes.length;
-        if (nodes && typeof nodes === "object") return Object.keys(nodes).length;
+        const nodes = store?.nodes;
+
+        if (nodes instanceof Map) {
+            return Array.from(nodes.values());
+        }
+
+        if (Array.isArray(nodes)) {
+            return nodes;
+        }
+
+        if (nodes && typeof nodes === "object") {
+            return Object.values(nodes);
+        }
     } catch {}
 
-    return 0;
+    return [];
+}
+
+export function findStoreNodeByMessageId(store, messageId) {
+    if (!store || !messageId) {
+        return null;
+    }
+
+    const directNode = getNodeDirectFresh(store, messageId);
+
+    if (directNode?.id) {
+        return directNode;
+    }
+
+    const nodes = getStoreNodeValues(store);
+
+    for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i];
+
+        const candidateMessageId =
+            node?.message?.id ||
+            node?.message?.message_id ||
+            node?.message?.metadata?.message_id ||
+            null;
+
+        if (candidateMessageId === messageId) {
+            return node;
+        }
+    }
+
+    return null;
+}
+
+export function getStoreNodeCount(store) {
+    return getStoreNodeValues(store).length;
 }
 
 export function getNodeDirectFresh(store, nodeId) {

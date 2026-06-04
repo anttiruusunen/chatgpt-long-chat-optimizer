@@ -12,6 +12,7 @@ import {
 } from "./config.js";
 
 import {
+    findStoreNodeByMessageId,
     getNodeDirect,
     unavailable,
 } from "./common.js";
@@ -79,15 +80,27 @@ function resolveNodeCore(bridge, id) {
             }
         }
 
+        let nodeId = null;
+        let node = null;
+
         const resolver = store.messageIdToExistingNodeId;
-        if (typeof resolver !== "function") return null;
 
-        const nodeId = resolver.call(store, id);
-        if (!nodeId) return null;
+        if (typeof resolver === "function") {
+            nodeId = resolver.call(store, id);
 
-        const node = nodeCache
-            ? nodeCache.resolve(nodeId)
-            : getNodeDirect(store, nodeId);
+            if (nodeId) {
+                node = nodeCache
+                    ? nodeCache.resolve(nodeId)
+                    : getNodeDirect(store, nodeId);
+            }
+        }
+
+        if (!node) {
+            node = findStoreNodeByMessageId(store, id);
+            nodeId = node?.id ?? null;
+        }
+
+        if (!nodeId || !node) return null;
 
         if (node) {
             if (index) {
@@ -246,6 +259,16 @@ export const cacheInstallerMethods = {
     installMessageIdIndex() {
         const store = requireStore(this);
         if (!store) return unavailable("store not registered");
+
+        const original = getStoreMethod(store, "messageIdToExistingNodeId");
+
+        if (!original) {
+            return {
+                ok: true,
+                skipped: true,
+                reason: "messageIdToExistingNodeId unavailable",
+            };
+        }
 
         if (this.__messageIdIndexInstalled) {
             return {
