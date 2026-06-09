@@ -142,8 +142,11 @@ export function getNodeDirect(store, nodeId) {
 
     if (Array.isArray(nodes)) {
         if (
-            bridge.__nodeIdDirectIndexSource !== nodes ||
-            !(bridge.__nodeIdDirectIndex instanceof Map)
+            bridge &&
+            (
+                bridge.__nodeIdDirectIndexSource !== nodes ||
+                !(bridge.__nodeIdDirectIndex instanceof Map)
+            )
         ) {
             const index = new Map();
 
@@ -156,10 +159,12 @@ export function getNodeDirect(store, nodeId) {
             bridge.__nodeIdDirectIndexSource = nodes;
         }
 
-        node = bridge.__nodeIdDirectIndex.get(nodeId) ?? null;
-    } else if (nodes.get) {
+        node = bridge?.__nodeIdDirectIndex instanceof Map
+            ? bridge.__nodeIdDirectIndex.get(nodeId) ?? null
+            : nodes.find((candidate) => candidate?.id === nodeId) ?? null;
+    } else if (nodes instanceof Map) {
         node = nodes.get(nodeId) ?? null;
-    } else {
+    } else if (typeof nodes === "object") {
         node = nodes[nodeId] ?? null;
     }
 

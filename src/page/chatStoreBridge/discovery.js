@@ -1,10 +1,8 @@
 import { CONFIG } from "./config.js";
 import { isObjectLike } from "./common.js";
 import {
-    hasAnyStoreMethodName,
-    looksLikeStore,
+    hasAnyStoreCandidateSignal,
     rejectStore,
-    scoreStoreCandidate,
     validateStoreCandidate,
 } from "./storeValidation.js";
 
@@ -33,10 +31,20 @@ const PRIORITY_GRAPH_KEYS = [
     "rootId",
     "currentLeafId",
     "getNodeIfExists",
+    "getNode",
+    "getMessage",
+    "getMaybeMessage",
     "messageIdToExistingNodeId",
     "getNodeByIdOrMessageId",
     "deleteNode",
+    "deleteClientOnlyMessage",
+    "moveNode",
     "getBranch",
+    "getBranchFromLeaf",
+    "addMessage",
+    "addOptimisticMessage",
+    "addClientOnlyMessage",
+    "prependNode",
     "props",
     "children",
     "value",
@@ -207,7 +215,7 @@ function getPrioritizedGraphKeys(value) {
 }
 
 function evaluateStoreCandidate(candidate) {
-    if (!hasAnyStoreMethodName(candidate) || !looksLikeStore(candidate)) {
+    if (!hasAnyStoreCandidateSignal(candidate)) {
         return null;
     }
 
@@ -218,7 +226,7 @@ function evaluateStoreCandidate(candidate) {
         return null;
     }
 
-    const scored = scoreStoreCandidate(candidate);
+    const scored = validation.scored;
 
     return {
         store: candidate,

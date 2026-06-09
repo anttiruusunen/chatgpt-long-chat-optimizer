@@ -1,6 +1,9 @@
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+    deleteStoreNodeFresh,
+} from "../../src/page/chatStoreBridge/storeTopology.js";
 
 const BRIDGE_PATH = path.resolve("src/page/chatStorePageBridge.js");
 const BRIDGE_GLOBAL = "__threadOptimizerChatStoreBridge";
@@ -960,4 +963,65 @@ describe("chatStorePageBridge", () => {
         });
     });
 
+
+    it("uses deleteClientOnlyMessage as a fallback delete method", () => {
+        const nodes = {
+            root: {
+                id: "root",
+                parentId: "",
+                children: ["old-node"],
+                message: {
+                    id: "root",
+                    author: { role: "root" },
+                },
+            },
+            "old-node": {
+                id: "old-node",
+                parentId: "root",
+                children: ["child-node"],
+                message: {
+                    id: "msg-old",
+                    author: { role: "assistant" },
+                },
+            },
+            "child-node": {
+                id: "child-node",
+                parentId: "old-node",
+                children: [],
+                message: {
+                    id: "msg-child",
+                    author: { role: "assistant" },
+                },
+            },
+        };
+
+        const store = {
+            get nodes() {
+                return nodes;
+            },
+            deleteClientOnlyMessage: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    nodes[childId].parentId = node.parentId;
+                }
+
+                parent.children = parent.children.flatMap((childId) =>
+                    childId === node.id ? node.children : [childId]
+                );
+
+                delete nodes[node.id];
+            }),
+        };
+
+        const result = deleteStoreNodeFresh(store, "old-node");
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMethod).toBe("deleteClientOnlyMessage");
+        expect(store.deleteClientOnlyMessage).toHaveBeenCalledWith("old-node");
+        expect(nodes["old-node"]).toBeUndefined();
+        expect(nodes["child-node"].parentId).toBe("root");
+        expect(nodes.root.children).toEqual(["child-node"]);
+    });
 });

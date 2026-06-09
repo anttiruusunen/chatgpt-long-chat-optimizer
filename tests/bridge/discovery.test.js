@@ -3,7 +3,12 @@ import {
     discoverStoreFromFiberRoot,
     scanObjectGraphForStore,
 } from "../../src/page/chatStoreBridge/discovery.js";
-import { rejectedStoreReasons } from "../../src/page/chatStoreBridge/storeValidation.js";
+import {
+    getStoreCapabilities,
+    rejectedStoreReasons,
+    scoreStoreCandidate,
+    validateStoreCandidate,
+} from "../../src/page/chatStoreBridge/storeValidation.js";
 
 const BRIDGE_GLOBAL = "__threadOptimizerChatStoreBridge";
 
@@ -233,5 +238,121 @@ describe("chatStoreBridge discovery", () => {
 
         expect(result.store).toBe(correctStore);
         expect(result.store).not.toBe(wrongStore);
+    });
+
+    it("validates a conversation store without the native message id resolver", () => {
+        appendVisibleMessage("msg-visible");
+
+        const store = createFakeStore();
+
+        delete store.messageIdToExistingNodeId;
+
+        const validation = validateStoreCandidate(store);
+
+        expect(validation.ok).toBe(true);
+        expect(validation.capabilities.messageIdToExistingNodeId).toBe(false);
+        expect(validation.capabilities.nodesFallbackMessageIdResolution).toBe(true);
+        expect(validation.scored.visibleNewest).toMatchObject({
+            ok: true,
+            resolver: "nodes-fallback",
+            newestMessageId: "msg-visible",
+            nodeId: "node-visible",
+        });
+    });
+
+    it("validates a conversation store without getNodeIfExists when topology evidence is strong", () => {
+        appendVisibleMessage("msg-visible");
+
+        const store = createFakeStore();
+
+        delete store.getNodeIfExists;
+
+        const validation = validateStoreCandidate(store);
+
+        expect(validation.ok).toBe(true);
+        expect(validation.capabilities.getNodeIfExists).toBe(false);
+        expect(validation.capabilities.deleteNode).toBe(true);
+        expect(validation.scored.visibleNewest.ok).toBe(true);
+    });
+
+    it("discovers a store even when several optional methods are missing", () => {
+        appendVisibleMessage("msg-visible");
+
+        const store = createFakeStore();
+
+        delete store.getNodeIfExists;
+        delete store.messageIdToExistingNodeId;
+        delete store.getBranch;
+        delete store.getBranchFromLeaf;
+
+        const root = {
+            props: {
+                value: {
+                    store,
+                },
+            },
+        };
+
+        const result = scanObjectGraphForStore(root, {
+            maxObjects: 100,
+            maxFibers: 100,
+        });
+
+        expect(result.store).toBe(store);
+        expect(result.score).toBeGreaterThanOrEqual(1_000_000);
+    });
+
+    it("can register a store without deleteNode but marks mutation capability unavailable", () => {
+        appendVisibleMessage("msg-visible");
+
+        const store = createFakeStore();
+
+        delete store.deleteNode;
+
+        const validation = validateStoreCandidate(store);
+        const capabilities = getStoreCapabilities(store);
+
+        expect(validation.ok).toBe(true);
+        expect(validation.capabilities.deleteNode).toBe(false);
+        expect(capabilities.capabilities.deleteNode).toBe(false);
+        expect(validation.scored.visibleNewest.ok).toBe(true);
+    });
+
+    it("rejects objects with coincidental store method names but no conversation topology", () => {
+        appendVisibleMessage("msg-visible");
+
+        const notStore = {
+            deleteNode() {},
+            getNodeIfExists() {
+                return null;
+            },
+        };
+
+        const validation = validateStoreCandidate(notStore);
+
+        expect(validation.ok).toBe(false);
+        expect(validation.reason).toMatch(
+            /node count too small|insufficient conversation topology evidence|score too low/
+        );
+    });
+
+    it("gives decisive score when visible newest message resolves through nodes fallback", () => {
+        appendVisibleMessage("msg-visible");
+
+        const store = createFakeStore();
+
+        delete store.messageIdToExistingNodeId;
+        delete store.getNodeIfExists;
+
+        const scored = scoreStoreCandidate(store);
+
+        expect(scored.visibleNewest).toMatchObject({
+            ok: true,
+            resolver: "nodes-fallback",
+            newestMessageId: "msg-visible",
+            nodeId: "node-visible",
+        });
+
+        expect(scored.score).toBeGreaterThanOrEqual(1_000_000);
     });
 });

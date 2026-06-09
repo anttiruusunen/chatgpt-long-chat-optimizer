@@ -146,15 +146,7 @@ export function validateStoreMethodBinding(store, methodName, original) {
     if (!store || typeof original !== "function") return false;
 
     try {
-        if (methodName === "getNodeIfExists") {
-            return typeof store.messageIdToExistingNodeId === "function";
-        }
-
-        if (methodName === "getNodeByIdOrMessageId") {
-            return typeof store.getNodeIfExists === "function";
-        }
-
-        return true;
+        return typeof store[methodName] === "function";
     } catch {
         return false;
     }

@@ -176,6 +176,24 @@ export function getActiveStoreBranchNewestFirst(store, { maxDepth = 10000 } = {}
     };
 }
 
+export function getStoreDeleteNodeMethod(store) {
+    if (typeof store?.deleteNode === "function") {
+        return {
+            name: "deleteNode",
+            fn: store.deleteNode,
+        };
+    }
+
+    if (typeof store?.deleteClientOnlyMessage === "function") {
+        return {
+            name: "deleteClientOnlyMessage",
+            fn: store.deleteClientOnlyMessage,
+        };
+    }
+
+    return null;
+}
+
 export function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } = {}) {
     const beforeNode = getNodeDirectFresh(store, nodeId);
     const beforeSummary = summarizeStoreNode(beforeNode);
@@ -187,18 +205,33 @@ export function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } =
             reason: "node not found",
             beforeSummary,
             afterSummary: null,
+            deleteMethod: null,
+        };
+    }
+
+    const deleteMethod = getStoreDeleteNodeMethod(store);
+
+    if (!deleteMethod) {
+        return {
+            ok: false,
+            nodeId,
+            reason: "delete method unavailable",
+            beforeSummary,
+            afterSummary: summarizeStoreNode(getNodeDirectFresh(store, nodeId)),
+            deleteMethod: null,
         };
     }
 
     try {
-        store.deleteNode(nodeId);
+        deleteMethod.fn.call(store, nodeId);
     } catch (error) {
         return {
             ok: false,
             nodeId,
-            reason: String(error?.message || error),
+            reason: `${deleteMethod.name}: ${String(error?.message || error)}`,
             beforeSummary,
             afterSummary: summarizeStoreNode(getNodeDirectFresh(store, nodeId)),
+            deleteMethod: deleteMethod.name,
         };
     }
 
@@ -212,6 +245,7 @@ export function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } =
             reason: "node still exists after delete",
             beforeSummary,
             afterSummary,
+            deleteMethod: deleteMethod.name,
         };
     }
 
@@ -221,5 +255,6 @@ export function deleteStoreNodeFresh(store, nodeId, { reason = "store-prune" } =
         reason,
         beforeSummary,
         afterSummary,
+        deleteMethod: deleteMethod.name,
     };
 }

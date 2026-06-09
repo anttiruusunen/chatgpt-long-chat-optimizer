@@ -467,6 +467,17 @@ function readInitialLoadHidingSettingsFromDom() {
                         this.__store &&
                         typeof this.__store.deleteNode === "function"
                     ),
+                    deleteClientOnlyMessage: Boolean(
+                        this.__store &&
+                        typeof this.__store.deleteClientOnlyMessage === "function"
+                    ),
+                    canDeleteNode: Boolean(
+                        this.__store &&
+                        (
+                            typeof this.__store.deleteNode === "function" ||
+                            typeof this.__store.deleteClientOnlyMessage === "function"
+                        )
+                    ),
                     getNodeIfExists: Boolean(
                         this.__store &&
                         typeof this.__store.getNodeIfExists === "function"
