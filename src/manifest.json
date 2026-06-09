@@ -3,7 +3,7 @@
   "name": "ChatGPT Long Chat Optimizer",
   "short_name": "Long Chat Optimizer",
   "description": "Make long ChatGPT chats load faster and stay responsive by keeping only recent exchanges active.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "permissions": [
     "storage"
   ],
