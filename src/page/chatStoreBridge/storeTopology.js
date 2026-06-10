@@ -181,6 +181,7 @@ export function getStoreDeleteNodeMethod(store) {
         return {
             name: "deleteNode",
             fn: store.deleteNode,
+            mode: "delete-node",
         };
     }
 
@@ -188,6 +189,7 @@ export function getStoreDeleteNodeMethod(store) {
         return {
             name: "deleteClientOnlyMessage",
             fn: store.deleteClientOnlyMessage,
+            mode: "splice-node",
         };
     }
 

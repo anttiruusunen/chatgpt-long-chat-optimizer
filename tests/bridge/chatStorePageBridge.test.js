@@ -1024,4 +1024,525 @@ describe("chatStorePageBridge", () => {
         expect(nodes["child-node"].parentId).toBe("root");
         expect(nodes.root.children).toEqual(["child-node"]);
     });
+
+    it("detaches the kept branch before using deleteClientOnlyMessage pruning", () => {
+        const nodes = {};
+
+        function addNode(id, parentId, role, children = []) {
+            nodes[id] = {
+                id,
+                parentId,
+                children,
+                message: {
+                    id,
+                    author: { role },
+                    content: { parts: [`${role}:${id}`] },
+                },
+            };
+        }
+
+        addNode("root", null, "root", ["u1"]);
+        addNode("u1", "root", "user", ["a1"]);
+        addNode("a1", "u1", "assistant", ["u2"]);
+        addNode("u2", "a1", "user", ["a2"]);
+        addNode("a2", "u2", "assistant", ["u3"]);
+        addNode("u3", "a2", "user", ["a3"]);
+        addNode("a3", "u3", "assistant", []);
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a3",
+            get nodes() {
+                return Object.values(nodes);
+            },
+            getNodeIfExists(id) {
+                return nodes[id] ?? null;
+            },
+            getNode(id) {
+                return nodes[id] ?? null;
+            },
+            deleteClientOnlyMessage: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+                if (!node) return;
+
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    if (nodes[childId]) {
+                        nodes[childId].parentId = node.parentId;
+                    }
+                }
+
+                if (parent) {
+                    parent.children = parent.children.flatMap((childId) =>
+                        childId === node.id ? node.children : [childId]
+                    );
+                }
+
+                delete nodes[node.id];
+            }),
+        };
+
+        appendVisibleMessage("a3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        bridge.registerStore(store, {
+            source: "delete-client-only-message-prune-test",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-splice-prune",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMethod).toBe("deleteClientOnlyMessage");
+        expect(result.deleteMode).toBe("splice-node");
+        expect(result.detachResult).toMatchObject({
+            ok: true,
+            changed: true,
+            oldestKeptNodeId: "u3",
+            previousParentId: "a2",
+        });
+
+        expect(nodes.root.children).toEqual(["u3"]);
+        expect(nodes.u3.parentId).toBe("root");
+
+        expect(nodes.u1).toBeUndefined();
+        expect(nodes.a1).toBeUndefined();
+        expect(nodes.u2).toBeUndefined();
+        expect(nodes.a2).toBeUndefined();
+
+        const activeBranch = [];
+        let node = nodes[store.currentLeafId];
+
+        while (node?.id && activeBranch.length < 20) {
+            activeBranch.push(node);
+            node = nodes[node.parentId];
+        }
+
+        expect(activeBranch.map((item) => item.id)).toEqual([
+            "a3",
+            "u3",
+            "root",
+        ]);
+    });
+
+    it("keeps the same active branch shape with deleteNode pruning", () => {
+        appendVisibleMessage("a3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const nodes = {};
+
+        function addNode(id, parentId, role, children = []) {
+            nodes[id] = {
+                id,
+                parentId,
+                children,
+                message: {
+                    id,
+                    author: { role },
+                    content: { parts: [`${role}:${id}`] },
+                },
+            };
+        }
+
+        addNode("root", null, "root", ["u1"]);
+        addNode("u1", "root", "user", ["a1"]);
+        addNode("a1", "u1", "assistant", ["u2"]);
+        addNode("u2", "a1", "user", ["a2"]);
+        addNode("a2", "u2", "assistant", ["u3"]);
+        addNode("u3", "a2", "user", ["a3"]);
+        addNode("a3", "u3", "assistant", []);
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a3",
+            get nodes() {
+                return Object.values(nodes);
+            },
+            getNodeIfExists(id) {
+                return nodes[id] ?? null;
+            },
+            getNode(id) {
+                return nodes[id] ?? null;
+            },
+            deleteNode: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+                if (!node) return;
+
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    if (nodes[childId]) {
+                        nodes[childId].parentId = node.parentId;
+                    }
+                }
+
+                if (parent) {
+                    parent.children = parent.children.flatMap((childId) =>
+                        childId === node.id ? node.children : [childId]
+                    );
+                }
+
+                delete nodes[nodeId];
+            }),
+        };
+
+        bridge.registerStore(store, {
+            source: "delete-node-prune-test",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-delete-node-prune",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMethod).toBe("deleteNode");
+        expect(result.deleteMode).toBe("delete-node");
+
+        const activeBranch = [];
+        let node = nodes[store.currentLeafId];
+
+        while (node?.id && activeBranch.length < 20) {
+            activeBranch.push(node);
+            node = nodes[node.parentId];
+        }
+
+        expect(activeBranch.map((item) => item.id)).toEqual([
+            "a3",
+            "u3",
+            "root",
+        ]);
+    });
+
+    it("keeps the requested number of exchanges with deleteClientOnlyMessage", () => {
+        appendVisibleMessage("a4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const nodes = {};
+
+        function addNode(id, parentId, role, children = []) {
+            nodes[id] = {
+                id,
+                parentId,
+                children,
+                message: {
+                    id,
+                    author: { role },
+                    content: { parts: [`${role}:${id}`] },
+                },
+            };
+        }
+
+        addNode("root", null, "root", ["u1"]);
+        addNode("u1", "root", "user", ["a1"]);
+        addNode("a1", "u1", "assistant", ["u2"]);
+        addNode("u2", "a1", "user", ["a2"]);
+        addNode("a2", "u2", "assistant", ["u3"]);
+        addNode("u3", "a2", "user", ["a3"]);
+        addNode("a3", "u3", "assistant", ["u4"]);
+        addNode("u4", "a3", "user", ["a4"]);
+        addNode("a4", "u4", "assistant", []);
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a4",
+            get nodes() {
+                return Object.values(nodes);
+            },
+            getNodeIfExists(id) {
+                return nodes[id] ?? null;
+            },
+            getNode(id) {
+                return nodes[id] ?? null;
+            },
+            deleteClientOnlyMessage: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+                if (!node) return;
+
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    if (nodes[childId]) {
+                        nodes[childId].parentId = node.parentId;
+                    }
+                }
+
+                if (parent) {
+                    parent.children = parent.children.flatMap((childId) =>
+                        childId === node.id ? node.children : [childId]
+                    );
+                }
+
+                delete nodes[node.id];
+            }),
+        };
+
+        bridge.registerStore(store, {
+            source: "delete-client-only-message-keep-two-test",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 2,
+            reason: "test-splice-prune-keep-two",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMode).toBe("splice-node");
+
+        const activeBranch = [];
+        let node = nodes[store.currentLeafId];
+
+        while (node?.id && activeBranch.length < 20) {
+            activeBranch.push(node);
+            node = nodes[node.parentId];
+        }
+
+        expect(activeBranch.map((item) => item.id)).toEqual([
+            "a4",
+            "u4",
+            "a3",
+            "u3",
+            "root",
+        ]);
+
+        expect(
+            activeBranch.filter((item) => item.message?.author?.role === "user")
+        ).toHaveLength(2);
+    });
+
+    it("preserves system nodes inside the kept tail when splice-pruning", () => {
+        appendVisibleMessage("a2");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const nodes = {};
+
+        function addNode(id, parentId, role, children = []) {
+            nodes[id] = {
+                id,
+                parentId,
+                children,
+                message: {
+                    id,
+                    author: { role },
+                    content: { parts: [`${role}:${id}`] },
+                },
+            };
+        }
+
+        addNode("root", null, "root", ["u1"]);
+        addNode("u1", "root", "user", ["a1"]);
+        addNode("a1", "u1", "assistant", ["u2"]);
+        addNode("u2", "a1", "user", ["s1"]);
+        addNode("s1", "u2", "system", ["s2"]);
+        addNode("s2", "s1", "system", ["a2"]);
+        addNode("a2", "s2", "assistant", []);
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a2",
+            get nodes() {
+                return Object.values(nodes);
+            },
+            getNodeIfExists(id) {
+                return nodes[id] ?? null;
+            },
+            getNode(id) {
+                return nodes[id] ?? null;
+            },
+            deleteClientOnlyMessage: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+                if (!node) return;
+
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    if (nodes[childId]) {
+                        nodes[childId].parentId = node.parentId;
+                    }
+                }
+
+                if (parent) {
+                    parent.children = parent.children.flatMap((childId) =>
+                        childId === node.id ? node.children : [childId]
+                    );
+                }
+
+                delete nodes[node.id];
+            }),
+        };
+
+        bridge.registerStore(store, {
+            source: "splice-system-node-tail-test",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-splice-system-tail",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMode).toBe("splice-node");
+        expect(result.detachResult).toMatchObject({
+            ok: true,
+            changed: true,
+            oldestKeptNodeId: "u2",
+            previousParentId: "a1",
+        });
+
+        expect(nodes.root.children).toEqual(["u2"]);
+        expect(nodes.u2.parentId).toBe("root");
+
+        expect(nodes.u1).toBeUndefined();
+        expect(nodes.a1).toBeUndefined();
+
+        const activeBranch = [];
+        let node = nodes[store.currentLeafId];
+
+        while (node?.id && activeBranch.length < 20) {
+            activeBranch.push(node);
+            node = nodes[node.parentId];
+        }
+
+        expect(activeBranch.map((item) => item.id)).toEqual([
+            "a2",
+            "s2",
+            "s1",
+            "u2",
+            "root",
+        ]);
+
+        expect(
+            activeBranch.filter((item) => item.message?.author?.role === "system")
+        ).toHaveLength(2);
+
+        expect(
+            activeBranch.filter((item) => item.message?.author?.role === "user")
+        ).toHaveLength(1);
+    });
+
+    it("does not report successful pruning without a supported delete method", () => {
+        appendVisibleMessage("a2");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a2",
+            get nodes() {
+                return [
+                    {
+                        id: "root",
+                        parentId: null,
+                        children: ["u1"],
+                        message: { id: "root", author: { role: "root" } },
+                    },
+                    {
+                        id: "u1",
+                        parentId: "root",
+                        children: ["a1"],
+                        message: { id: "u1", author: { role: "user" } },
+                    },
+                    {
+                        id: "a1",
+                        parentId: "u1",
+                        children: ["u2"],
+                        message: { id: "a1", author: { role: "assistant" } },
+                    },
+                    {
+                        id: "u2",
+                        parentId: "a1",
+                        children: ["a2"],
+                        message: { id: "u2", author: { role: "user" } },
+                    },
+                    {
+                        id: "a2",
+                        parentId: "u2",
+                        children: [],
+                        message: { id: "a2", author: { role: "assistant" } },
+                    },
+                ];
+            },
+            getNodeIfExists(id) {
+                return this.nodes.find((node) => node.id === id) ?? null;
+            },
+        };
+
+        bridge.registerStore(store, {
+            source: "missing-delete-method-test",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-no-delete-method",
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.reason).toContain("delete");
+        expect(result.deleted).toEqual([]);
+    });
+
+    it("reports splice-delete capability separately in bridge status", () => {
+        appendVisibleMessage("a1");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a1",
+            get nodes() {
+                return [
+                    {
+                        id: "root",
+                        parentId: null,
+                        children: ["u1"],
+                        message: { id: "root", author: { role: "root" } },
+                    },
+                    {
+                        id: "u1",
+                        parentId: "root",
+                        children: ["a1"],
+                        message: { id: "u1", author: { role: "user" } },
+                    },
+                    {
+                        id: "a1",
+                        parentId: "u1",
+                        children: [],
+                        message: { id: "a1", author: { role: "assistant" } },
+                    },
+                ];
+            },
+            getNodeIfExists(id) {
+                return this.nodes.find((node) => node.id === id) ?? null;
+            },
+            deleteClientOnlyMessage: vi.fn(),
+        };
+
+        bridge.registerStore(store, {
+            source: "status-splice-delete-test",
+        });
+
+        const status = bridge.status();
+
+        expect(status.methods).toMatchObject({
+            deleteNode: false,
+            deleteClientOnlyMessage: true,
+            canDeleteNode: true,
+        });
+
+        expect(status.capabilities).toMatchObject({
+            deleteNode: false,
+            deleteClientOnlyMessage: true,
+            canDeleteNode: true,
+        });
+    });
 });

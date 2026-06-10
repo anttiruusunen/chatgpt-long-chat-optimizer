@@ -58,6 +58,8 @@ import {
     collectRecentExchangeKeepNodeIdsFromActiveBranch,
     deleteStoreNodeFresh,
     getActiveStoreBranchNewestFirst,
+    getNodeParentId,
+    getStoreDeleteNodeMethod,
     getStoreRootId,
     summarizeStoreNode,
 } from "./chatStoreBridge/storeTopology.js";
@@ -331,6 +333,174 @@ function readInitialLoadHidingSettingsFromDom() {
                     reason: "unknown message type",
                 };
         }
+    }
+
+    function getNodeChildIds(node) {
+        return Array.isArray(node?.children) ? node.children : [];
+    }
+
+    function setNodeParentId(node, parentId) {
+        if (!node || typeof node !== "object") {
+            return false;
+        }
+
+        if ("parentId" in node || !("parent" in node)) {
+            node.parentId = parentId;
+            return true;
+        }
+
+        node.parent = parentId;
+        return true;
+    }
+
+    function removeChildId(node, childId) {
+        if (!node || !Array.isArray(node.children)) {
+            return false;
+        }
+
+        const beforeLength = node.children.length;
+        node.children = node.children.filter((id) => id !== childId);
+
+        return node.children.length !== beforeLength;
+    }
+
+    function addChildId(node, childId) {
+        if (!node || !childId) {
+            return false;
+        }
+
+        if (!Array.isArray(node.children)) {
+            node.children = [];
+        }
+
+        if (!node.children.includes(childId)) {
+            node.children.push(childId);
+            return true;
+        }
+
+        return false;
+    }
+
+    function replaceChildId(node, oldChildId, newChildId) {
+        if (!node || !Array.isArray(node.children) || !newChildId) {
+            return false;
+        }
+
+        let changed = false;
+
+        node.children = node.children.flatMap((childId) => {
+            if (childId !== oldChildId) {
+                return childId === newChildId ? [] : [childId];
+            }
+
+            changed = true;
+            return [newChildId];
+        });
+
+        if (!changed && !node.children.includes(newChildId)) {
+            node.children.push(newChildId);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    function getOldestKeptBranchNode(branchNodes, keepNodeIds, rootId) {
+        let oldestKeptNode = null;
+
+        for (const node of branchNodes) {
+            if (!node?.id) continue;
+            if (node.id === rootId) continue;
+
+            if (keepNodeIds.has(node.id)) {
+                oldestKeptNode = node;
+            }
+        }
+
+        return oldestKeptNode;
+    }
+
+    function getRootChildOnActiveBranch(branchNodes, rootId) {
+        if (!rootId) return null;
+
+        for (const node of branchNodes) {
+            if (!node?.id) continue;
+
+            if (getNodeParentId(node) === rootId) {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * deleteClientOnlyMessage splices deleted children into the deleted node's
+     * parent. Before deleting old history nodes with that method, detach the kept
+     * branch to root so splice-delete cannot reconnect old ancestors into the
+     * active branch.
+     */
+    function detachKeptBranchForSpliceDelete({
+        store,
+        rootId,
+        branchNodes,
+        keepNodeIds,
+    }) {
+        const rootNode = rootId ? getNodeDirectFresh(store, rootId) : null;
+        const oldestKeptNode = getOldestKeptBranchNode(
+            branchNodes,
+            keepNodeIds,
+            rootId
+        );
+
+        if (!rootNode?.id || !oldestKeptNode?.id) {
+            return {
+                ok: false,
+                reason: "missing root or oldest kept node",
+                rootId,
+                oldestKeptNode: summarizeStoreNode(oldestKeptNode),
+                rootNode: summarizeStoreNode(rootNode),
+                changed: false,
+            };
+        }
+
+        const previousParentId = getNodeParentId(oldestKeptNode);
+
+        if (!previousParentId || previousParentId === rootId) {
+            return {
+                ok: true,
+                reason: "kept branch already attached to root",
+                rootId,
+                oldestKeptNodeId: oldestKeptNode.id,
+                previousParentId,
+                changed: false,
+            };
+        }
+
+        const previousParentNode = getNodeDirectFresh(store, previousParentId);
+        const rootBranchChild = getRootChildOnActiveBranch(branchNodes, rootId);
+
+        removeChildId(previousParentNode, oldestKeptNode.id);
+
+        if (rootBranchChild?.id && rootBranchChild.id !== oldestKeptNode.id) {
+            replaceChildId(rootNode, rootBranchChild.id, oldestKeptNode.id);
+        } else {
+            addChildId(rootNode, oldestKeptNode.id);
+        }
+
+        setNodeParentId(oldestKeptNode, rootId);
+
+        return {
+            ok: true,
+            reason: "kept branch detached for splice delete",
+            rootId,
+            oldestKeptNodeId: oldestKeptNode.id,
+            previousParentId,
+            previousParentChildren: getNodeChildIds(previousParentNode),
+            rootBranchChildId: rootBranchChild?.id ?? null,
+            rootChildren: getNodeChildIds(rootNode),
+            changed: true,
+        };
     }
 
     const bridge = {
@@ -1028,12 +1198,15 @@ function readInitialLoadHidingSettingsFromDom() {
             reason = "store-prune",
         } = {}) {
             const store = this.__store;
+            const deleteMethod = getStoreDeleteNodeMethod(store);
 
-            if (!store || typeof store.deleteNode !== "function") {
+            if (!store || !deleteMethod) {
                 return {
                     ok: false,
-                    reason: "store/deleteNode unavailable",
+                    reason: "store/delete method unavailable",
                     historyKeptExchanges,
+                    deleteMethod: null,
+                    deleteMode: null,
                     currentLeafId: null,
                     branchNodeCount: 0,
                     keepNodeIds: [],
@@ -1058,6 +1231,8 @@ function readInitialLoadHidingSettingsFromDom() {
                     ok: false,
                     reason: "active branch unavailable",
                     historyKeptExchanges: keepCount,
+                    deleteMethod: deleteMethod.name,
+                    deleteMode: deleteMethod.mode,
                     currentLeafId,
                     branchNodeCount: branchNodes.length,
                     keepNodeIds: [],
@@ -1097,6 +1272,8 @@ function readInitialLoadHidingSettingsFromDom() {
                 ok: true,
                 reason,
                 historyKeptExchanges: keepCount,
+                deleteMethod: deleteMethod.name,
+                deleteMode: deleteMethod.mode,
                 rootId,
                 currentLeafId,
                 branchNodeCount: branchNodes.length,
@@ -1107,6 +1284,7 @@ function readInitialLoadHidingSettingsFromDom() {
                 keepNodeIds: Array.from(keepNodeIds),
                 deleteNodeIds,
                 skipped,
+                detachResult: null,
                 deleted: [],
                 failed: [],
             };
@@ -1115,6 +1293,8 @@ function readInitialLoadHidingSettingsFromDom() {
                 console.debug("[thread-optimizer bridge] store exchange prune plan", {
                     reason,
                     historyKeptExchanges: keepCount,
+                    deleteMethod: deleteMethod.name,
+                    deleteMode: deleteMethod.mode,
                     rootId,
                     currentLeafId,
                     branchNodeCount: branchNodes.length,
@@ -1138,6 +1318,28 @@ function readInitialLoadHidingSettingsFromDom() {
             this.beginStoreTopologyMutation?.("store-prune");
 
             const runDeletes = () => {
+                if (deleteMethod.mode === "splice-node") {
+                    result.detachResult = detachKeptBranchForSpliceDelete({
+                        store,
+                        rootId,
+                        branchNodes,
+                        keepNodeIds,
+                    });
+
+                    if (!result.detachResult.ok) {
+                        result.ok = false;
+                        result.failed.push({
+                            ok: false,
+                            nodeId: null,
+                            reason: result.detachResult.reason,
+                            detachResult: result.detachResult,
+                            deleteMethod: deleteMethod.name,
+                        });
+
+                        return;
+                    }
+                }
+
                 for (let i = deleteNodeIds.length - 1; i >= 0; i -= 1) {
                     const nodeId = deleteNodeIds[i];
                     const node = getNodeDirectFresh(store, nodeId);
@@ -1168,7 +1370,7 @@ function readInitialLoadHidingSettingsFromDom() {
             result.failedCount = result.failed.length;
             result.ok = result.failed.length === 0;
 
-            if (result.deleted.length > 0) {
+            if (result.deleted.length > 0 || result.detachResult?.changed) {
                 this.clearFullTopologyCaches?.("store-prune-complete");
 
                 window.setTimeout(() => {
@@ -1194,9 +1396,12 @@ function readInitialLoadHidingSettingsFromDom() {
                     reason,
                     ok: result.ok,
                     historyKeptExchanges: keepCount,
+                    deleteMethod: deleteMethod.name,
+                    deleteMode: deleteMethod.mode,
                     requestedDeleteCount: deleteNodeIds.length,
                     deletedCount: result.deletedCount,
                     failedCount: result.failedCount,
+                    detachResult: result.detachResult,
                     refreshResult: result.refreshResult,
                     deletedSamples: result.deleted.slice(0, 20),
                     failedSamples: result.failed.slice(0, 20),
