@@ -684,11 +684,16 @@ export const cacheInstallerMethods = {
         }
 
         const getBranchOriginal = getStoreMethod(store, "getBranch");
+        const getBranchFromLeafOriginal = getStoreMethod(store, "getBranchFromLeaf");
 
         const originals = {};
 
         if (getBranchOriginal) {
             originals.getBranch = getBranchOriginal;
+        }
+
+        if (getBranchFromLeafOriginal) {
+            originals.getBranchFromLeaf = getBranchFromLeafOriginal;
         }
 
         if (Object.keys(originals).length === 0) {
@@ -708,16 +713,35 @@ export const cacheInstallerMethods = {
             }
         );
 
+        const getBranchFromLeafStats = createCacheStats(
+            {
+                hits: 0,
+                misses: 0,
+                cached: 0,
+                mode: "profiled:persistent:getBranchFromLeaf",
+            },
+            {
+                cached: 0,
+                mode: "production:persistent:getBranchFromLeaf",
+            }
+        );
+
         const getBranchCache = createPersistentCache({
             stats: getBranchStats,
         });
 
+        const getBranchFromLeafCache = createPersistentCache({
+            stats: getBranchFromLeafStats,
+        });
+
         this.__branchCache = {
             getBranch: getBranchCache.cache,
+            getBranchFromLeaf: getBranchFromLeafCache.cache,
         };
 
         this.__branchCacheStats = {
             getBranch: getBranchStats,
+            getBranchFromLeaf: getBranchFromLeafStats,
         };
 
         this.__branchCacheOriginals = originals;
@@ -731,12 +755,19 @@ export const cacheInstallerMethods = {
                 ? bridgeRef.recordBranchCallSite?.bind(bridgeRef)
                 : null;
 
-            store.getBranch = function cachedGetBranch(id, ...rest) {
+            store.getBranch = function cachedGetBranch(...args) {
                 if (recordBranchCallSite) {
-                    recordBranchCallSite("getBranch", [id, ...rest]);
+                    recordBranchCallSite("getBranch", args);
                 }
 
-                const cached = getBranchGet(id);
+                const leafId =
+                    typeof store.currentLeafId === "function"
+                        ? store.currentLeafId()
+                        : store.currentLeafId;
+
+                const cacheKey = leafId || "__current_leaf__";
+
+                const cached = getBranchGet(cacheKey);
 
                 if (cached !== undefined) {
                     if (ENABLE_CACHE_PROFILING) getBranchStats.hits += 1;
@@ -745,10 +776,51 @@ export const cacheInstallerMethods = {
 
                 if (ENABLE_CACHE_PROFILING) getBranchStats.misses += 1;
 
-                const result = getBranchOriginal.call(store, id, ...rest);
+                let result;
 
-                getBranchSet(id, result ?? null);
+                if (typeof getBranchFromLeafOriginal === "function" && leafId) {
+                    result = store.getBranchFromLeaf(leafId);
+                } else {
+                    result = getBranchOriginal.apply(store, args);
+                }
+
+                getBranchSet(cacheKey, result ?? null);
                 updateCachedCount(getBranchStats, getBranchCache.cache);
+
+                return result ?? null;
+            };
+        }
+
+        if (typeof getBranchFromLeafOriginal === "function") {
+            const getBranchFromLeafGet = getBranchFromLeafCache.get;
+            const getBranchFromLeafSet = getBranchFromLeafCache.set;
+            const recordBranchCallSite = ENABLE_BRANCH_CALLSITE_STATS
+                ? bridgeRef.recordBranchCallSite?.bind(bridgeRef)
+                : null;
+
+            store.getBranchFromLeaf = function cachedGetBranchFromLeaf(leafId, ...rest) {
+                if (recordBranchCallSite) {
+                    recordBranchCallSite("getBranchFromLeaf", [leafId, ...rest]);
+                }
+
+                const cacheKey = leafId || "__missing_leaf__";
+
+                const cached = getBranchFromLeafGet(cacheKey);
+
+                if (cached !== undefined) {
+                    if (ENABLE_CACHE_PROFILING) getBranchFromLeafStats.hits += 1;
+                    return cached;
+                }
+
+                if (ENABLE_CACHE_PROFILING) getBranchFromLeafStats.misses += 1;
+
+                const result = getBranchFromLeafOriginal.call(store, leafId, ...rest);
+
+                getBranchFromLeafSet(cacheKey, result ?? null);
+                updateCachedCount(
+                    getBranchFromLeafStats,
+                    getBranchFromLeafCache.cache
+                );
 
                 return result ?? null;
             };
@@ -780,12 +852,20 @@ export const cacheInstallerMethods = {
         const branchCache = this.__branchCache;
 
         branchCache?.getBranch?.clear?.();
+        branchCache?.getBranchFromLeaf?.clear?.();
 
         if (
             this.__branchCacheStats?.getBranch &&
             "cached" in this.__branchCacheStats.getBranch
         ) {
             this.__branchCacheStats.getBranch.cached = 0;
+        }
+
+        if (
+            this.__branchCacheStats?.getBranchFromLeaf &&
+            "cached" in this.__branchCacheStats.getBranchFromLeaf
+        ) {
+            this.__branchCacheStats.getBranchFromLeaf.cached = 0;
         }
 
         return { ok: true };
@@ -796,6 +876,7 @@ export const cacheInstallerMethods = {
             installed: Boolean(this.__branchCacheInstalled),
             size: {
                 getBranch: this.__branchCache?.getBranch?.size ?? 0,
+                getBranchFromLeaf: this.__branchCache?.getBranchFromLeaf?.size ?? 0,
             },
             stats: this.__branchCacheStats ?? null,
             lastInstallResult: this.__branchCacheLastInstallResult ?? null,

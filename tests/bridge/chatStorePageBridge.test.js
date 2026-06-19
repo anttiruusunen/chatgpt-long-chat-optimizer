@@ -1545,4 +1545,85 @@ describe("chatStorePageBridge", () => {
             canDeleteNode: true,
         });
     });
+
+    it("caches getBranchFromLeaf calls through the installed wrapper", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        const originalGetBranchFromLeaf = fakeStore.getBranchFromLeaf;
+        const getBranchFromLeafSpy = vi.fn(function getBranchFromLeafSpy(...args) {
+            return originalGetBranchFromLeaf.apply(this, args);
+        });
+
+        fakeStore.getBranchFromLeaf = getBranchFromLeafSpy;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-get-branch-from-leaf-cache",
+        });
+
+        expect(bridge.__branchCacheInstalled).toBe(true);
+        expect(bridge.__branchCacheOriginals.getBranchFromLeaf).toBe(
+            getBranchFromLeafSpy
+        );
+        expect(bridge.__branchCacheLastInstallResult.methods).toContain(
+            "getBranchFromLeaf"
+        );
+
+        const first = fakeStore.getBranchFromLeaf("node-4");
+        const second = fakeStore.getBranchFromLeaf("node-4");
+        const third = fakeStore.getBranchFromLeaf("node-3");
+
+        expect(first).toBe(second);
+        expect(first).not.toBe(third);
+
+        expect(getBranchFromLeafSpy).toHaveBeenCalledTimes(2);
+        expect(getBranchFromLeafSpy).toHaveBeenNthCalledWith(1, "node-4");
+        expect(getBranchFromLeafSpy).toHaveBeenNthCalledWith(2, "node-3");
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            installed: true,
+            size: {
+                getBranchFromLeaf: 2,
+            },
+        });
+    });
+
+    it("installs branch cache for getBranchFromLeaf", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        const originalGetBranchFromLeaf = fakeStore.getBranchFromLeaf;
+        const getBranchFromLeafSpy = vi.fn(function getBranchFromLeafSpy(...args) {
+            return originalGetBranchFromLeaf.apply(this, args);
+        });
+
+        fakeStore.getBranchFromLeaf = getBranchFromLeafSpy;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-get-branch-from-leaf-cache",
+        });
+
+        const first = fakeStore.getBranchFromLeaf("node-4");
+        const second = fakeStore.getBranchFromLeaf("node-4");
+
+        expect(first).toBe(second);
+        expect(getBranchFromLeafSpy).toHaveBeenCalledTimes(1);
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            installed: true,
+            size: {
+                getBranchFromLeaf: 1,
+            },
+        });
+
+        expect(bridge.__branchCacheLastInstallResult.methods).toContain(
+            "getBranchFromLeaf"
+        );
+    });
 });

@@ -1170,7 +1170,7 @@ function readInitialLoadHidingSettingsFromDom() {
 
             const branchOriginals = this.__branchCacheOriginals;
             if (branchOriginals) {
-                for (const methodName of ["getBranch"]) {
+                for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
                     const original = branchOriginals[methodName];
 
                     if (
@@ -2497,8 +2497,12 @@ function readInitialLoadHidingSettingsFromDom() {
 
             const recordBranchSkip = (why) => {
                 const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
+                const getBranchFromLeafSize = this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
                 recordInvalidation("__branchCache.getBranch", "skipped", getBranchSize, {
+                    why,
+                });
+                recordInvalidation("__branchCache.getBranchFromLeaf", "skipped", getBranchFromLeafSize, {
                     why,
                 });
             };
@@ -2538,6 +2542,7 @@ function readInitialLoadHidingSettingsFromDom() {
 
                 if (cacheSlot === "__branchCache") {
                     const getBranchSize = this.__branchCache?.getBranch?.size ?? 0;
+                    const getBranchFromLeafSize = this.__branchCache?.getBranchFromLeaf?.size ?? 0;
 
                     this.clearBranchCache?.();
 
@@ -2546,10 +2551,18 @@ function readInitialLoadHidingSettingsFromDom() {
                         "cleared",
                         getBranchSize
                     );
+                    recordInvalidation(
+                        "__branchCache.getBranchFromLeaf",
+                        "cleared",
+                        getBranchFromLeafSize
+                    );
 
                     if (ENABLE_CACHE_PROFILING && this.__branchCacheStats) {
                         if (this.__branchCacheStats.getBranch) {
                             this.__branchCacheStats.getBranch.cached = 0;
+                        }
+                        if (this.__branchCacheStats.getBranchFromLeaf) {
+                            this.__branchCacheStats.getBranchFromLeaf.cached = 0;
                         }
                     }
 
