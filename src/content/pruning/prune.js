@@ -13,6 +13,16 @@ import {
 } from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 
+const CONVERSATION_TURN_SELECTOR =
+    'section[data-turn], section[data-testid^="conversation-turn-"], [data-turn-id-container]';
+
+const STORE_PRUNE_TURN_STABILITY_MS = 350;
+
+let lastTurnSnapshot = {
+    count: -1,
+    changedAt: 0,
+};
+
 function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
 
@@ -39,6 +49,62 @@ function normalizeHistoryKeptExchanges(
     historyKeptExchanges = state.settings.historyKeptExchanges
 ) {
     return Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
+}
+
+function getVisibleConversationTurnCount() {
+    return document.querySelectorAll(CONVERSATION_TURN_SELECTOR).length;
+}
+
+function getTurnStabilityState(now = performance.now()) {
+    const count = getVisibleConversationTurnCount();
+
+    if (count !== lastTurnSnapshot.count) {
+        lastTurnSnapshot = {
+            count,
+            changedAt: now,
+        };
+    }
+
+    return {
+        count,
+        stableForMs: Math.max(0, now - lastTurnSnapshot.changedAt),
+    };
+}
+
+function shouldDeferStorePruneForTurnStability() {
+    const stability = getTurnStabilityState();
+
+    if (stability.count <= 0) {
+        return {
+            defer: true,
+            reason: "conversation turns unavailable",
+            ...stability,
+        };
+    }
+
+    if (stability.stableForMs < STORE_PRUNE_TURN_STABILITY_MS) {
+        return {
+            defer: true,
+            reason: "conversation turns unstable",
+            requiredStableMs: STORE_PRUNE_TURN_STABILITY_MS,
+            ...stability,
+        };
+    }
+
+    return {
+        defer: false,
+        ...stability,
+    };
+}
+
+export function resetStorePruneTurnStabilityForTests({
+    count = -1,
+    changedAt = 0,
+} = {}) {
+    lastTurnSnapshot = {
+        count,
+        changedAt,
+    };
 }
 
 /**
@@ -79,6 +145,28 @@ function requestStorePruneWithBridge({
             deferred: true,
             reason: "assistant generation active",
             historyKeptExchanges: keepCount,
+        };
+    }
+
+    const turnStability = shouldDeferStorePruneForTurnStability();
+
+    if (turnStability.defer) {
+        debugLog("Prune: deferred store pruning until conversation turns stabilize", {
+            historyKeptExchanges: keepCount,
+            reason,
+            deferReason: turnStability.reason,
+            visibleTurnCount: turnStability.count,
+            stableForMs: Math.round(turnStability.stableForMs),
+            requiredStableMs: turnStability.requiredStableMs,
+        });
+
+        return {
+            posted: false,
+            deferred: true,
+            reason: turnStability.reason,
+            historyKeptExchanges: keepCount,
+            visibleTurnCount: turnStability.count,
+            stableForMs: turnStability.stableForMs,
         };
     }
 
