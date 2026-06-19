@@ -27,7 +27,12 @@ import {
     syncCodeBlockScrollbarStyles,
     syncUserMessageClampStyles,
 } from "../ui/qolStyles.js";
-import { installConversationNavigationWatcher } from "./navigation.js";
+import {
+    installConversationNavigationWatcher,
+    isChatRouteLocation,
+    isNewChatRouteLocation,
+    normalizeChatGptLocationPath,
+} from "./navigation.js";
 import {
     configureConversationMaintenance,
     scheduleConversationChromeSync,
@@ -73,22 +78,7 @@ function containerHasConversationTurns(container) {
 }
 
 function normalizeLocationPath(locationKey = null) {
-    const fallbackPath =
-        typeof window !== "undefined" && window.location
-            ? `${window.location.pathname || "/"}${window.location.search || ""}`
-            : "/";
-
-    const rawLocationKey =
-        typeof locationKey === "string" && locationKey.trim()
-            ? locationKey.trim()
-            : fallbackPath;
-
-    try {
-        const url = new URL(rawLocationKey, window.location.origin);
-        return `${url.pathname || "/"}${url.search || ""}`;
-    } catch {
-        return rawLocationKey;
-    }
+    return normalizeChatGptLocationPath(locationKey);
 }
 
 function isNewChatNavigationReason(reason) {
@@ -100,8 +90,7 @@ function isImmediateNewChatNavigationReason(reason) {
 }
 
 function isNewChatLocationKey(locationKey = null) {
-    const path = normalizeLocationPath(locationKey);
-    return path === "/" || path.startsWith("/?");
+    return isNewChatRouteLocation(locationKey);
 }
 
 function isLinkNavigationReason(reason) {
@@ -125,11 +114,15 @@ function isEmptyChatNavigation(reason, locationKey = null) {
 }
 
 function shouldRequireConversationTurnsForInitialPrune(locationKey = null) {
-    return !isNewChatLocationKey(locationKey);
+    return (
+        isChatRouteLocation(locationKey) &&
+        !isNewChatLocationKey(locationKey)
+    );
 }
 
-function shouldShowInitialPrunePendingOverlay() {
+function shouldShowInitialPrunePendingOverlay(locationKey = null) {
     return (
+        isChatRouteLocation(locationKey) &&
         state.settings.autoPrune &&
         state.featureFlags.pruning &&
         !state.didInitialPrune
@@ -176,6 +169,16 @@ function markEmptyChatReadyForPage(reason) {
 
     debugLog("Index: empty chat lifecycle ready", {
         reason,
+    });
+}
+
+function markNonChatRouteReadyForPage(reason, locationKey = null) {
+    pendingDeferredInitialPrune = false;
+    state.didInitialPrune = true;
+
+    debugLog("Index: non-chat route lifecycle ready", {
+        reason,
+        locationKey: normalizeLocationPath(locationKey),
     });
 }
 
@@ -231,6 +234,11 @@ function runInitialPruneWhenReady(container, options = {}) {
 
 function retryIncompleteInitialPruneAfterReplySettled() {
     if (!state.settings.autoPrune || !state.featureFlags.pruning) {
+        return false;
+    }
+
+    if (!isChatRouteLocation(normalizeLocationPath())) {
+        pendingDeferredInitialPrune = false;
         return false;
     }
 
@@ -292,8 +300,14 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 
     clearPendingNavigationPrune();
 
+    if (!isChatRouteLocation(locationKey)) {
+        markNonChatRouteReadyForPage("non-chat-fresh-container-wait", locationKey);
+        pendingNavigationPruneTimer = null;
+        return;
+    }
+
     if (
-        shouldShowInitialPrunePendingOverlay() &&
+        shouldShowInitialPrunePendingOverlay(locationKey) &&
         !isEmptyChatNavigation(reason, locationKey)
     ) {
         showInitialPrunePendingOverlay({
@@ -303,6 +317,12 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 
     function attempt() {
         if (generation !== navigationPruneGeneration) {
+            return;
+        }
+
+        if (!isChatRouteLocation(locationKey)) {
+            markNonChatRouteReadyForPage("non-chat-fresh-container-poll", locationKey);
+            pendingNavigationPruneTimer = null;
             return;
         }
 
@@ -434,6 +454,20 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
 
     resetConversationLifecycleForNavigation();
 
+    if (!isChatRouteLocation(locationKey)) {
+        lastCompletedFreshNavigationLocationKey = null;
+
+        markNonChatRouteReadyForPage("non-chat-navigation", locationKey);
+
+        scheduleConversationChromeSync({
+            reason: "navigation-non-chat-route",
+            forceCss: false,
+            includeStreaming: false,
+        });
+
+        return;
+    }
+
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (isEmptyChatNavigation(reason, locationKey)) {
             lastCompletedFreshNavigationLocationKey = null;
@@ -523,6 +557,10 @@ function attachObserverToContainer(container) {
 }
 
 function ensureObserverAttached() {
+    if (!isChatRouteLocation(normalizeLocationPath())) {
+        return false;
+    }
+
     return ensureObserverAttachedBase(observerDeps);
 }
 
@@ -533,9 +571,14 @@ function waitForContainerAndInitialPrune(options = {}) {
         ...initialPruneOptions
     } = options;
 
+    if (!isChatRouteLocation(locationKey)) {
+        markNonChatRouteReadyForPage("non-chat-wait-for-container", locationKey);
+        return false;
+    }
+
     if (
         requireConversationTurns &&
-        shouldShowInitialPrunePendingOverlay() &&
+        shouldShowInitialPrunePendingOverlay(locationKey) &&
         !isNewChatLocationKey(locationKey)
     ) {
         showInitialPrunePendingOverlay({
@@ -595,6 +638,10 @@ async function initialize() {
 
     installReplyTimingListeners({
         onBeforeReplyStarted: () => {
+            if (!isChatRouteLocation(normalizeLocationPath())) {
+                return;
+            }
+
             if (
                 state.settings.autoPrune &&
                 state.featureFlags.pruning &&
@@ -627,10 +674,11 @@ async function initialize() {
         },
     });
 
-    const hasContainer = ensureObserverAttached();
+    const initialLocationKey = normalizeLocationPath();
+    const isInitialChatRoute = isChatRouteLocation(initialLocationKey);
+    const hasContainer = isInitialChatRoute ? ensureObserverAttached() : false;
     const container = hasContainer ? getConversationContainer() : null;
     const hasTurns = containerHasConversationTurns(container);
-    const initialLocationKey = normalizeLocationPath();
 
     debugLog("Index: initialize", {
         settings: state.settings,
@@ -639,6 +687,19 @@ async function initialize() {
         hasTurns,
         locationKey: initialLocationKey,
     });
+
+    if (!isInitialChatRoute) {
+        markNonChatRouteReadyForPage("non-chat-initialize", initialLocationKey);
+
+        scheduleConversationChromeSync({
+            reason: "initialize-non-chat-route",
+            forceCss: false,
+            includeStreaming: false,
+        });
+
+        ensureReplyCompletionPoll();
+        return;
+    }
 
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (hasContainer && hasTurns) {
@@ -761,20 +822,39 @@ ext.storage.onChanged.addListener((changes, areaName) => {
         setOffscreenOptimizationEnabled(state.featureFlags.offscreenOptimization);
     }
 
+    const currentLocationKey = normalizeLocationPath();
+
+    if (!isChatRouteLocation(currentLocationKey)) {
+        pendingDeferredInitialPrune = false;
+        disableStoreReadOptimizationForPage("storage-changed-non-chat-route");
+        clearPendingAutoPrune();
+        markNonChatRouteReadyForPage(
+            "storage-changed-non-chat-route",
+            currentLocationKey
+        );
+
+        scheduleConversationChromeSync({
+            reason: "storage-changed-non-chat-route",
+            forceCss: false,
+            includeStreaming: false,
+        });
+
+        return;
+    }
+
     if (state.settings.autoPrune && state.featureFlags.pruning) {
         if (!state.didInitialPrune) {
             const container = getConversationContainer();
-            const locationKey = normalizeLocationPath();
 
             if (container && containerHasConversationTurns(container)) {
                 runInitialPruneWithDeferredTracking(container);
             } else {
                 const requireConversationTurns =
-                    shouldRequireConversationTurnsForInitialPrune(locationKey);
+                    shouldRequireConversationTurnsForInitialPrune(currentLocationKey);
 
                 waitForContainerAndInitialPrune({
                     requireConversationTurns,
-                    locationKey,
+                    locationKey: currentLocationKey,
                 });
 
                 if (!requireConversationTurns) {

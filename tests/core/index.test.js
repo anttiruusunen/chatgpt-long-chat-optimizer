@@ -81,9 +81,74 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
     ensureReplyCompletionPoll: mockRefs.ensureReplyCompletionPoll,
 }));
 
-vi.mock("../../src/content/core/navigation.js", () => ({
-    installConversationNavigationWatcher: mockRefs.installConversationNavigationWatcher,
-}));
+vi.mock("../../src/content/core/navigation.js", () => {
+    function getPathnameFromLocationKey(locationKey = null) {
+        const fallbackPath =
+            typeof window !== "undefined" && window.location
+                ? `${window.location.pathname || "/"}${window.location.search || ""}${window.location.hash || ""}`
+                : "/";
+
+        const rawLocationKey =
+            typeof locationKey === "string" && locationKey.trim()
+                ? locationKey.trim()
+                : fallbackPath;
+
+        try {
+            const url = new URL(rawLocationKey, window.location.origin);
+            return url.pathname || "/";
+        } catch {
+            return String(rawLocationKey || "/").split(/[?#]/)[0] || "/";
+        }
+    }
+
+    function normalizeChatGptLocationPath(locationKey = null) {
+        const fallbackPath =
+            typeof window !== "undefined" && window.location
+                ? `${window.location.pathname || "/"}${window.location.search || ""}`
+                : "/";
+
+        const rawLocationKey =
+            typeof locationKey === "string" && locationKey.trim()
+                ? locationKey.trim()
+                : fallbackPath;
+
+        try {
+            const url = new URL(rawLocationKey, window.location.origin);
+            return `${url.pathname || "/"}${url.search || ""}`;
+        } catch {
+            return rawLocationKey;
+        }
+    }
+
+    function isNewChatRouteLocation(locationKey = null) {
+        return getPathnameFromLocationKey(locationKey) === "/";
+    }
+
+    function isExistingConversationRouteLocation(locationKey = null) {
+        const pathname = getPathnameFromLocationKey(locationKey);
+
+        return (
+            /^\/c\/[^/]+/.test(pathname) ||
+            /^\/g\/[^/]+\/c\/[^/]+/.test(pathname)
+        );
+    }
+
+    function isChatRouteLocation(locationKey = null) {
+        return (
+            isNewChatRouteLocation(locationKey) ||
+            isExistingConversationRouteLocation(locationKey)
+        );
+    }
+
+    return {
+        installConversationNavigationWatcher:
+            mockRefs.installConversationNavigationWatcher,
+        normalizeChatGptLocationPath,
+        isNewChatRouteLocation,
+        isExistingConversationRouteLocation,
+        isChatRouteLocation,
+    };
+});
 
 vi.mock("../../src/content/core/domMutationGuard.js", () => ({
     installDomMutationGuard: mockRefs.installDomMutationGuard,
@@ -164,6 +229,18 @@ function createEmptyConversationContainer() {
 
 function setTestLocation(path = "/c/current-chat") {
     window.history.replaceState({}, "", path);
+}
+
+function ensureTestLocation(path = "/c/current-chat") {
+    const currentPath = `${window.location.pathname || "/"}${window.location.search || ""}`;
+
+    if (
+        currentPath === "/" ||
+        currentPath === "/blank" ||
+        currentPath === "blank"
+    ) {
+        setTestLocation(path);
+    }
 }
 
 async function importFreshIndex() {
@@ -448,6 +525,57 @@ describe("core/index", () => {
             })
         );
         expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+    });
+
+    it("does not attach observers or show prune overlay when opening a non-chat ChatGPT page", async () => {
+        setTestLocation("/pricing");
+
+        mockRefs.ensureObserverAttached.mockReturnValue(false);
+        mockRefs.getConversationContainer.mockReturnValue(null);
+
+        await importFreshIndex();
+
+        expect(mockRefs.ensureObserverAttached).not.toHaveBeenCalled();
+        expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+
+        expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
+            reason: "initialize-non-chat-route",
+            forceCss: false,
+            includeStreaming: false,
+        });
+
+        expect(mockRefs.ensureReplyCompletionPoll).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not prune on storage changes while on a non-chat ChatGPT page", async () => {
+        setTestLocation("/pricing");
+
+        await importFreshIndex();
+
+        mockRefs.runInitialPrune.mockClear();
+        mockRefs.scheduleAutoPrune.mockClear();
+        mockRefs.waitForContainerAndInitialPrune.mockClear();
+        mockRefs.scheduleConversationChromeSync.mockClear();
+
+        mockRefs.storageChangeListener(
+            {
+                historyKeptExchanges: { newValue: 4 },
+            },
+            "sync"
+        );
+
+        expect(mockRefs.runInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+        expect(mockRefs.waitForContainerAndInitialPrune).not.toHaveBeenCalled();
+        expect(mockRefs.clearPendingAutoPrune).toHaveBeenCalled();
+
+        expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
+            reason: "storage-changed-non-chat-route",
+            forceCss: false,
+            includeStreaming: false,
+        });
     });
 
     it("does not show initial prune overlay or wait for turns when navigating to New chat", async () => {

@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
     installConversationNavigationWatcher,
     resetConversationNavigationWatcherForTests,
+    isChatRouteLocation,
+    isNewChatRouteLocation,
+    isExistingConversationRouteLocation,
+    normalizeChatGptLocationPath,
 } from "../../src/content/core/navigation.js";
 import {
     dispatchClick,
@@ -201,5 +205,42 @@ describe("navigation watcher", () => {
             reason: "pushState",
             locationKey: "/c/plain-route-change",
         });
+    });
+});
+
+describe("ChatGPT route helpers", () => {
+    it.each([
+        ["/", true],
+        ["/?model=gpt-5", true],
+        ["/c/test-conversation", true],
+        ["/c/test-conversation?model=gpt-5", true],
+        ["/g/test-gpt/c/test-conversation", true],
+        ["/pricing", false],
+        ["/gpts", false],
+        ["/settings", false],
+        ["/auth/login", false],
+        ["/share/test", false],
+    ])("classifies %s as chat route: %s", (path, expected) => {
+        expect(isChatRouteLocation(path)).toBe(expected);
+    });
+
+    it("classifies only root as new chat route", () => {
+        expect(isNewChatRouteLocation("/")).toBe(true);
+        expect(isNewChatRouteLocation("/?model=gpt-5")).toBe(true);
+        expect(isNewChatRouteLocation("/c/test")).toBe(false);
+        expect(isNewChatRouteLocation("/pricing")).toBe(false);
+    });
+
+    it("classifies conversation routes separately from non-chat pages", () => {
+        expect(isExistingConversationRouteLocation("/c/test")).toBe(true);
+        expect(isExistingConversationRouteLocation("/g/gpt-id/c/test")).toBe(true);
+        expect(isExistingConversationRouteLocation("/")).toBe(false);
+        expect(isExistingConversationRouteLocation("/gpts")).toBe(false);
+    });
+
+    it("normalizes location path without hash", () => {
+        expect(normalizeChatGptLocationPath("/c/test?model=gpt-5#bottom")).toBe(
+            "/c/test?model=gpt-5"
+        );
     });
 });

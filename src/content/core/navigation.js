@@ -11,8 +11,67 @@ let pendingConversationLinkClickUntil = 0;
 
 const CONVERSATION_LINK_HISTORY_SUPPRESSION_MS = 1000;
 
-function getCurrentLocationKey() {
+export function getCurrentLocationKey() {
     return `${location.pathname}${location.search}${location.hash}`;
+}
+
+export function getPathnameFromLocationKey(locationKey = null) {
+    const fallbackPath =
+        typeof window !== "undefined" && window.location
+            ? `${window.location.pathname || "/"}${window.location.search || ""}${window.location.hash || ""}`
+            : "/";
+
+    const rawLocationKey =
+        typeof locationKey === "string" && locationKey.trim()
+            ? locationKey.trim()
+            : fallbackPath;
+
+    try {
+        const url = new URL(rawLocationKey, window.location.origin);
+        return url.pathname || "/";
+    } catch {
+        return String(rawLocationKey || "/").split(/[?#]/)[0] || "/";
+    }
+}
+
+export function normalizeChatGptLocationPath(locationKey = null) {
+    const fallbackPath =
+        typeof window !== "undefined" && window.location
+            ? `${window.location.pathname || "/"}${window.location.search || ""}`
+            : "/";
+
+    const rawLocationKey =
+        typeof locationKey === "string" && locationKey.trim()
+            ? locationKey.trim()
+            : fallbackPath;
+
+    try {
+        const url = new URL(rawLocationKey, window.location.origin);
+        return `${url.pathname || "/"}${url.search || ""}`;
+    } catch {
+        return rawLocationKey;
+    }
+}
+
+export function isNewChatRouteLocation(locationKey = null) {
+    const pathname = getPathnameFromLocationKey(locationKey);
+    return pathname === "/";
+}
+
+export function isExistingConversationRouteLocation(locationKey = null) {
+    const pathname = getPathnameFromLocationKey(locationKey);
+
+    return (
+        /^\/c\/[^/]+/.test(pathname) ||
+        /^\/g\/[^/]+\/c\/[^/]+/.test(pathname)
+    );
+}
+
+export function isChatRouteLocation(locationKey = null) {
+    return (
+        isNewChatRouteLocation(locationKey) ||
+        isExistingConversationRouteLocation(locationKey)
+    );
 }
 
 function clearScheduledChecks() {
