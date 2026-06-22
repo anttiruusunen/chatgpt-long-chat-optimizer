@@ -676,12 +676,71 @@ describe("core/index", () => {
 
         options.onReplySettled();
 
-        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,
             includeStreaming: true,
         });
+    });
+
+    it("does not schedule reply-settled auto-prune when an incomplete initial prune is retried", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = false;
+
+        mockRefs.getConversationContainer.mockReturnValue(
+            createReadyConversationContainer()
+        );
+
+        mockRefs.scheduleAutoPrune.mockClear();
+        mockRefs.runInitialPrune.mockClear();
+
+        options.onReplySettled();
+
+        expect(mockRefs.runInitialPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
+            reason: "reply-settled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+    });
+
+    it("schedules reply-settled auto-prune after a deferred before-send prune", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.pruneOldSections.mockReturnValue({
+            posted: false,
+            deferred: true,
+            reason: "conversation turns unstable",
+        });
+
+        options.onBeforeReplyStarted();
+
+        expect(mockRefs.pruneOldSections).toHaveBeenCalledWith(
+            state.settings.historyKeptExchanges,
+            {
+                reason: "before-send",
+                showOverlay: false,
+                guardComposerCaret: false,
+            }
+        );
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
     });
 
     it("reacts to storage changes by syncing affected feature paths", async () => {

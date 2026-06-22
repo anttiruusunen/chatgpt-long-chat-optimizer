@@ -68,9 +68,12 @@ export function isExistingConversationRouteLocation(locationKey = null) {
 }
 
 export function isChatRouteLocation(locationKey = null) {
+    const pathname = getPathnameFromLocationKey(locationKey);
+
     return (
         isNewChatRouteLocation(locationKey) ||
-        isExistingConversationRouteLocation(locationKey)
+        isExistingConversationRouteLocation(locationKey) ||
+        isE2EChatFixtureRoute(pathname)
     );
 }
 
@@ -281,6 +284,10 @@ function handlePopState() {
 
 function handleHashChange() {
     handleHistoryNavigation("hashchange");
+}
+
+function isE2EChatFixtureRoute(pathname) {
+    return /\/tests\/e2e\/fixtures\/chat\.html$/.test(pathname);
 }
 
 /**

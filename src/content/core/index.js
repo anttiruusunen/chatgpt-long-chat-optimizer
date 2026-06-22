@@ -658,7 +658,17 @@ async function initialize() {
             handleReplyStreamingStarted();
         },
         onReplySettled: () => {
-            retryIncompleteInitialPruneAfterReplySettled();
+            const retriedInitialPrune = retryIncompleteInitialPruneAfterReplySettled();
+
+            if (
+                !retriedInitialPrune &&
+                isChatRouteLocation(normalizeLocationPath()) &&
+                state.settings.autoPrune &&
+                state.featureFlags.pruning &&
+                state.didInitialPrune
+            ) {
+                scheduleAutoPrune("reply-settled");
+            }
 
             scheduleConversationChromeSync({
                 reason: "reply-settled",

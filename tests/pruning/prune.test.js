@@ -18,9 +18,6 @@ vi.mock("../../src/content/core/logger.js", () => ({
     debugLog: mockRefs.debugLog,
 }));
 
-const CONVERSATION_TURN_SELECTOR =
-    'section[data-turn], section[data-testid^="conversation-turn-"], [data-turn-id-container]';
-
 async function loadPruneModule() {
     const stateModule = await import("../../src/content/core/state.js");
     const pruneModule = await import("../../src/content/pruning/prune.js");
@@ -47,18 +44,6 @@ function buildConversationWithSettledAssistant() {
     `;
 }
 
-function markConversationTurnsStableForPrune({
-    resetStorePruneTurnStabilityForTests,
-    stableForMs = 400,
-} = {}) {
-    const count = document.querySelectorAll(CONVERSATION_TURN_SELECTOR).length;
-
-    resetStorePruneTurnStabilityForTests({
-        count,
-        changedAt: performance.now() - stableForMs,
-    });
-}
-
 describe("prune", () => {
     beforeEach(() => {
         vi.resetModules();
@@ -83,48 +68,13 @@ describe("prune", () => {
         vi.restoreAllMocks();
     });
 
-    it("defers store prune until conversation turns are stable", async () => {
+    it("requests store prune when chat is settled", async () => {
         const { state, pruneOldSections } = await loadPruneModule();
 
         state.featureFlags.pruning = true;
         state.settings.historyKeptExchanges = 1;
 
         buildConversationWithSettledAssistant();
-
-        const result = pruneOldSections(1);
-
-        expect(mockRefs.requestStoreHistoryPrune).not.toHaveBeenCalled();
-        expect(result).toMatchObject({
-            visibleSectionsChanged: false,
-            posted: false,
-            deferred: true,
-            reason: "conversation turns unstable",
-        });
-
-        expect(result.result).toMatchObject({
-            posted: false,
-            deferred: true,
-            reason: "conversation turns unstable",
-            historyKeptExchanges: 1,
-            visibleTurnCount: 2,
-        });
-    });
-
-    it("requests store prune when chat is settled and turns are stable", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
-
-        state.featureFlags.pruning = true;
-        state.settings.historyKeptExchanges = 1;
-
-        buildConversationWithSettledAssistant();
-
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
 
         const result = pruneOldSections(1);
 
@@ -140,26 +90,40 @@ describe("prune", () => {
         });
     });
 
-    it("defers again when conversation turn count changes after becoming stable", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
+    it("requests store prune even when the DOM has no visible conversation turns", async () => {
+        const { state, pruneOldSections } = await loadPruneModule();
+
+        state.featureFlags.pruning = true;
+        state.settings.historyKeptExchanges = 1;
+
+        document.body.innerHTML = "<main></main>";
+
+        const result = pruneOldSections(1);
+
+        expect(mockRefs.requestStoreHistoryPrune).toHaveBeenCalledWith({
+            historyKeptExchanges: 1,
+            reason: "prune-store-history",
+        });
+
+        expect(result).toMatchObject({
+            posted: true,
+            deferred: false,
+            requestId: "request-1",
+        });
+    });
+
+    it("requests store prune when conversation turn count changes", async () => {
+        const { state, pruneOldSections } = await loadPruneModule();
 
         state.featureFlags.pruning = true;
         state.settings.historyKeptExchanges = 1;
 
         buildConversationWithSettledAssistant();
 
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
-
-        const settledResult = pruneOldSections(1);
+        const firstResult = pruneOldSections(1);
 
         expect(mockRefs.requestStoreHistoryPrune).toHaveBeenCalledTimes(1);
-        expect(settledResult).toMatchObject({
+        expect(firstResult).toMatchObject({
             posted: true,
             deferred: false,
         });
@@ -175,24 +139,20 @@ describe("prune", () => {
 
         const changedResult = pruneOldSections(1);
 
-        expect(mockRefs.requestStoreHistoryPrune).not.toHaveBeenCalled();
-        expect(changedResult).toMatchObject({
-            posted: false,
-            deferred: true,
-            reason: "conversation turns unstable",
+        expect(mockRefs.requestStoreHistoryPrune).toHaveBeenCalledWith({
+            historyKeptExchanges: 1,
+            reason: "prune-store-history",
         });
 
-        expect(changedResult.result).toMatchObject({
-            visibleTurnCount: 3,
+        expect(changedResult).toMatchObject({
+            posted: true,
+            deferred: false,
+            requestId: "request-1",
         });
     });
 
     it("defers store prune while reply timing is pending", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
+        const { state, pruneOldSections } = await loadPruneModule();
 
         state.featureFlags.pruning = true;
         state.settings.historyKeptExchanges = 1;
@@ -200,10 +160,6 @@ describe("prune", () => {
         mockRefs.isReplyStreaming.mockReturnValue(true);
 
         buildConversationWithSettledAssistant();
-
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
 
         const result = pruneOldSections(1);
 
@@ -216,11 +172,7 @@ describe("prune", () => {
     });
 
     it("defers store prune while active generation UI is visible", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
+        const { state, pruneOldSections } = await loadPruneModule();
 
         state.featureFlags.pruning = true;
         state.settings.historyKeptExchanges = 1;
@@ -230,10 +182,6 @@ describe("prune", () => {
         const stopButton = document.createElement("button");
         stopButton.setAttribute("aria-label", "Stop generating");
         document.body.appendChild(stopButton);
-
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
 
         const result = pruneOldSections(1);
 
@@ -246,11 +194,7 @@ describe("prune", () => {
     });
 
     it("defers store prune while latest assistant has thinking status", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
+        const { state, pruneOldSections } = await loadPruneModule();
 
         state.featureFlags.pruning = true;
         state.settings.historyKeptExchanges = 1;
@@ -268,10 +212,6 @@ describe("prune", () => {
             </main>
         `;
 
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
-
         const result = pruneOldSections(1);
 
         expect(mockRefs.requestStoreHistoryPrune).not.toHaveBeenCalled();
@@ -279,36 +219,6 @@ describe("prune", () => {
             posted: false,
             deferred: true,
             reason: "latest-assistant-incomplete",
-        });
-    });
-
-    it("does not request store prune when there are no visible conversation turns", async () => {
-        const {
-            state,
-            pruneOldSections,
-            resetStorePruneTurnStabilityForTests,
-        } = await loadPruneModule();
-
-        state.featureFlags.pruning = true;
-        state.settings.historyKeptExchanges = 1;
-
-        document.body.innerHTML = "<main></main>";
-
-        markConversationTurnsStableForPrune({
-            resetStorePruneTurnStabilityForTests,
-        });
-
-        const result = pruneOldSections(1);
-
-        expect(mockRefs.requestStoreHistoryPrune).not.toHaveBeenCalled();
-        expect(result).toMatchObject({
-            posted: false,
-            deferred: true,
-            reason: "conversation turns unavailable",
-        });
-
-        expect(result.result).toMatchObject({
-            visibleTurnCount: 0,
         });
     });
 });

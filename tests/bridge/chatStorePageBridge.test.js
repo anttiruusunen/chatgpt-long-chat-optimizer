@@ -1626,4 +1626,145 @@ describe("chatStorePageBridge", () => {
             "getBranchFromLeaf"
         );
     });
+
+    it("keeps pruning available with deleteClientOnlyMessage-only stores", () => {
+        appendVisibleMessage("a3");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const nodes = {};
+
+        function addNode(id, parentId, role, children = []) {
+            nodes[id] = {
+                id,
+                parentId,
+                children,
+                message: {
+                    id,
+                    author: { role },
+                    content: { parts: [`${role}:${id}`] },
+                },
+            };
+        }
+
+        addNode("root", null, "root", ["u1"]);
+        addNode("u1", "root", "user", ["a1"]);
+        addNode("a1", "u1", "assistant", ["u2"]);
+        addNode("u2", "a1", "user", ["a2"]);
+        addNode("a2", "u2", "assistant", ["u3"]);
+        addNode("u3", "a2", "user", ["a3"]);
+        addNode("a3", "u3", "assistant", []);
+
+        const store = {
+            rootId: "root",
+            currentLeafId: "a3",
+
+            get nodes() {
+                return Object.values(nodes);
+            },
+
+            getNodeIfExists(id) {
+                return nodes[id] ?? null;
+            },
+
+            getNode(id) {
+                return nodes[id] ?? null;
+            },
+
+            getBranchFromLeaf(leafId) {
+                const branch = [];
+                let node = nodes[leafId];
+
+                while (node && branch.length < 20) {
+                    branch.push(node);
+
+                    if (node.id === this.rootId) {
+                        break;
+                    }
+
+                    node = nodes[node.parentId];
+                }
+
+                return branch.reverse();
+            },
+
+            getBranch() {
+                return this.getBranchFromLeaf(this.currentLeafId);
+            },
+
+            deleteClientOnlyMessage: vi.fn((nodeId) => {
+                const node = nodes[nodeId];
+
+                if (!node) {
+                    return;
+                }
+
+                const parent = nodes[node.parentId];
+
+                for (const childId of node.children) {
+                    if (nodes[childId]) {
+                        nodes[childId].parentId = node.parentId;
+                    }
+                }
+
+                if (parent) {
+                    parent.children = parent.children.flatMap((childId) =>
+                        childId === node.id ? node.children : [childId]
+                    );
+                }
+
+                delete nodes[node.id];
+            }),
+        };
+
+        expect(store.deleteNode).toBeUndefined();
+        expect(store.messageIdToExistingNodeId).toBeUndefined();
+
+        bridge.registerStore(store, {
+            source: "delete-client-only-message-only-prune-test",
+        });
+
+        const status = bridge.status();
+
+        expect(status.hasStore).toBe(true);
+        expect(status.methods).toMatchObject({
+            deleteNode: false,
+            deleteClientOnlyMessage: true,
+            canDeleteNode: true,
+            messageIdToExistingNodeId: false,
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-delete-client-only-message-only-prune",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.deleteMethod).toBe("deleteClientOnlyMessage");
+        expect(result.deleteMode).toBe("splice-node");
+        expect(result.deleted.length).toBeGreaterThan(0);
+
+        expect(store.deleteClientOnlyMessage).toHaveBeenCalled();
+        expect(nodes.u1).toBeUndefined();
+        expect(nodes.a1).toBeUndefined();
+        expect(nodes.u2).toBeUndefined();
+        expect(nodes.a2).toBeUndefined();
+
+        expect(nodes.root.children).toEqual(["u3"]);
+        expect(nodes.u3.parentId).toBe("root");
+
+        const activeBranch = [];
+        let node = nodes[store.currentLeafId];
+
+        while (node?.id && activeBranch.length < 20) {
+            activeBranch.push(node);
+            node = nodes[node.parentId];
+        }
+
+        expect(activeBranch.map((item) => item.id)).toEqual([
+            "a3",
+            "u3",
+            "root",
+        ]);
+    });
 });

@@ -71,42 +71,6 @@ function getTurnStabilityState(now = performance.now()) {
     };
 }
 
-function shouldDeferStorePruneForTurnStability() {
-    const stability = getTurnStabilityState();
-
-    if (stability.count <= 0) {
-        return {
-            defer: true,
-            reason: "conversation turns unavailable",
-            ...stability,
-        };
-    }
-
-    if (stability.stableForMs < STORE_PRUNE_TURN_STABILITY_MS) {
-        return {
-            defer: true,
-            reason: "conversation turns unstable",
-            requiredStableMs: STORE_PRUNE_TURN_STABILITY_MS,
-            ...stability,
-        };
-    }
-
-    return {
-        defer: false,
-        ...stability,
-    };
-}
-
-export function resetStorePruneTurnStabilityForTests({
-    count = -1,
-    changedAt = 0,
-} = {}) {
-    lastTurnSnapshot = {
-        count,
-        changedAt,
-    };
-}
-
 /**
  * Requests a store-native prune from the page bridge.
  *
@@ -148,25 +112,19 @@ function requestStorePruneWithBridge({
         };
     }
 
-    const turnStability = shouldDeferStorePruneForTurnStability();
-
-    if (turnStability.defer) {
-        debugLog("Prune: deferred store pruning until conversation turns stabilize", {
+    if (document.visibilityState && document.visibilityState !== "visible") {
+        debugLog("Prune: deferred store pruning while document is not visible", {
             historyKeptExchanges: keepCount,
             reason,
-            deferReason: turnStability.reason,
-            visibleTurnCount: turnStability.count,
-            stableForMs: Math.round(turnStability.stableForMs),
-            requiredStableMs: turnStability.requiredStableMs,
+            visibilityState: document.visibilityState,
         });
 
         return {
             posted: false,
             deferred: true,
-            reason: turnStability.reason,
+            reason: "document not visible",
             historyKeptExchanges: keepCount,
-            visibleTurnCount: turnStability.count,
-            stableForMs: turnStability.stableForMs,
+            visibilityState: document.visibilityState,
         };
     }
 
@@ -279,8 +237,20 @@ export function runInitialPrune(
         onPruneFinished,
     } = {}
 ) {
+    debugLog("Prune: initial prune entry", {
+        autoPrune: state.settings.autoPrune,
+        didInitialPrune: state.didInitialPrune,
+        pruningEnabled: state.featureFlags.pruning,
+        hasContainer: container instanceof Element,
+    });
+
     if (!state.featureFlags.pruning) return;
     if (!state.settings.autoPrune || state.didInitialPrune) {
+        debugLog("Prune: initial prune skipped", {
+            autoPrune: state.settings.autoPrune,
+            didInitialPrune: state.didInitialPrune,
+        });
+
         return;
     }
 
