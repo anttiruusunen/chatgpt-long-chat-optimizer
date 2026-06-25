@@ -14,6 +14,7 @@ import { onStoreHistoryPruneCompleted } from "../bridge/chatStoreBridgeClient.js
 import {
     showPruneOverlay,
     hidePruneOverlay,
+    isPruneOverlayActive,
 } from "../ui/pruneOverlay.js";
 
 const AUTO_PRUNE_DEBOUNCE_MS = 100;
@@ -99,8 +100,14 @@ export function createPruneController({
     function showInitialPrunePendingOverlay({
         reason = "waiting-for-initial-prune",
     } = {}) {
-        if (isInitialPruneOverlayShown) {
+        if (isInitialPruneOverlayShown && isPruneOverlayActive()) {
             return;
+        }
+
+        if (isInitialPruneOverlayShown && !isPruneOverlayActive()) {
+            debugLog("Prune controller: resuming initial prune overlay after dismissal", {
+                reason,
+            });
         }
 
         isInitialPruneOverlayShown = true;

@@ -264,3 +264,74 @@ test("overlay watchdog restores removed overlay while active until user hides it
 
     await expectNoStuckPruneOverlay(page);
 });
+
+test("manual overlay hide does not suppress overlay after opening another empty chat", async ({ page }) => {
+    const fixture = await loadOptimizerFixture(page, {
+        beforeOptimizerLoad: async (page) => {
+            await setFixtureToEmptyExistingChat(page, "/c/e2e-empty-chat-hidden");
+        },
+    });
+
+    await expect(fixture.turns()).toHaveCount(0);
+
+    await expect(page.locator(PRUNE_OVERLAY_CARD)).toBeVisible({
+        timeout: 5000,
+    });
+
+    await page.locator(PRUNE_OVERLAY_HIDE).click();
+
+    await expectNoStuckPruneOverlay(page);
+
+    await page.waitForTimeout(500);
+
+    await expectNoStuckPruneOverlay(page);
+
+    await setFixtureToEmptyExistingChat(page, "/c/e2e-empty-chat-after-hidden");
+
+    await page.evaluate(() => {
+        window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await expect(page.locator(PRUNE_OVERLAY_CARD)).toBeVisible({
+        timeout: 5000,
+    });
+
+    await page.locator(PRUNE_OVERLAY_HIDE).click();
+
+    await expectNoStuckPruneOverlay(page);
+});
+
+test("manual overlay hide does not suppress pruning after opening a populated recent chat", async ({ page }) => {
+    let fixture = await loadOptimizerFixture(page, {
+        beforeOptimizerLoad: async (page) => {
+            await setFixtureToEmptyExistingChat(page, "/c/e2e-empty-chat-hidden-before-recent");
+        },
+    });
+
+    await expect(fixture.turns()).toHaveCount(0);
+
+    await expect(page.locator(PRUNE_OVERLAY_CARD)).toBeVisible({
+        timeout: 5000,
+    });
+
+    await page.locator(PRUNE_OVERLAY_HIDE).click();
+
+    await expectNoStuckPruneOverlay(page);
+
+    await page.waitForTimeout(500);
+
+    await expectNoStuckPruneOverlay(page);
+
+    await clickSyntheticRecentChat(page, "/c/e2e-recent-after-overlay-hidden");
+
+    fixture = {
+        ...fixture,
+        turns: () => page.locator("section[data-turn]"),
+    };
+
+    await expect(fixture.turns()).toHaveCount(2, {
+        timeout: 10000,
+    });
+
+    await expectNoStuckPruneOverlay(page, 10000);
+});

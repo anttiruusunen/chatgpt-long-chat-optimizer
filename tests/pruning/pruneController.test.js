@@ -15,6 +15,7 @@ const mockRefs = vi.hoisted(() => ({
 
     showInitialPruneOverlay: vi.fn(),
     hideInitialPruneOverlay: vi.fn(),
+    isPruneOverlayActive: vi.fn(),
 
     storePruneCompletionListeners: [],
 }));
@@ -57,6 +58,7 @@ vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
 vi.mock("../../src/content/ui/pruneOverlay.js", () => ({
     showPruneOverlay: mockRefs.showInitialPruneOverlay,
     hidePruneOverlay: mockRefs.hideInitialPruneOverlay,
+    isPruneOverlayActive: mockRefs.isPruneOverlayActive,
     showInitialPruneOverlay: mockRefs.showInitialPruneOverlay,
     hideInitialPruneOverlay: mockRefs.hideInitialPruneOverlay,
 }));
@@ -90,6 +92,7 @@ describe("pruneController", () => {
 
         mockRefs.ensureObserverAttached.mockReturnValue(true);
         mockRefs.withDomMutationGuard.mockImplementation((fn) => fn());
+        mockRefs.isPruneOverlayActive.mockReturnValue(false);
     });
 
     afterEach(() => {
@@ -417,5 +420,75 @@ describe("pruneController", () => {
 
         expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
         expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+    });
+
+    it("shows a later initial prune overlay after the user manually hides the previous one", async () => {
+        const { createPruneController } = await loadController();
+
+        const container = document.createElement("main");
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.runInitialPrune(container, {
+            reason: "first-initial-prune",
+        });
+
+        const firstDeps = mockRefs.runInitialPruneBase.mock.calls[0][1];
+
+        mockRefs.isPruneOverlayActive.mockReturnValue(false);
+
+        firstDeps.onPruneStarted();
+
+        expect(mockRefs.showInitialPruneOverlay).toHaveBeenCalledWith({
+            reason: "first-initial-prune",
+        });
+
+        mockRefs.showInitialPruneOverlay.mockClear();
+
+        controller.runInitialPrune(container, {
+            reason: "second-initial-prune",
+        });
+
+        const secondDeps = mockRefs.runInitialPruneBase.mock.calls[1][1];
+
+        mockRefs.isPruneOverlayActive.mockReturnValue(false);
+
+        secondDeps.onPruneStarted();
+
+        expect(mockRefs.showInitialPruneOverlay).toHaveBeenCalledWith({
+            reason: "second-initial-prune",
+        });
+    });
+
+    it("does not duplicate the initial prune overlay while it is still active", async () => {
+        const { createPruneController } = await loadController();
+
+        const container = document.createElement("main");
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.runInitialPrune(container, {
+            reason: "initial-prune",
+        });
+
+        const deps = mockRefs.runInitialPruneBase.mock.calls[0][1];
+
+        mockRefs.isPruneOverlayActive.mockReturnValue(false);
+        deps.onPruneStarted();
+
+        mockRefs.showInitialPruneOverlay.mockClear();
+
+        mockRefs.isPruneOverlayActive.mockReturnValue(true);
+        deps.onPruneStarted();
+
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
     });
 });

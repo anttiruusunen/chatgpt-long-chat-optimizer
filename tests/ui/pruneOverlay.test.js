@@ -3,6 +3,7 @@ import {
     showInitialPruneOverlay,
     hideInitialPruneOverlay,
     resetInitialPruneOverlayForTests,
+    isPruneOverlayActive,
 } from "../../src/content/ui/pruneOverlay.js";
 
 describe("prune overlay", () => {
@@ -137,6 +138,32 @@ describe("prune overlay", () => {
 
         showInitialPruneOverlay();
 
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeTruthy();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeTruthy();
+    });
+
+    it("tracks active overlay state across manual hide and later show", () => {
+        expect(isPruneOverlayActive()).toBe(false);
+
+        showInitialPruneOverlay();
+
+        expect(isPruneOverlayActive()).toBe(true);
+
+        document
+            .querySelector(
+                "#long-chat-optimizer-prune-overlay-card .long-chat-optimizer-prune-hide"
+            )
+            .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+        expect(isPruneOverlayActive()).toBe(false);
+
+        showInitialPruneOverlay();
+
+        expect(isPruneOverlayActive()).toBe(true);
         expect(
             document.getElementById("long-chat-optimizer-prune-overlay")
         ).toBeTruthy();

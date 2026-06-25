@@ -262,6 +262,10 @@ function ensureOverlayMounted() {
     }
 }
 
+export function isPruneOverlayActive() {
+    return activeOverlayCount > 0;
+}
+
 export function showPruneOverlay() {
     activeOverlayCount += 1;
 
