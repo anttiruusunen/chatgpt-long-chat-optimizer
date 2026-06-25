@@ -11,6 +11,7 @@ const mockRefs = vi.hoisted(() => ({
     waitForContainerAndInitialPrune: vi.fn(),
     ensureObserverAttached: vi.fn(),
     withDomMutationGuard: vi.fn((fn) => fn()),
+    debugLog: vi.fn(),
 
     showInitialPruneOverlay: vi.fn(),
     hideInitialPruneOverlay: vi.fn(),
@@ -58,6 +59,10 @@ vi.mock("../../src/content/ui/pruneOverlay.js", () => ({
     hidePruneOverlay: mockRefs.hideInitialPruneOverlay,
     showInitialPruneOverlay: mockRefs.showInitialPruneOverlay,
     hideInitialPruneOverlay: mockRefs.hideInitialPruneOverlay,
+}));
+
+vi.mock("../../src/content/core/logger.js", () => ({
+    debugLog: mockRefs.debugLog,
 }));
 
 async function loadController() {
@@ -358,5 +363,59 @@ describe("pruneController", () => {
         expect(mockRefs.hideInitialPruneOverlay).toHaveBeenCalledWith({
             reason: "store-prune-completed",
         });
+    });
+
+    it("fails closed when auto-prune throws", async () => {
+        const { state, createPruneController } = await loadController();
+
+        state.settings.autoPrune = true;
+        state.settings.historyKeptExchanges = 1;
+        state.featureFlags.pruning = true;
+        state.didInitialPrune = true;
+        state.isApplyingDomChanges = false;
+        state.isAutoPruneScheduled = false;
+        state.debounceTimer = null;
+
+        const error = new Error("auto prune exploded");
+        const consoleErrorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+
+        mockRefs.pruneOldSectionsBase.mockImplementation(() => {
+            throw error;
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.scheduleAutoPrune("reply-settled");
+
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            "[Long Chat Optimizer] Auto-prune failed",
+            error
+        );
+
+        expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
+            reason: "auto-prune-finally",
+        });
+
+        expect(mockRefs.debugLog).toHaveBeenCalledWith(
+            "Prune controller: auto-prune failed",
+            expect.objectContaining({
+                reason: "reply-settled",
+                error: "auto prune exploded",
+            })
+        );
+
+        expect(state.isAutoPruneScheduled).toBe(false);
+        expect(state.debounceTimer).toBe(null);
+
+        expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
     });
 });

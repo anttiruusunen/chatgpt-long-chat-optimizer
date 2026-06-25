@@ -479,14 +479,29 @@ export function createPruneController({
                     reason,
                     pruneDeferred: Boolean(pruneResult?.pruneDeferred),
                     deferred: Boolean(pruneResult?.deferred),
+                    failed: Boolean(pruneResult?.failed),
                     resultReason: pruneResult?.reason,
                     posted: Boolean(pruneResult?.posted),
                 });
+
+                if (pruneResult?.failed) {
+                    clearPendingDeferredAutoPrune();
+                    return;
+                }
 
                 if (isPruneDeferred(pruneResult)) {
                     schedulePendingDeferredAutoPrune(reason, pruneResult);
                     return;
                 }
+
+                clearPendingDeferredAutoPrune();
+            } catch (error) {
+                console.error("[Long Chat Optimizer] Auto-prune failed", error);
+
+                debugLog("Prune controller: auto-prune failed", {
+                    reason,
+                    error: error?.message || String(error),
+                });
 
                 clearPendingDeferredAutoPrune();
             } finally {

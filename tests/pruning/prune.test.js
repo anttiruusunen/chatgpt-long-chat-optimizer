@@ -221,4 +221,51 @@ describe("prune", () => {
             reason: "latest-assistant-incomplete",
         });
     });
+
+    it("fails closed when store prune request throws", async () => {
+        const { state, pruneOldSections } = await loadPruneModule();
+
+        state.featureFlags.pruning = true;
+        state.settings.historyKeptExchanges = 1;
+
+        const error = new Error("bridge exploded");
+        const consoleErrorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+
+        mockRefs.requestStoreHistoryPrune.mockImplementation(() => {
+            throw error;
+        });
+
+        buildConversationWithSettledAssistant();
+
+        const result = pruneOldSections(1);
+
+        expect(mockRefs.requestStoreHistoryPrune).toHaveBeenCalledWith({
+            historyKeptExchanges: 1,
+            reason: "prune-store-history",
+        });
+
+        expect(result).toMatchObject({
+            posted: false,
+            deferred: false,
+            failed: true,
+            reason: "store-prune-request-failed",
+        });
+
+        expect(result.error).toContain("bridge exploded");
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            "[Long Chat Optimizer] Store prune request failed",
+            error
+        );
+
+        expect(mockRefs.debugLog).toHaveBeenCalledWith(
+            "Prune: store-native history prune request failed",
+            expect.objectContaining({
+                historyKeptExchanges: 1,
+                reason: "prune-store-history",
+                error: "bridge exploded",
+            })
+        );
+    });
 });

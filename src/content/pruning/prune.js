@@ -98,22 +98,43 @@ function requestStorePruneWithBridge({
         };
     }
 
-    const result = requestStoreHistoryPrune({
-        historyKeptExchanges: keepCount,
-        reason,
-    });
+    try {
+        const result = requestStoreHistoryPrune({
+            historyKeptExchanges: keepCount,
+            reason,
+        });
 
-    debugLog("Prune: requested store-native history prune", {
-        historyKeptExchanges: result?.historyKeptExchanges ?? keepCount,
-        posted: Boolean(result?.posted),
-        reason: result?.reason || reason,
-    });
+        debugLog("Prune: requested store-native history prune", {
+            historyKeptExchanges: result?.historyKeptExchanges ?? keepCount,
+            posted: Boolean(result?.posted),
+            reason: result?.reason || reason,
+        });
 
-    return {
-        ...result,
-        deferred: false,
-        historyKeptExchanges: result?.historyKeptExchanges ?? keepCount,
-    };
+        return {
+            ...result,
+            posted: Boolean(result?.posted),
+            deferred: false,
+            historyKeptExchanges: result?.historyKeptExchanges ?? keepCount,
+            reason: result?.reason || reason,
+        };
+    } catch (error) {
+        console.error("[Long Chat Optimizer] Store prune request failed", error);
+
+        debugLog("Prune: store-native history prune request failed", {
+            historyKeptExchanges: keepCount,
+            reason,
+            error: error?.message || String(error),
+        });
+
+        return {
+            posted: false,
+            deferred: false,
+            failed: true,
+            reason: "store-prune-request-failed",
+            error: error?.message || String(error),
+            historyKeptExchanges: keepCount,
+        };
+    }
 }
 
 /**
@@ -189,7 +210,9 @@ export function pruneOldSections(
         posted: Boolean(pruneResult?.posted),
         requestId: pruneResult?.requestId ?? null,
         deferred: Boolean(pruneResult?.deferred),
+        failed: Boolean(pruneResult?.failed),
         reason: pruneResult?.reason,
+        error: pruneResult?.error,
         result: pruneResult,
     };
 }
