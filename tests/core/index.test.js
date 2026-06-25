@@ -659,16 +659,11 @@ describe("core/index", () => {
 
         state.didInitialPrune = true;
 
+        mockRefs.pruneOldSections.mockClear();
+
         options.onBeforeReplyStarted();
 
-        expect(mockRefs.pruneOldSections).toHaveBeenCalledWith(
-            state.settings.historyKeptExchanges,
-            {
-                reason: "before-send",
-                showOverlay: false,
-                guardComposerCaret: false,
-            }
-        );
+        expect(mockRefs.pruneOldSections).not.toHaveBeenCalled();
 
         options.onReplyStarted();
 
@@ -711,7 +706,7 @@ describe("core/index", () => {
         });
     });
 
-    it("schedules reply-settled auto-prune after a deferred before-send prune", async () => {
+    it("does not store-prune at reply start and schedules auto-prune after reply settles", async () => {
         await importFreshIndex();
 
         const state = window.__threadOptimizerState;
@@ -719,24 +714,13 @@ describe("core/index", () => {
 
         state.didInitialPrune = true;
 
-        mockRefs.pruneOldSections.mockReturnValue({
-            posted: false,
-            deferred: true,
-            reason: "conversation turns unstable",
-        });
+        mockRefs.pruneOldSections.mockClear();
+        mockRefs.scheduleAutoPrune.mockClear();
 
         options.onBeforeReplyStarted();
 
-        expect(mockRefs.pruneOldSections).toHaveBeenCalledWith(
-            state.settings.historyKeptExchanges,
-            {
-                reason: "before-send",
-                showOverlay: false,
-                guardComposerCaret: false,
-            }
-        );
-
-        mockRefs.scheduleAutoPrune.mockClear();
+        expect(mockRefs.pruneOldSections).not.toHaveBeenCalled();
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
 
         options.onReplySettled();
 

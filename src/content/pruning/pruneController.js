@@ -347,21 +347,6 @@ export function createPruneController({
                 const finalResult = result || latestInitialPruneResult;
 
                 if (finalResult?.deferred) {
-                    setTimeout(() => {
-                        if (
-                            !state.featureFlags.pruning ||
-                            !state.settings.autoPrune ||
-                            state.didInitialPrune
-                        ) {
-                            return;
-                        }
-
-                        runInitialPrune(container, {
-                            ...options,
-                            reason: `retry-after-deferred-initial-prune:${finalResult.reason || "deferred"}`,
-                        });
-                    }, 1000);
-
                     return;
                 }
 

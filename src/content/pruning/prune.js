@@ -13,16 +13,6 @@ import {
 } from "../streaming/assistantSignals.js";
 import { isReplyStreaming } from "../streaming/replyTiming.js";
 
-const CONVERSATION_TURN_SELECTOR =
-    'section[data-turn], section[data-testid^="conversation-turn-"], [data-turn-id-container]';
-
-const STORE_PRUNE_TURN_STABILITY_MS = 350;
-
-let lastTurnSnapshot = {
-    count: -1,
-    changedAt: 0,
-};
-
 function getLatestAssistantPruneDeferralReason(sections) {
     const latestSection = sections[sections.length - 1];
 
@@ -49,26 +39,6 @@ function normalizeHistoryKeptExchanges(
     historyKeptExchanges = state.settings.historyKeptExchanges
 ) {
     return Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
-}
-
-function getVisibleConversationTurnCount() {
-    return document.querySelectorAll(CONVERSATION_TURN_SELECTOR).length;
-}
-
-function getTurnStabilityState(now = performance.now()) {
-    const count = getVisibleConversationTurnCount();
-
-    if (count !== lastTurnSnapshot.count) {
-        lastTurnSnapshot = {
-            count,
-            changedAt: now,
-        };
-    }
-
-    return {
-        count,
-        stableForMs: Math.max(0, now - lastTurnSnapshot.changedAt),
-    };
 }
 
 /**

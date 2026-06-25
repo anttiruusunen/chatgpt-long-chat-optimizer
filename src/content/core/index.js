@@ -642,17 +642,9 @@ async function initialize() {
                 return;
             }
 
-            if (
-                state.settings.autoPrune &&
-                state.featureFlags.pruning &&
-                state.didInitialPrune
-            ) {
-                pruneOldSections(state.settings.historyKeptExchanges, {
-                    reason: "before-send",
-                    showOverlay: false,
-                    guardComposerCaret: false,
-                });
-            }
+            debugLog("Index: skipped reply-start store prune", {
+                reason: "reply-start-store-prune-disabled",
+            });
         },
         onReplyStarted: () => {
             handleReplyStreamingStarted();
