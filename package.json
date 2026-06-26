@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-long-chat-optimizer",
   "description": "Make long ChatGPT chats load faster and stay responsive by keeping only recent exchanges active.",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "module",
   "private": true,
   "scripts": {
