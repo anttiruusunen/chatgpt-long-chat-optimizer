@@ -159,6 +159,44 @@ function normalizeTriggerText(value) {
         .toLowerCase();
 }
 
+function isConversationMenuTrigger(element) {
+    if (!(element instanceof Element)) {
+        return false;
+    }
+
+    const trigger = element.closest(
+        'button, [role="button"], [aria-haspopup="menu"], [data-testid]'
+    );
+
+    if (!(trigger instanceof Element)) {
+        return false;
+    }
+
+    const label = normalizeTriggerText(
+        [
+            trigger.getAttribute("aria-label"),
+            trigger.getAttribute("title"),
+            trigger.getAttribute("data-testid"),
+            trigger.textContent,
+        ]
+            .filter(Boolean)
+            .join(" ")
+    );
+
+    return (
+        trigger.getAttribute("aria-haspopup") === "menu" ||
+        label === "more" ||
+        label === "..." ||
+        label === "⋯" ||
+        label.includes("more options") ||
+        label.includes("open conversation options") ||
+        label.includes("conversation options") ||
+        label.includes("chat options") ||
+        label.includes("thread options") ||
+        label.includes("menu")
+    );
+}
+
 function isNewChatNavigationTrigger(element) {
     if (!(element instanceof Element)) {
         return false;
@@ -196,6 +234,11 @@ function isNewChatNavigationTrigger(element) {
 function handleDocumentClick(event) {
     const target = event.target;
     if (!(target instanceof Element)) {
+        return;
+    }
+
+    if (isConversationMenuTrigger(target)) {
+        clearPendingConversationLinkClick();
         return;
     }
 

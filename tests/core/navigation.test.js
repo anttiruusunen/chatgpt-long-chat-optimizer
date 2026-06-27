@@ -206,6 +206,54 @@ describe("navigation watcher", () => {
             locationKey: "/c/plain-route-change",
         });
     });
+
+    it("does not treat a recent chat options button inside a conversation link as navigation", () => {
+        const link = document.createElement("a");
+        link.href = "/c/test-options";
+        link.setAttribute("data-sidebar-item", "true");
+
+        const title = document.createElement("span");
+        title.textContent = "Recent chat";
+
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "Open conversation options");
+        button.setAttribute("aria-haspopup", "menu");
+        button.textContent = "...";
+
+        link.appendChild(title);
+        link.appendChild(button);
+        document.body.appendChild(link);
+
+        dispatchClick(button);
+
+        vi.advanceTimersByTime(1000);
+
+        expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("does not treat nested recent chat options icon clicks as navigation", () => {
+        const link = document.createElement("a");
+        link.href = "/c/test-options-icon";
+        link.setAttribute("data-sidebar-item", "true");
+
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "More options");
+        button.setAttribute("aria-haspopup", "menu");
+
+        const icon = document.createElement("span");
+        icon.textContent = "⋯";
+
+        button.appendChild(icon);
+        link.appendChild(document.createTextNode("Recent chat"));
+        link.appendChild(button);
+        document.body.appendChild(link);
+
+        dispatchClick(icon);
+
+        vi.advanceTimersByTime(1000);
+
+        expect(callback).not.toHaveBeenCalled();
+    });
 });
 
 describe("ChatGPT route helpers", () => {

@@ -95,6 +95,25 @@ async function clickSyntheticRecentChat(page, path = "/c/e2e-recent-chat") {
     }, path);
 }
 
+async function clickSyntheticRecentChatOptions(page, path = "/c/e2e-options-chat") {
+    await page.evaluate((nextPath) => {
+        const link = document.createElement("a");
+        link.href = nextPath;
+        link.setAttribute("data-sidebar-item", "true");
+        link.textContent = "Recent chat";
+
+        const button = document.createElement("button");
+        button.setAttribute("aria-label", "Open conversation options");
+        button.setAttribute("aria-haspopup", "menu");
+        button.textContent = "...";
+
+        link.appendChild(button);
+        document.body.appendChild(link);
+
+        button.click();
+    }, path);
+}
+
 test("reload reinitializes optimizer without restoring old turns", async ({ page }) => {
     let fixture = await loadOptimizerFixture(page);
 
@@ -334,4 +353,25 @@ test("manual overlay hide does not suppress pruning after opening a populated re
     });
 
     await expectNoStuckPruneOverlay(page, 10000);
+});
+
+test("recent chat options menu click does not trigger conversation navigation overlay", async ({ page }) => {
+    const fixture = await loadOptimizerFixture(page, {
+        beforeOptimizerLoad: async (page) => {
+            await setFixtureToEmptyNewChat(page);
+        },
+    });
+
+    const initialUrl = page.url();
+
+    await expect(fixture.turns()).toHaveCount(0);
+    await expectNoStuckPruneOverlay(page);
+
+    await clickSyntheticRecentChatOptions(page);
+
+    await page.waitForTimeout(1000);
+
+    expect(page.url()).toBe(initialUrl);
+    await expect(fixture.turns()).toHaveCount(0);
+    await expectNoStuckPruneOverlay(page);
 });
