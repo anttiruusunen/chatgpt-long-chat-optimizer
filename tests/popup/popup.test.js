@@ -8,6 +8,7 @@ const mockRefs = vi.hoisted(() => ({
     storageSyncSet: vi.fn(),
     queryTabs: vi.fn(),
     sendMessageToTab: vi.fn(),
+    reloadTab: vi.fn(),
 }));
 
 vi.mock("../../src/shared/ext.js", () => ({
@@ -15,6 +16,7 @@ vi.mock("../../src/shared/ext.js", () => ({
     storageSyncSet: mockRefs.storageSyncSet,
     queryTabs: mockRefs.queryTabs,
     sendMessageToTab: mockRefs.sendMessageToTab,
+    reloadTab: mockRefs.reloadTab,
 }));
 
 const DEFAULT_POPUP_SETTINGS = {
@@ -48,6 +50,9 @@ function createPopupDom() {
     document.body.innerHTML = `
         <input id="historyKeptExchanges" type="number" min="1" step="1" />
         ${createInfoButton("historyKeptInfo")}
+        <div id="historyReloadNotice" hidden>
+            <button id="reloadChat" type="button"></button>
+        </div>
 
         <input id="enablePruning" type="checkbox" />
         ${createInfoButton("enablePruningInfo")}
@@ -92,7 +97,17 @@ async function flushDebouncedSave() {
     await flushAsyncWork();
 }
 
-async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
+async function importPopupWithSettings(
+    settings = {},
+    {
+        dev = false,
+        pruneStatus = {
+            currentPageHistoryWasReduced: false,
+            currentPageHasPrunedTurns: false,
+            currentPagePrunedTurnCount: 0,
+        },
+    } = {}
+) {
     vi.resetModules();
     createPopupDom();
 
@@ -116,10 +131,34 @@ async function importPopupWithSettings(settings = {}, { dev = false } = {}) {
     });
 
     mockRefs.queryTabs.mockResolvedValue([{ id: 123 }]);
-    mockRefs.sendMessageToTab.mockResolvedValue({ ok: true });
+    mockRefs.sendMessageToTab.mockImplementation(async (tabId, message) => {
+        if (message?.action === "get-prune-status") {
+            const currentPageHistoryWasReduced = Boolean(
+                pruneStatus.currentPageHistoryWasReduced ||
+                    pruneStatus.currentPageHasPrunedTurns
+            );
+
+            return {
+                ok: true,
+                currentPageHistoryWasReduced,
+                currentPageHasPrunedTurns: currentPageHistoryWasReduced,
+                currentPagePrunedTurnCount: Math.max(
+                    0,
+                    Math.floor(Number(pruneStatus.currentPagePrunedTurnCount) || 0)
+                ),
+            };
+        }
+
+        return { ok: true };
+    });
+    mockRefs.reloadTab.mockResolvedValue();
 
     await import("../../src/popup/popup.js");
     await flushAsyncWork();
+
+    mockRefs.queryTabs.mockClear();
+    mockRefs.sendMessageToTab.mockClear();
+    mockRefs.reloadTab.mockClear();
 }
 
 function dispatchCheckboxChange(id, checked) {
@@ -194,6 +233,7 @@ describe("popup feature flags", () => {
         mockRefs.storageSyncSet.mockReset();
         mockRefs.queryTabs.mockReset();
         mockRefs.sendMessageToTab.mockReset();
+        mockRefs.reloadTab.mockReset();
 
         warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -849,4 +889,260 @@ describe("popup feature flags", () => {
         expect(mockRefs.storageSyncSet).not.toHaveBeenCalled();
         expect(mockRefs.sendMessageToTab).not.toHaveBeenCalled();
     });
+
+    it("shows reload notice after increasing kept exchanges when current page already pruned turns", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+
+        await flushDebouncedSave();
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+    });
+
+    it("does not show reload notice when kept exchanges are lowered after pruning", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 5,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("2");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            true
+        );
+    });
+
+    it("does not show reload notice when pruning is disabled", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: false,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            true
+        );
+    });
+
+    it("reload button flushes pending settings and reloads the active tab", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 1,
+            enablePruning: true,
+        });
+
+        mockRefs.storageSyncSet.mockClear();
+        mockRefs.sendMessageToTab.mockClear();
+        mockRefs.queryTabs.mockClear();
+        mockRefs.reloadTab.mockClear();
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        await clickButton("reloadChat");
+
+        await vi.waitFor(() => {
+            expect(mockRefs.reloadTab).toHaveBeenCalledWith(123);
+        });
+
+        expect(mockRefs.storageSyncSet).toHaveBeenCalledTimes(1);
+        expect(mockRefs.sendMessageToTab).toHaveBeenCalledWith(
+            123,
+            expect.objectContaining({
+                action: "settings-updated",
+                historyKeptExchanges: 3,
+            })
+        );
+        expect(mockRefs.reloadTab).toHaveBeenCalledWith(123);
+    });
+
+    it("hides reload notice again when increased kept exchanges are lowered back to the loaded value", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+
+        dispatchHistoryKeptExchangesInput("1");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            true
+        );
+    });
+
+    it("hides visible reload notice when pruning is disabled", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+
+        dispatchCheckboxChange("enablePruning", false);
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            true
+        );
+    });
+
+    it("keeps reload notice hidden when there are no pruned turns even after increasing kept exchanges", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: false,
+                    currentPagePrunedTurnCount: 0,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            true
+        );
+    });
+
+    it("keeps reload notice visible after saving an increased kept-exchanges value", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 1,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHasPrunedTurns: true,
+                    currentPagePrunedTurnCount: 8,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("3");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+
+        await flushDebouncedSave();
+
+        expect(getLastSavedSettings()).toMatchObject({
+            historyKeptExchanges: 3,
+            autoPrune: true,
+            enablePruning: true,
+        });
+
+        expect(getLastRuntimeMessage()).toMatchObject({
+            action: "settings-updated",
+            historyKeptExchanges: 3,
+            autoPrune: true,
+            enablePruning: true,
+        });
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(
+            false
+        );
+    });
+    
+    it("reload button shows no-active-tab status when there is no active tab to reload", async () => {
+        await importPopupWithSettings({
+            historyKeptExchanges: 1,
+            enablePruning: true,
+        });
+
+        mockRefs.queryTabs.mockResolvedValueOnce([]);
+
+        await clickButton("reloadChat");
+        await flushAsyncWork();
+
+        expect(mockRefs.reloadTab).not.toHaveBeenCalled();
+        expect(document.getElementById("status").textContent).toBe(
+            "No active tab"
+        );
+    });
+
+
+    it("shows reload notice when current page history was reduced even without a prune count", async () => {
+        await importPopupWithSettings(
+            {
+                historyKeptExchanges: 5,
+                enablePruning: true,
+            },
+            {
+                pruneStatus: {
+                    currentPageHistoryWasReduced: true,
+                    currentPageHasPrunedTurns: false,
+                    currentPagePrunedTurnCount: 0,
+                },
+            }
+        );
+
+        dispatchHistoryKeptExchangesInput("6");
+
+        expect(document.getElementById("historyReloadNotice").hidden).toBe(false);
+    });
+
 });

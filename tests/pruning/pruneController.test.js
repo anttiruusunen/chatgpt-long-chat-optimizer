@@ -18,6 +18,7 @@ const mockRefs = vi.hoisted(() => ({
     isPruneOverlayActive: vi.fn(),
 
     storePruneCompletionListeners: [],
+    initialLoadHistoryReducedListeners: [],
 }));
 
 vi.mock("../../src/content/pruning/prune.js", () => ({
@@ -53,6 +54,16 @@ vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
                 );
         };
     }),
+    onInitialLoadHistoryReduced: vi.fn((listener) => {
+        mockRefs.initialLoadHistoryReducedListeners.push(listener);
+
+        return () => {
+            mockRefs.initialLoadHistoryReducedListeners =
+                mockRefs.initialLoadHistoryReducedListeners.filter(
+                    (current) => current !== listener
+                );
+        };
+    }),
 }));
 
 vi.mock("../../src/content/ui/pruneOverlay.js", () => ({
@@ -83,6 +94,7 @@ describe("pruneController", () => {
         vi.useFakeTimers();
 
         mockRefs.storePruneCompletionListeners = [];
+        mockRefs.initialLoadHistoryReducedListeners = [];
 
         for (const value of Object.values(mockRefs)) {
             if (typeof value?.mockReset === "function") {
@@ -491,4 +503,73 @@ describe("pruneController", () => {
 
         expect(mockRefs.showInitialPruneOverlay).not.toHaveBeenCalled();
     });
+
+
+    it("marks current page history reduced from initial-load history-reduced signal", async () => {
+        const { createPruneController } = await loadController();
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        expect(controller.getPruneStatus()).toMatchObject({
+            currentPageHistoryWasReduced: false,
+            currentPageHasPrunedTurns: false,
+            currentPagePrunedTurnCount: 0,
+        });
+
+        mockRefs.initialLoadHistoryReducedListeners[0]?.({
+            deletedNodeCount: 6,
+            historyKeptExchanges: 5,
+        });
+
+        expect(controller.getPruneStatus()).toMatchObject({
+            currentPageHistoryWasReduced: true,
+            currentPageHasPrunedTurns: true,
+            currentPagePrunedTurnCount: 6,
+        });
+    });
+
+    it("marks current page history reduced from auto-prune result", async () => {
+        const { state, createPruneController } = await loadController();
+
+        state.currentPagePrunedTurnCount = 0;
+        state.currentPageHistoryWasReduced = false;
+
+        state.settings.autoPrune = true;
+        state.settings.historyKeptExchanges = 5;
+        state.featureFlags.pruning = true;
+        state.didInitialPrune = true;
+        state.isApplyingDomChanges = false;
+        state.isAutoPruneScheduled = false;
+        state.debounceTimer = null;
+
+        mockRefs.pruneOldSectionsBase.mockReturnValueOnce({
+            deletedCount: 2,
+            posted: false,
+            deferred: false,
+            pruneDeferred: false,
+            failed: false,
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.scheduleAutoPrune("reply-settled");
+
+        await vi.advanceTimersByTimeAsync(100);
+        await Promise.resolve();
+
+        expect(controller.getPruneStatus()).toMatchObject({
+            currentPageHistoryWasReduced: true,
+            currentPageHasPrunedTurns: true,
+            currentPagePrunedTurnCount: 2,
+        });
+    });
+
 });

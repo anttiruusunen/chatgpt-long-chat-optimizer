@@ -1,5 +1,6 @@
 import {
     queryTabs,
+    reloadTab,
     sendMessageToTab,
     storageSyncGet,
     storageSyncSet,
@@ -13,6 +14,8 @@ const SAVE_SETTINGS_DEBOUNCE_MS = 400;
 
 const elements = {
     historyKeptExchanges: document.getElementById("historyKeptExchanges"),
+    historyReloadNotice: document.getElementById("historyReloadNotice"),
+    reloadChat: document.getElementById("reloadChat"),
     enablePruning: document.getElementById("enablePruning"),
     enableOffscreenOptimization: document.getElementById("enableOffscreenOptimization"),
     enableCodeBlockScrollbars: document.getElementById("enableCodeBlockScrollbars"),
@@ -31,6 +34,13 @@ const elements = {
 let statusTimer = null;
 let pendingSaveTimer = null;
 let pendingSavePromise = null;
+
+let loadedHistoryKeptExchanges = DEFAULT_SETTINGS.historyKeptExchanges;
+let latestPruneStatus = {
+    currentPageHistoryWasReduced: false,
+    currentPageHasPrunedTurns: false,
+    currentPagePrunedTurnCount: 0,
+};
 
 function assertRequiredElements() {
     const missing = Object.entries(elements)
@@ -170,12 +180,78 @@ async function sendToActiveTab(message) {
     }
 }
 
+function updateReloadNoticeVisibility() {
+    const currentValue = getNormalizedHistoryKeptExchanges();
+
+    elements.historyReloadNotice.hidden = !(
+        elements.enablePruning.checked &&
+        latestPruneStatus.currentPageHistoryWasReduced &&
+        currentValue > loadedHistoryKeptExchanges
+    );
+}
+
+async function refreshPruneStatus() {
+    const response = await sendToActiveTab({
+        action: "get-prune-status",
+    });
+
+    const currentPageHistoryWasReduced = Boolean(
+        response?.ok &&
+            (
+                response.currentPageHistoryWasReduced ||
+                response.currentPageHasPrunedTurns
+            )
+    );
+
+    latestPruneStatus = {
+        currentPageHistoryWasReduced,
+        currentPageHasPrunedTurns: currentPageHistoryWasReduced,
+        currentPagePrunedTurnCount: Math.max(
+            0,
+            Math.floor(Number(response?.currentPagePrunedTurnCount) || 0)
+        ),
+    };
+
+    updateReloadNoticeVisibility();
+}
+
+async function reloadActiveTab() {
+    elements.reloadChat.disabled = true;
+
+    try {
+        await flushPendingSettingsSave();
+
+        const tabId = await getActiveTabId();
+
+        if (!tabId) {
+            setStatus("No active tab");
+            elements.reloadChat.disabled = false;
+            return;
+        }
+
+        await reloadTab(tabId);
+
+        elements.historyReloadNotice.hidden = true;
+        latestPruneStatus = {
+            ...latestPruneStatus,
+            currentPageHistoryWasReduced: false,
+            currentPageHasPrunedTurns: false,
+        };
+
+        setStatus("Reloading chat");
+    } catch (error) {
+        elements.reloadChat.disabled = false;
+        setStatus(error?.message || "Reload failed");
+    }
+}
+
 async function loadSettings() {
     const stored = await storageSyncGet(DEFAULT_SETTINGS);
     const historyKeptExchanges =
         normalizePositiveInt(stored.historyKeptExchanges) ??
         DEFAULT_SETTINGS.historyKeptExchanges;
 
+    loadedHistoryKeptExchanges = historyKeptExchanges;
     elements.historyKeptExchanges.value = String(historyKeptExchanges);
 
     elements.enablePruning.checked = Boolean(stored.enablePruning);
@@ -195,6 +271,7 @@ async function loadSettings() {
 
     updateFieldStates();
     updateDebugVisibility();
+    await refreshPruneStatus();
 }
 
 function collectSettingsFromForm() {
@@ -244,6 +321,7 @@ async function saveSettings() {
 
     updateFieldStates();
     updateDebugVisibility();
+    updateReloadNoticeVisibility();
 
     setStatus("Saved");
 }
@@ -340,11 +418,13 @@ function bindCloseFlushEvents() {
 function bindEvents() {
     bindEvent(elements.historyKeptExchanges, "input", () => {
         updateFieldStates();
+        updateReloadNoticeVisibility();
         scheduleSettingsSave();
     });
 
     bindEvent(elements.historyKeptExchanges, "change", () => {
         normalizeHistoryKeptExchangesField();
+        updateReloadNoticeVisibility();
         scheduleSettingsSave();
     });
 
@@ -352,7 +432,10 @@ function bindEvents() {
         flushPendingSettingsSave();
     });
 
-    bindEvent(elements.enablePruning, "change", scheduleSettingsSave);
+    bindEvent(elements.enablePruning, "change", () => {
+        updateReloadNoticeVisibility();
+        scheduleSettingsSave();
+    });
     bindEvent(elements.enableOffscreenOptimization, "change", scheduleSettingsSave);
     bindEvent(elements.enableStoreReadOptimization, "change", scheduleSettingsSave);
     bindEvent(elements.enableCodeBlockScrollbars, "change", scheduleSettingsSave);
@@ -378,6 +461,7 @@ function bindEvents() {
     bindEvent(elements.logDebugStorePerformance, "click", () =>
         sendDebugAction("log-debug-store-performance", "Logged store cache")
     );
+    bindEvent(elements.reloadChat, "click", reloadActiveTab);
 
     bindInfoButtons();
     bindCloseFlushEvents();

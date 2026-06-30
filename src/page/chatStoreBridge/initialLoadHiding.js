@@ -15,6 +15,7 @@ const state = {
     debug: false,
     historyKeptExchanges: DEFAULT_HISTORY_KEPT_EXCHANGES,
     originalFetch: null,
+    onHistoryReduced: null,
     stats: {
         intercepted: 0,
         skipped: 0,
@@ -517,6 +518,18 @@ async function maybeTrimConversationResponse(response) {
     state.stats.lastTrimmedNodeCount = result.trimmedNodeCount;
     state.stats.lastDeletedNodeCount = result.deletedNodeCount;
 
+    if (
+        result.deletedNodeCount > 0 &&
+        typeof state.onHistoryReduced === "function"
+    ) {
+        state.onHistoryReduced({
+            historyKeptExchanges: result.historyKeptExchanges,
+            originalNodeCount: result.originalNodeCount,
+            trimmedNodeCount: result.trimmedNodeCount,
+            deletedNodeCount: result.deletedNodeCount,
+        });
+    }
+
     debugLog("trimmed conversation response", {
         originalNodeCount: result.originalNodeCount,
         trimmedNodeCount: result.trimmedNodeCount,
@@ -565,11 +578,14 @@ export function installInitialLoadHiding({
     enabled = state.enabled,
     historyKeptExchanges = state.historyKeptExchanges,
     debug = state.debug,
+    onHistoryReduced = state.onHistoryReduced,
 } = {}) {
     state.enabled = Boolean(enabled);
     state.historyKeptExchanges =
         normalizeHistoryKeptExchanges(historyKeptExchanges);
     state.debug = Boolean(debug);
+    state.onHistoryReduced =
+        typeof onHistoryReduced === "function" ? onHistoryReduced : null;
 
     if (state.installed) {
         return getInitialLoadHidingState();
@@ -630,6 +646,7 @@ export function resetInitialLoadHidingForTests() {
     state.debug = false;
     state.historyKeptExchanges = DEFAULT_HISTORY_KEPT_EXCHANGES;
     state.originalFetch = null;
+    state.onHistoryReduced = null;
     state.stats = {
         intercepted: 0,
         skipped: 0,

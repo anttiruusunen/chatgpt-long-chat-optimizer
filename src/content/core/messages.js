@@ -115,6 +115,7 @@ export function registerRuntimeMessageHandlers({
     refreshObservedSections,
     setOffscreenOptimizationEnabled,
     syncFeatureFlagsFromSettings,
+    getPruneStatus,
 }) {
     ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
@@ -198,6 +199,20 @@ export function registerRuntimeMessageHandlers({
                 });
 
                 sendResponse({ ok: true });
+                return true;
+            }
+
+            if (message.action === "get-prune-status") {
+                sendResponse({
+                    ok: true,
+                    ...(typeof getPruneStatus === "function"
+                        ? getPruneStatus()
+                        : {
+                            currentPagePrunedTurnCount: 0,
+                            currentPageHistoryWasReduced: false,
+                            currentPageHasPrunedTurns: false,
+                        }),
+                });
                 return true;
             }
 

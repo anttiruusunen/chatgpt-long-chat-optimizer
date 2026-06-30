@@ -709,4 +709,71 @@ describe("core/messages", () => {
         });
     });
 
+    it("returns prune status from the injected getter", async () => {
+        const { messagesModule } = await importFreshModules();
+        const getPruneStatus = vi.fn(() => ({
+            currentPagePrunedTurnCount: 7,
+            currentPageHistoryWasReduced: true,
+            currentPageHasPrunedTurns: true,
+            historyKeptExchanges: 2,
+            pruningEnabled: true,
+            autoPrune: true,
+            didInitialPrune: true,
+        }));
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            getPruneStatus,
+        });
+
+        const sendResponse = vi.fn();
+
+        const handled = listener(
+            {
+                action: "get-prune-status",
+            },
+            {},
+            sendResponse
+        );
+
+        expect(handled).toBe(true);
+        expect(getPruneStatus).toHaveBeenCalledTimes(1);
+        expect(sendResponse).toHaveBeenCalledWith({
+            ok: true,
+            currentPagePrunedTurnCount: 7,
+            currentPageHistoryWasReduced: true,
+            currentPageHasPrunedTurns: true,
+            historyKeptExchanges: 2,
+            pruningEnabled: true,
+            autoPrune: true,
+            didInitialPrune: true,
+        });
+    });
+
+    it("returns default prune status when no prune status getter is provided", async () => {
+        const { messagesModule } = await importFreshModules();
+
+        const { listener } = setupRuntimeHandlers(messagesModule, {
+            getPruneStatus: undefined,
+        });
+
+        const sendResponse = vi.fn();
+
+        const handled = listener(
+            {
+                action: "get-prune-status",
+            },
+            {},
+            sendResponse
+        );
+
+        expect(handled).toBe(true);
+        expect(sendResponse).toHaveBeenCalledWith({
+            ok: true,
+            currentPagePrunedTurnCount: 0,
+            currentPageHistoryWasReduced: false,
+            currentPageHasPrunedTurns: false,
+        });
+    });
 });
+
+

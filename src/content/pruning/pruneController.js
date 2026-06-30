@@ -10,7 +10,10 @@ import {
     scheduleRefreshPostPruneState,
 } from "../core/conversationMaintenance.js";
 import { syncPruningStateToPageBridge } from "../core/pageBridgeSync.js";
-import { onStoreHistoryPruneCompleted } from "../bridge/chatStoreBridgeClient.js";
+import {
+    onInitialLoadHistoryReduced,
+    onStoreHistoryPruneCompleted,
+} from "../bridge/chatStoreBridgeClient.js";
 import {
     showPruneOverlay,
     hidePruneOverlay,
@@ -32,6 +35,53 @@ function isInitialPruneReason(reason) {
     return reason === "initial-prune";
 }
 
+function getSafePrunedTurnCount(value) {
+    return Math.max(0, Math.floor(Number(value) || 0));
+}
+
+function markCurrentPageHistoryReduced({
+    count = 1,
+    reason = "history-reduced",
+} = {}) {
+    const safeCount = getSafePrunedTurnCount(count);
+
+    state.currentPageHistoryWasReduced = true;
+
+    if (safeCount > 0) {
+        state.currentPagePrunedTurnCount =
+            getSafePrunedTurnCount(state.currentPagePrunedTurnCount) +
+            safeCount;
+    }
+
+    debugLog("Prune controller: marked current page history reduced", {
+        reason,
+        count: safeCount,
+        currentPagePrunedTurnCount: state.currentPagePrunedTurnCount,
+        currentPageHistoryWasReduced: state.currentPageHistoryWasReduced,
+    });
+}
+
+function markHistoryReducedFromPruneResult(result, reason = "prune-result") {
+    if (!result || result.deferred || result.pruneDeferred || result.failed) {
+        return;
+    }
+
+    const count = Math.max(
+        getSafePrunedTurnCount(result.deletedCount),
+        getSafePrunedTurnCount(result.prunedCount),
+        getSafePrunedTurnCount(result.hiddenCount),
+        getSafePrunedTurnCount(result.removedCount),
+        getSafePrunedTurnCount(result.evictedCount)
+    );
+
+    if (count > 0) {
+        markCurrentPageHistoryReduced({
+            count,
+            reason,
+        });
+    }
+}
+
 export function createPruneController({
     ensureObserverAttached,
     waitForContainerAndInitialPrune,
@@ -43,6 +93,7 @@ export function createPruneController({
     let pendingDeferredAutoPruneLastResult = null;
 
     let removeStorePruneCompletionListener = null;
+    let removeInitialLoadHistoryReducedListener = null;
     let isInitialPruneOverlayShown = false;
 
     const activeStorePruneRequests = new Map();
@@ -69,11 +120,20 @@ export function createPruneController({
 
                 activeStorePruneRequests.delete(completedRequestId);
 
+                markHistoryReducedFromPruneResult(
+                    result,
+                    "store-prune-completed"
+                );
+
                 debugLog("Prune controller: store prune completed", {
                     requestId: completedRequestId,
                     result,
                     reason: activeRequest.reason,
                     showOverlay: activeRequest.showOverlay,
+                    currentPagePrunedTurnCount:
+                        state.currentPagePrunedTurnCount,
+                    currentPageHistoryWasReduced:
+                        state.currentPageHistoryWasReduced,
                 });
 
                 activeRequest.onFinished?.({
@@ -93,6 +153,29 @@ export function createPruneController({
                         requestId: completedRequestId,
                     });
                 }
+            }
+        );
+    }
+
+    function ensureInitialLoadHistoryReducedListener() {
+        if (removeInitialLoadHistoryReducedListener) {
+            return;
+        }
+
+        removeInitialLoadHistoryReducedListener = onInitialLoadHistoryReduced(
+            (payload = {}) => {
+                const deletedNodeCount = getSafePrunedTurnCount(
+                    payload.deletedNodeCount
+                );
+
+                if (deletedNodeCount <= 0) {
+                    return;
+                }
+
+                markCurrentPageHistoryReduced({
+                    count: deletedNodeCount,
+                    reason: "initial-load-history-reduced",
+                });
             }
         );
     }
@@ -342,6 +425,11 @@ export function createPruneController({
             onPruneResult: (result) => {
                 latestInitialPruneResult = result;
 
+                markHistoryReducedFromPruneResult(
+                    result,
+                    "initial-prune-result"
+                );
+
                 trackStorePruneRequest(result, {
                     reason: options.reason || "initial-prune",
                     onFinished: externalOnPruneFinished,
@@ -482,6 +570,11 @@ export function createPruneController({
                     }
                 );
 
+                markHistoryReducedFromPruneResult(
+                    pruneResult,
+                    "auto-prune-result"
+                );
+
                 debugLog("Prune controller: auto-prune result", {
                     reason,
                     pruneDeferred: Boolean(pruneResult?.pruneDeferred),
@@ -527,6 +620,31 @@ export function createPruneController({
         });
     }
 
+    function getPruneStatus() {
+        const currentPagePrunedTurnCount = Math.max(
+            0,
+            Math.floor(Number(state.currentPagePrunedTurnCount) || 0)
+        );
+
+        const currentPageHistoryWasReduced =
+            state.currentPageHistoryWasReduced === true ||
+            currentPagePrunedTurnCount > 0;
+
+        return {
+            currentPagePrunedTurnCount,
+            currentPageHistoryWasReduced,
+            currentPageHasPrunedTurns: currentPageHistoryWasReduced,
+            historyKeptExchanges: getSafeHistoryKeptExchanges(
+                state.settings.historyKeptExchanges
+            ),
+            pruningEnabled: state.featureFlags.pruning === true,
+            autoPrune: state.settings.autoPrune === true,
+            didInitialPrune: state.didInitialPrune === true,
+        };
+    }
+
+    ensureInitialLoadHistoryReducedListener();
+
     return {
         pruneOldSections,
         runInitialPrune,
@@ -534,5 +652,6 @@ export function createPruneController({
         clearPendingAutoPrune,
         scheduleAutoPrune,
         showInitialPrunePendingOverlay,
+        getPruneStatus,
     };
 }

@@ -88,12 +88,13 @@ const ENABLE_DEV_DIAGNOSTICS =
 
 const RECORD_SOURCE = "thread-optimizer";
 const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
+const INITIAL_LOAD_HISTORY_REDUCED_TYPE =
+    "thread-optimizer:initial-load-history-reduced";
 
 const EARLY_INITIAL_LOAD_HIDING_SETTINGS_ATTR =
     "data-thread-optimizer-initial-load-hiding-settings";
 const EARLY_INITIAL_LOAD_HIDING_SETTINGS_EVENT =
     "thread-optimizer:initial-load-hiding-settings";
-
 
 
 function normalizeInitialLoadHistoryKeptExchanges(value, fallback = 1) {
@@ -152,7 +153,29 @@ function readInitialLoadHidingSettingsFromDom() {
         enabled: false,
         historyKeptExchanges: 1,
         debug: ENABLE_DEBUG,
+        onHistoryReduced: postInitialLoadHistoryReduced,
     });
+
+    function postInitialLoadHistoryReduced(payload = {}) {
+        const targetOrigin =
+            window.location.origin && window.location.origin !== "null"
+                ? window.location.origin
+                : "*";
+
+        window.postMessage(
+            {
+                source: RECORD_SOURCE,
+                token: BRIDGE_TOKEN,
+                type: INITIAL_LOAD_HISTORY_REDUCED_TYPE,
+                ok: true,
+                historyKeptExchanges: payload.historyKeptExchanges ?? null,
+                originalNodeCount: payload.originalNodeCount ?? null,
+                trimmedNodeCount: payload.trimmedNodeCount ?? null,
+                deletedNodeCount: payload.deletedNodeCount ?? 0,
+            },
+            targetOrigin
+        );
+    }
 
     function postStorePruneCompleted({
         requestId = null,

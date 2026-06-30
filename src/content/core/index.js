@@ -400,6 +400,8 @@ function resetConversationLifecycleForNavigation() {
     pendingDeferredInitialPrune = false;
     disableStoreReadOptimizationForPage("navigation-reset");
     state.didInitialPrune = false;
+    state.currentPagePrunedTurnCount = 0;
+    state.currentPageHistoryWasReduced = false;
 
     debugLog("Index: reset conversation lifecycle state for navigation");
 }
@@ -607,6 +609,7 @@ const {
     clearPendingAutoPrune,
     scheduleAutoPrune,
     showInitialPrunePendingOverlay,
+    getPruneStatus,
 } = pruneController;
 
 configureConversationMaintenance({
@@ -889,6 +892,7 @@ registerRuntimeMessageHandlers({
     refreshObservedSections: scheduleRefreshPostPruneState,
     setOffscreenOptimizationEnabled,
     syncFeatureFlagsFromSettings,
+    getPruneStatus,
 });
 
 initialize();

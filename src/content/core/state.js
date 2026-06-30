@@ -48,6 +48,8 @@ function createDefaultState() {
         debugLoggingEnabled: DEFAULT_SETTINGS.enableDebugLogging,
         didInitialPrune: false,
         storeReadOptimizationReadyForPage: false,
+        currentPagePrunedTurnCount: 0,
+        currentPageHistoryWasReduced: false,
 
         isApplyingDomChanges: false,
         offscreenLiveSection: null,
@@ -132,6 +134,8 @@ function normalizeRuntimeState() {
     ensureBooleanProperty("isApplyingDomChanges");
     ensureBooleanProperty("storeReadOptimizationReadyForPage");
 
+    ensureProperty("currentPagePrunedTurnCount", 0);
+    ensureBooleanProperty("currentPageHistoryWasReduced");
     ensureProperty("offscreenLiveSection", null);
 }
 

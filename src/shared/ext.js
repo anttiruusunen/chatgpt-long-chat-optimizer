@@ -137,6 +137,25 @@ export function queryTabs(queryInfo) {
     });
 }
 
+export function reloadTab(tabId) {
+    if (usesPromiseBasedApi()) {
+        return ext.tabs.reload(tabId);
+    }
+
+    return new Promise((resolve, reject) => {
+        ext.tabs.reload(tabId, () => {
+            const error = ext.runtime?.lastError;
+
+            if (error) {
+                reject(new Error(error.message));
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
 export function getTab(tabId) {
     const api = ensureExtensionApi();
 

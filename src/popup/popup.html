@@ -133,6 +133,36 @@
             margin: 0;
         }
 
+        .reloadNotice {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 9px;
+            background: rgba(255, 193, 7, 0.16);
+            font-size: 12px;
+            line-height: 1.4;
+            color: rgba(0, 0, 0, 0.78);
+        }
+
+        .reloadNotice strong {
+            display: block;
+            margin-bottom: 3px;
+            font-size: 12px;
+        }
+
+        .reloadNotice button {
+            margin-top: 8px;
+            padding: 6px 10px;
+            border: 1px solid rgba(0, 0, 0, 0.16);
+            border-radius: 7px;
+            background: #fff;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .reloadNotice button:hover {
+            background: rgba(0, 0, 0, 0.04);
+        }
+
         .debugHeader {
             display: flex;
             align-items: center;
@@ -201,6 +231,12 @@
             <p>
                 An exchange means one user message plus the assistant reply. Lower values keep less old content active on the current page and usually give the biggest speedup in very long chats.
             </p>
+        </div>
+
+        <div id="historyReloadNotice" class="reloadNotice" hidden>
+            <strong>Reload required</strong>
+            Older messages were already hidden on this page. Reload this chat to show more history with the new limit.
+            <button id="reloadChat" type="button">Reload chat</button>
         </div>
     </div>
 

@@ -5,9 +5,33 @@ const RECORD_SOURCE = "thread-optimizer";
 const STORE_PRUNE_REQUEST_TYPE = "thread-optimizer:prune-store-history";
 const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
 const VISIBLE_MESSAGES_READY_TYPE = "thread-optimizer:visible-messages-ready";
+const INITIAL_LOAD_HISTORY_REDUCED_TYPE =
+    "thread-optimizer:initial-load-history-reduced";
 
 let nextStorePruneRequestId = 1;
 const storePruneCompletionListeners = new Set();
+const initialLoadHistoryReducedListeners = new Set();
+
+function handleInitialLoadHistoryReducedMessage(event) {
+    const data = getTrustedBridgeEventData(event);
+
+    if (!data || data.type !== INITIAL_LOAD_HISTORY_REDUCED_TYPE) {
+        return;
+    }
+
+    for (const listener of initialLoadHistoryReducedListeners) {
+        try {
+            listener(data);
+        } catch (error) {
+            debugLog(
+                "[Long Chat Optimizer] initial-load history-reduced listener failed",
+                {
+                    error: String(error?.message || error),
+                }
+            );
+        }
+    }
+}
 
 function createStorePruneRequestId() {
     const id = nextStorePruneRequestId;
@@ -57,6 +81,7 @@ function handleStorePruneCompletionMessage(event) {
 }
 
 window.addEventListener("message", handleStorePruneCompletionMessage);
+window.addEventListener("message", handleInitialLoadHistoryReducedMessage);
 
 /**
  * Send a message to the page-context bridge.
@@ -131,4 +156,16 @@ export function notifyVisibleMessagesReadyForStoreBridge() {
     return postThreadOptimizerBridgeMessage({
         type: VISIBLE_MESSAGES_READY_TYPE,
     });
+}
+
+export function onInitialLoadHistoryReduced(listener) {
+    if (typeof listener !== "function") {
+        return () => {};
+    }
+
+    initialLoadHistoryReducedListeners.add(listener);
+
+    return () => {
+        initialLoadHistoryReducedListeners.delete(listener);
+    };
 }

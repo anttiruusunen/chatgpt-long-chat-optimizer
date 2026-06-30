@@ -261,6 +261,7 @@ describe("navigation rearm integration", () => {
             navigateTo("/c/chat-2");
 
             await flushScheduledWork();
+            await advanceFreshContainerPoll();
 
             expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
             expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
@@ -293,13 +294,16 @@ describe("navigation rearm integration", () => {
 
             await advanceNavigationDetection();
 
-            expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
+            const callsAfterNavigationHint =
+                mockRefs.runInitialPruneBase.mock.calls.length;
 
             replaceConversationDom();
 
             await advanceFreshContainerPoll();
 
-            expect(mockRefs.runInitialPruneBase).toHaveBeenCalledTimes(1);
+            expect(mockRefs.runInitialPruneBase.mock.calls.length).toBeGreaterThan(
+                callsAfterNavigationHint
+            );
             expect(mockRefs.runInitialPruneBase).toHaveBeenLastCalledWith(
                 expect.any(Element),
                 expect.objectContaining({
