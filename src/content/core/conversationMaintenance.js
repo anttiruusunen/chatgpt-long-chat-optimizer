@@ -1,10 +1,7 @@
 import { state } from "./state.js";
 import { getConversationSections } from "./dom.js";
 import { debugLog } from "./logger.js";
-import {
-    ensureSectionCssOffscreenMode,
-    scheduleOffscreenRefresh,
-} from "../offscreen/offscreen.js";
+import { ensureSectionCssOffscreenMode } from "../offscreen/offscreen.js";
 import {
     registerUiPipelineTask,
     scheduleUiPipelineTask,
@@ -79,9 +76,9 @@ function flushPostPruneState() {
         return;
     }
 
-    scheduleOffscreenRefresh("post-prune-refresh");
+    ensureSectionCssOffscreenMode("post-prune-refresh");
 
-    debugLog("Maintenance: flushed post-prune offscreen refresh");
+    debugLog("Maintenance: flushed post-prune offscreen root sync");
 }
 
 function collectConversationChromeSnapshot() {
@@ -102,7 +99,7 @@ function applyConversationChromeSnapshot(
     } = {}
 ) {
     if (isOffscreenRefreshEnabled()) {
-        ensureSectionCssOffscreenMode();
+        ensureSectionCssOffscreenMode("conversation-chrome-sync");
     }
 
     debugLog("Maintenance: flushed conversation chrome sync batch", {
@@ -135,8 +132,7 @@ function flushConversationMaintenance() {
     isConversationMaintenanceScheduled = false;
 
     const shouldFlushChromeSync = pendingConversationChromeSync;
-    const shouldFlushPostPruneRefresh =
-        pendingPostPruneRefresh || pendingConversationChromeSync;
+    const shouldFlushPostPruneRefresh = pendingPostPruneRefresh;
     const reasons = Array.from(pendingMaintenanceReasons);
 
     pendingConversationChromeSync = false;

@@ -6,6 +6,7 @@ import {
 } from "./dom.js";
 import {
     handleReplyStreamingStarted,
+    optimizeUnoptimizedConversationSections,
     setOffscreenOptimizationEnabled,
 } from "../offscreen/offscreen.js";
 import {
@@ -664,6 +665,8 @@ async function initialize() {
             ) {
                 scheduleAutoPrune("reply-settled");
             }
+
+            optimizeUnoptimizedConversationSections("reply-settled");
 
             scheduleConversationChromeSync({
                 reason: "reply-settled",

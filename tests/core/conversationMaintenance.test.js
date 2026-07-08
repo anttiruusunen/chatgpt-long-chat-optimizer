@@ -122,7 +122,8 @@ describe("conversationMaintenance", () => {
         scheduleRefreshPostPruneState();
         flushDomWriteBatchNow();
 
-        expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
     });
 
     it("uses the same offscreen refresh path while streaming", () => {
@@ -131,7 +132,8 @@ describe("conversationMaintenance", () => {
         scheduleRefreshPostPruneState();
         flushDomWriteBatchNow();
 
-        expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
     });
 
     it("delays post-prune refresh when requested", () => {
@@ -150,7 +152,8 @@ describe("conversationMaintenance", () => {
         vi.advanceTimersByTime(1);
         flushDomWriteBatchNow();
 
-        expect(scheduleOffscreenRefreshMock).toHaveBeenCalledTimes(1);
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
 
         vi.useRealTimers();
     });

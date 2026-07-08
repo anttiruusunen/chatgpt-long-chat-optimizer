@@ -5,6 +5,8 @@ const mockRefs = vi.hoisted(() => ({
     replyTimingHandlers: null,
     ensurePlaceholderState: vi.fn(),
     removePlaceholder: vi.fn(),
+    ensureSectionCssOffscreenMode: vi.fn(),
+    optimizeUnoptimizedConversationSections: vi.fn(),
     scheduleOffscreenRefresh: vi.fn(),
     syncCssVisibilityWindow: vi.fn(() => []),
     clearCssVisibilityWindow: vi.fn(),
@@ -69,8 +71,10 @@ vi.mock("../../src/content/pruning/sentinelObservers.js", () => ({
 }));
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
-    ensureSectionCssOffscreenMode: vi.fn(),
+    ensureSectionCssOffscreenMode: mockRefs.ensureSectionCssOffscreenMode,
     handleReplyStreamingStarted: vi.fn(),
+    optimizeUnoptimizedConversationSections:
+        mockRefs.optimizeUnoptimizedConversationSections,
     scheduleOffscreenRefresh: mockRefs.scheduleOffscreenRefresh,
     setOffscreenOptimizationEnabled: vi.fn(),
 }));
@@ -137,10 +141,16 @@ describe("dom write batch integration", () => {
         mockRefs.replyTimingHandlers = null;
         mockRefs.ensurePlaceholderState.mockClear();
         mockRefs.removePlaceholder.mockClear();
+        mockRefs.ensureSectionCssOffscreenMode.mockClear();
+        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
         mockRefs.scheduleOffscreenRefresh.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
         mockRefs.clearCssVisibilityWindow.mockClear();
         mockRefs.runInitialPruneBase.mockClear();
+        mockRefs.attachObserverToContainerBase.mockClear();
+        mockRefs.ensureObserverAttachedBase.mockClear();
+        mockRefs.waitForContainerAndInitialPruneBase.mockClear();
+        mockRefs.createObserverDeps.mockClear();
 
         originalRAF = globalThis.requestAnimationFrame;
         originalCAF = globalThis.cancelAnimationFrame;
@@ -166,7 +176,11 @@ describe("dom write batch integration", () => {
 
         mockRefs.ensurePlaceholderState.mockClear();
         mockRefs.removePlaceholder.mockClear();
+        mockRefs.ensureSectionCssOffscreenMode.mockClear();
+        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
+        mockRefs.scheduleOffscreenRefresh.mockClear();
         mockRefs.syncCssVisibilityWindow.mockClear();
+        mockRefs.clearCssVisibilityWindow.mockClear();
 
         mockRefs.replyTimingHandlers.onReplySettled?.();
         mockRefs.replyTimingHandlers.onReplySettled?.();
@@ -179,7 +193,11 @@ describe("dom write batch integration", () => {
 
         expect(mockRefs.ensurePlaceholderState.mock.calls.length).toBeLessThanOrEqual(1);
         expect(mockRefs.removePlaceholder.mock.calls.length).toBeLessThanOrEqual(1);
-        expect(mockRefs.scheduleOffscreenRefresh.mock.calls.length).toBeGreaterThanOrEqual(1);
-        expect(mockRefs.scheduleOffscreenRefresh.mock.calls.length).toBeLessThanOrEqual(2);
+
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(3);
+
+        expect(mockRefs.ensureSectionCssOffscreenMode.mock.calls.length).toBeGreaterThanOrEqual(1);
+        expect(mockRefs.ensureSectionCssOffscreenMode.mock.calls.length).toBeLessThanOrEqual(2);
+        expect(mockRefs.scheduleOffscreenRefresh).not.toHaveBeenCalled();
     });
 });

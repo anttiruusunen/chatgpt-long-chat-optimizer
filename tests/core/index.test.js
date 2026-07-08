@@ -29,6 +29,7 @@ const mockRefs = vi.hoisted(() => ({
 
     handleReplyStreamingStarted: vi.fn(),
     setOffscreenOptimizationEnabled: vi.fn(),
+    optimizeUnoptimizedConversationSections: vi.fn(),
 
     attachObserverToContainer: vi.fn(),
     ensureObserverAttached: vi.fn(),
@@ -175,6 +176,8 @@ vi.mock("../../src/content/core/conversationMaintenance.js", () => ({
 
 vi.mock("../../src/content/offscreen/offscreen.js", () => ({
     handleReplyStreamingStarted: mockRefs.handleReplyStreamingStarted,
+    optimizeUnoptimizedConversationSections:
+        mockRefs.optimizeUnoptimizedConversationSections,
     setOffscreenOptimizationEnabled: mockRefs.setOffscreenOptimizationEnabled,
 }));
 
@@ -660,6 +663,7 @@ describe("core/index", () => {
         state.didInitialPrune = true;
 
         mockRefs.pruneOldSections.mockClear();
+        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onBeforeReplyStarted();
 
@@ -672,6 +676,10 @@ describe("core/index", () => {
         options.onReplySettled();
 
         expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
+            "reply-settled"
+        );
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,
@@ -693,11 +701,17 @@ describe("core/index", () => {
 
         mockRefs.scheduleAutoPrune.mockClear();
         mockRefs.runInitialPrune.mockClear();
+        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onReplySettled();
 
         expect(mockRefs.runInitialPrune).toHaveBeenCalledTimes(1);
         expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
+            "reply-settled"
+        );
 
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
@@ -716,6 +730,7 @@ describe("core/index", () => {
 
         mockRefs.pruneOldSections.mockClear();
         mockRefs.scheduleAutoPrune.mockClear();
+        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onBeforeReplyStarted();
 
@@ -725,6 +740,10 @@ describe("core/index", () => {
         options.onReplySettled();
 
         expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
+            "reply-settled"
+        );
     });
 
     it("reacts to storage changes by syncing affected feature paths", async () => {

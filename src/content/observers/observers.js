@@ -6,6 +6,10 @@ import {
 } from "../core/dom.js";
 import { notifyVisibleMessagesReadyForStoreBridge } from "../bridge/chatStoreBridgeClient.js";
 import { debugLog } from "../core/logger.js";
+import {
+    optimizeAddedConversationNodes,
+    refreshObservedSections as refreshOffscreenObservedSections,
+} from "../offscreen/offscreen.js";
 
 let visibleMessagesReadyPostedForContainer = null;
 
@@ -182,10 +186,30 @@ export function handleObservedMutations(
 
     maybeNotifyVisibleMessagesReady(container, "mutation-batch");
 
+    const shouldOptimizeAddedSections =
+        state.featureFlags.offscreenOptimization === true;
+
+    const shouldRunPruningObserverWork =
+        state.featureFlags.pruning === true && state.settings.autoPrune === true;
+
     for (const mutation of mutations) {
-        if (mutationNeedsPrune(mutation, container)) {
+        if (
+            shouldOptimizeAddedSections &&
+            mutation.type === "childList" &&
+            mutation.target === container &&
+            mutation.addedNodes?.length > 0
+        ) {
+            optimizeAddedConversationNodes(
+                mutation.addedNodes,
+                "observer-mutation-batch"
+            );
+        }
+
+        if (
+            shouldRunPruningObserverWork &&
+            mutationNeedsPrune(mutation, container)
+        ) {
             shouldConsiderPrune = true;
-            break;
         }
     }
 
@@ -260,6 +284,7 @@ export function attachObserverToContainer(container, deps) {
     visibleMessagesReadyPostedForContainer = null;
 
     maybeNotifyVisibleMessagesReady(container, "observer-attached");
+    refreshOffscreenObservedSections();
 
     debugLog(
         "[Long Chat Optimizer] Auto-prune observer attached to conversation container"

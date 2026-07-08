@@ -43,6 +43,48 @@ async function setStorage(page, values) {
     await page.waitForTimeout(100);
 }
 
+async function appendIncrementalExchange(page) {
+    await page.evaluate(() => {
+        const state = window.__threadOptimizerState;
+        const conversation = state?.observedContainer;
+
+        if (!(conversation instanceof Element)) {
+            throw new Error("Missing observed conversation container");
+        }
+
+        for (const section of document.querySelectorAll(
+            'section[data-scroll-anchor="true"]'
+        )) {
+            section.removeAttribute("data-scroll-anchor");
+        }
+
+        const nextIndex =
+            document.querySelectorAll("section[data-turn]").length + 1;
+
+        const user = document.createElement("section");
+        user.setAttribute("data-turn", "user");
+        user.setAttribute("data-testid", `conversation-turn-${nextIndex}`);
+        user.textContent = "New incremental user message";
+
+        const assistant = document.createElement("section");
+        assistant.setAttribute("data-turn", "assistant");
+        assistant.setAttribute(
+            "data-testid",
+            `conversation-turn-${nextIndex + 1}`
+        );
+        assistant.setAttribute("data-scroll-anchor", "true");
+        assistant.textContent = "New incremental assistant message";
+
+        const actions = document.createElement("div");
+        actions.setAttribute("aria-label", "Response actions");
+        actions.textContent = "Actions";
+        assistant.appendChild(actions);
+
+        conversation.appendChild(user);
+        conversation.appendChild(assistant);
+    });
+}
+
 test("offscreen: disabled startup does not enable browser-native section mode", async ({ page }) => {
     await loadOptimizerFixture(page, {
         settings: {
@@ -81,6 +123,46 @@ test("offscreen: enabled startup applies browser-native section optimization", a
         expect(Number(section.height)).toBeGreaterThan(0);
         expect(section.intrinsicSize).toMatch(/^\d+px$/);
         expect(section.hasLegacyLive).toBe(false);
+    }
+});
+
+test("offscreen: newly added conversation sections are optimized incrementally", async ({
+    page,
+}) => {
+    await loadOptimizerFixture(page, {
+        settings: {
+            autoPrune: false,
+            enablePruning: false,
+            enableOffscreenOptimization: true,
+        },
+    });
+
+    await expect(page.locator(`html[${ROOT_ATTR}="true"]`)).toHaveCount(1);
+    await expect(sectionOptLocator(page)).toHaveCount(12);
+
+    const before = await getSectionOptimizationSnapshot(page);
+
+    expect(before).toHaveLength(12);
+    expect(before.every((section) => section.optimized === "true")).toBe(true);
+
+    await appendIncrementalExchange(page);
+
+    await expect(page.locator("section[data-turn]")).toHaveCount(14);
+    await expect(sectionOptLocator(page)).toHaveCount(14);
+
+    const after = await getSectionOptimizationSnapshot(page);
+
+    expect(after).toHaveLength(14);
+    expect(after.every((section) => section.optimized === "true")).toBe(true);
+    expect(after.every((section) => !section.hasLegacyLive)).toBe(true);
+
+    expect(after.slice(0, before.length).map((section) => section.height)).toEqual(
+        before.map((section) => section.height)
+    );
+
+    for (const section of after.slice(-2)) {
+        expect(Number(section.height)).toBeGreaterThan(0);
+        expect(section.intrinsicSize).toMatch(/^\d+px$/);
     }
 });
 
@@ -136,4 +218,45 @@ test("offscreen: runtime enable reapplies browser-native section markers", async
     expect(snapshot).toHaveLength(12);
     expect(snapshot.every((section) => section.optimized === "true")).toBe(true);
     expect(snapshot.every((section) => !section.hasLegacyLive)).toBe(true);
+});
+
+test("offscreen: newly added sections are optimized when pruning is also enabled", async ({
+    page,
+}) => {
+    await loadOptimizerFixture(page, {
+        settings: {
+            autoPrune: true,
+            enablePruning: true,
+            historyKeptExchanges: 20,
+            enableOffscreenOptimization: true,
+        },
+    });
+
+    await expect(page.locator(`html[${ROOT_ATTR}="true"]`)).toHaveCount(1);
+    await expect(sectionOptLocator(page)).toHaveCount(12);
+
+    const before = await getSectionOptimizationSnapshot(page);
+
+    expect(before).toHaveLength(12);
+    expect(before.every((section) => section.optimized === "true")).toBe(true);
+
+    await appendIncrementalExchange(page);
+
+    await expect(page.locator("section[data-turn]")).toHaveCount(14);
+    await expect(sectionOptLocator(page)).toHaveCount(14);
+
+    const after = await getSectionOptimizationSnapshot(page);
+
+    expect(after).toHaveLength(14);
+    expect(after.every((section) => section.optimized === "true")).toBe(true);
+    expect(after.every((section) => !section.hasLegacyLive)).toBe(true);
+
+    expect(after.slice(0, before.length).map((section) => section.height)).toEqual(
+        before.map((section) => section.height)
+    );
+
+    for (const section of after.slice(-2)) {
+        expect(Number(section.height)).toBeGreaterThan(0);
+        expect(section.intrinsicSize).toMatch(/^\d+px$/);
+    }
 });

@@ -11,6 +11,8 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
 
 import {
     handleReplyStreamingStarted,
+    optimizeAddedConversationNodes,
+    optimizeUnoptimizedConversationSections,
     refreshObservedSections,
     scheduleOffscreenRefresh,
     setOffscreenOptimizationEnabled,
@@ -131,6 +133,100 @@ describe("offscreen browser-native section mode", () => {
         }
 
         expect(state.offscreenLiveSection).toBe(null);
+    });
+
+    it("optimizes only newly added conversation sections on incremental updates", () => {
+        refreshObservedSections();
+
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("data-turn-id-container", "4");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-testid", "conversation-turn-4");
+        section.setAttribute("data-turn", "assistant");
+        section.textContent = "New assistant";
+
+        Object.defineProperty(section, "offsetHeight", {
+            configurable: true,
+            value: 220,
+        });
+
+        section.getBoundingClientRect = vi.fn(() => ({
+            width: 800,
+            height: 220,
+            top: 300,
+            right: 800,
+            bottom: 520,
+            left: 0,
+            x: 0,
+            y: 300,
+            toJSON: () => {},
+        }));
+
+        wrapper.appendChild(section);
+        document.getElementById("conversation").appendChild(wrapper);
+
+        expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
+
+        const optimizedCount = optimizeAddedConversationNodes(
+            [wrapper],
+            "test-added-node"
+        );
+
+        expect(optimizedCount).toBe(1);
+        expect(section.getAttribute(SECTION_ATTR)).toBe("true");
+        expect(section.getAttribute(HEIGHT_ATTR)).toBe("220");
+        expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("220px");
+    });
+
+    it("reconciles unoptimized conversation sections without refreshing already optimized sections", () => {
+        refreshObservedSections();
+
+        const existingSections = getSections();
+        const beforeHeights = existingSections.map((section) =>
+            section.getAttribute(HEIGHT_ATTR)
+        );
+
+        const section = document.createElement("section");
+        section.setAttribute("data-testid", "conversation-turn-4");
+        section.setAttribute("data-turn", "assistant");
+        section.textContent = "Nested assistant added outside the shallow observer path";
+
+        Object.defineProperty(section, "offsetHeight", {
+            configurable: true,
+            value: 260,
+        });
+
+        section.getBoundingClientRect = vi.fn(() => ({
+            width: 800,
+            height: 260,
+            top: 300,
+            right: 800,
+            bottom: 560,
+            left: 0,
+            x: 0,
+            y: 300,
+            toJSON: () => {},
+        }));
+
+        const nestedWrapper = document.createElement("div");
+        nestedWrapper.appendChild(section);
+        document.getElementById("conversation").appendChild(nestedWrapper);
+
+        expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
+
+        const optimizedCount = optimizeUnoptimizedConversationSections(
+            "test-reconcile"
+        );
+
+        expect(optimizedCount).toBe(1);
+        expect(section.getAttribute(SECTION_ATTR)).toBe("true");
+        expect(section.getAttribute(HEIGHT_ATTR)).toBe("260");
+        expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("260px");
+
+        expect(existingSections.map((existing) => existing.getAttribute(HEIGHT_ATTR))).toEqual(
+            beforeHeights
+        );
     });
 
     it("keeps cached intrinsic sizes stable on repeated refreshes", () => {
