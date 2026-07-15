@@ -118,6 +118,19 @@ describe("conversationMaintenance", () => {
         expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
     });
 
+    it("does not run post-prune offscreen refresh for conversation chrome sync", () => {
+        scheduleConversationChromeSync({
+            reason: "reply-settled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+    });
+
     it("refreshes offscreen state during post-prune refresh", () => {
         scheduleRefreshPostPruneState();
         flushDomWriteBatchNow();
@@ -193,5 +206,72 @@ describe("conversationMaintenance", () => {
         expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
 
         vi.useRealTimers();
+    });
+
+    it("keeps explicit post-prune refresh separate from ordinary chrome sync", () => {
+        scheduleConversationChromeSync({
+            reason: "reply-settled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+
+        ensureSectionCssOffscreenModeMock.mockClear();
+        scheduleOffscreenRefreshMock.mockClear();
+
+        scheduleRefreshPostPruneState({
+            reason: "explicit-post-prune-refresh",
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+    });
+
+    it("coalesces chrome sync and post-prune refresh without running a full offscreen refresh", () => {
+        scheduleConversationChromeSync({
+            reason: "reply-settled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        scheduleRefreshPostPruneState({
+            reason: "store-prune-completed",
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(2);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
+    });
+
+    it("does not run full offscreen refresh when repeated chrome syncs are scheduled", () => {
+        scheduleConversationChromeSync({
+            reason: "reply-settled",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        scheduleConversationChromeSync({
+            reason: "storage-changed",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        scheduleConversationChromeSync({
+            reason: "manual-refresh",
+            forceCss: true,
+            includeStreaming: true,
+        });
+
+        flushDomWriteBatchNow();
+
+        expect(ensureSectionCssOffscreenModeMock).toHaveBeenCalledTimes(1);
+        expect(scheduleOffscreenRefreshMock).not.toHaveBeenCalled();
     });
 });

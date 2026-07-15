@@ -347,7 +347,9 @@ describe("core/index", () => {
         expect(mockRefs.syncPruningStateToPageBridge).toHaveBeenCalledTimes(1);
 
         expect(mockRefs.installReplyTimingListeners).toHaveBeenCalledTimes(1);
-        expect(mockRefs.installConversationNavigationWatcher).toHaveBeenCalledTimes(1);
+        expect(mockRefs.installConversationNavigationWatcher).toHaveBeenCalledTimes(
+            1
+        );
         expect(mockRefs.configureConversationMaintenance).toHaveBeenCalledWith({
             ensureObserverAttached: expect.any(Function),
             withDomMutationGuard: mockRefs.withDomMutationGuard,
@@ -372,7 +374,9 @@ describe("core/index", () => {
         const state = window.__threadOptimizerState;
 
         expect(state.storeReadOptimizationReadyForPage).toBe(false);
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(1);
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalledTimes(1);
     });
 
     it("marks page store-read optimization ready after initial prune finishes without a pending store request", async () => {
@@ -395,7 +399,9 @@ describe("core/index", () => {
         const state = window.__threadOptimizerState;
 
         expect(state.storeReadOptimizationReadyForPage).toBe(true);
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(2);
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalledTimes(2);
     });
 
     it("does not mark page store-read optimization ready while initial store prune is still pending", async () => {
@@ -422,7 +428,9 @@ describe("core/index", () => {
         const state = window.__threadOptimizerState;
 
         expect(state.storeReadOptimizationReadyForPage).toBe(false);
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(1);
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalledTimes(1);
     });
 
     it("marks page store-read optimization ready after initial store prune completion is reported", async () => {
@@ -452,7 +460,9 @@ describe("core/index", () => {
         const state = window.__threadOptimizerState;
 
         expect(state.storeReadOptimizationReadyForPage).toBe(true);
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalledTimes(2);
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalledTimes(2);
     });
 
     it("disables page store-read optimization again when navigation rearms initial prune", async () => {
@@ -472,7 +482,9 @@ describe("core/index", () => {
         });
 
         expect(state.storeReadOptimizationReadyForPage).toBe(false);
-        expect(mockRefs.syncStoreReadOptimizationToPageWithRetry).toHaveBeenCalled();
+        expect(
+            mockRefs.syncStoreReadOptimizationToPageWithRetry
+        ).toHaveBeenCalled();
     });
 
     it("waits for a container when none is attached during initialization for an existing chat URL", async () => {
@@ -663,6 +675,7 @@ describe("core/index", () => {
         state.didInitialPrune = true;
 
         mockRefs.pruneOldSections.mockClear();
+        mockRefs.scheduleRefreshPostPruneState.mockClear();
         mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onBeforeReplyStarted();
@@ -676,7 +689,10 @@ describe("core/index", () => {
         options.onReplySettled();
 
         expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
+        expect(
+            mockRefs.optimizeUnoptimizedConversationSections
+        ).toHaveBeenCalledTimes(1);
         expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
             "reply-settled"
         );
@@ -701,14 +717,18 @@ describe("core/index", () => {
 
         mockRefs.scheduleAutoPrune.mockClear();
         mockRefs.runInitialPrune.mockClear();
+        mockRefs.scheduleRefreshPostPruneState.mockClear();
         mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onReplySettled();
 
         expect(mockRefs.runInitialPrune).toHaveBeenCalledTimes(1);
         expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
 
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(
+            mockRefs.optimizeUnoptimizedConversationSections
+        ).toHaveBeenCalledTimes(1);
         expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
             "reply-settled"
         );
@@ -730,6 +750,7 @@ describe("core/index", () => {
 
         mockRefs.pruneOldSections.mockClear();
         mockRefs.scheduleAutoPrune.mockClear();
+        mockRefs.scheduleRefreshPostPruneState.mockClear();
         mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onBeforeReplyStarted();
@@ -740,7 +761,10 @@ describe("core/index", () => {
         options.onReplySettled();
 
         expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
+        expect(
+            mockRefs.optimizeUnoptimizedConversationSections
+        ).toHaveBeenCalledTimes(1);
         expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
             "reply-settled"
         );
