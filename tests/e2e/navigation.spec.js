@@ -150,6 +150,31 @@ test("new chat does not leave prune overlay stuck", async ({ page }) => {
     await expect(fixture.turns()).toHaveCount(0);
 });
 
+test("new chat overlay stays cleared after repeated navigation and watchdog windows", async ({ page }) => {
+    const fixture = await loadOptimizerFixture(page);
+
+    await fixture.expectPrunedToLatestExchange();
+
+    await clickSyntheticNewChat(page);
+
+    await expectNoStuckPruneOverlay(page);
+    await expect(fixture.turns()).toHaveCount(0);
+
+    await page.waitForTimeout(250);
+    await expectNoStuckPruneOverlay(page);
+
+    await clickSyntheticNewChat(page);
+
+    await expectNoStuckPruneOverlay(page);
+    await expect(fixture.turns()).toHaveCount(0);
+
+    await page.waitForTimeout(750);
+    await expectNoStuckPruneOverlay(page);
+
+    await page.waitForTimeout(1500);
+    await expectNoStuckPruneOverlay(page);
+});
+
 test("opening a recent chat after new chat still prunes and clears overlay", async ({ page }) => {
     let fixture = await loadOptimizerFixture(page);
 

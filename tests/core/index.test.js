@@ -621,6 +621,61 @@ describe("core/index", () => {
         );
     });
 
+    it("does not show the initial prune overlay during repeated New chat navigation signals", async () => {
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        state.didInitialPrune = true;
+        state.observedContainer = createReadyConversationContainer();
+
+        mockRefs.showInitialPrunePendingOverlay.mockClear();
+        mockRefs.waitForContainerAndInitialPrune.mockClear();
+        mockRefs.clearPendingAutoPrune.mockClear();
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+
+        navigationHandler({
+            reason: "new-chat-click-followup",
+            locationKey: "/",
+        });
+
+        navigationHandler({
+            reason: "pushState",
+            locationKey: "/",
+        });
+
+        expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
+
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenCalledTimes(3);
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
+        expect(mockRefs.waitForContainerAndInitialPrune).toHaveBeenNthCalledWith(
+            3,
+            expect.objectContaining({
+                requireConversationTurns: false,
+            })
+        );
+
+        expect(mockRefs.clearPendingAutoPrune).toHaveBeenCalled();
+    });
+
     it("does not show initial prune overlay or wait for turns when sidebar navigation lands on an empty chat route", async () => {
         await importFreshIndex();
 
