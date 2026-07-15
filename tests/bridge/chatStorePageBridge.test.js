@@ -198,6 +198,81 @@ function createFakeStore(nodeCount = 4) {
             return branch.reverse();
         },
 
+        findMessage(predicate) {
+            let node = this.getNodeIfExists(this.currentLeafId);
+
+            while (node) {
+                if (predicate(node.message)) {
+                    return node.message;
+                }
+
+                if (node.message.author.role === "root") {
+                    break;
+                }
+
+                node = this.getNodeIfExists(node.parentId);
+            }
+
+            return undefined;
+        },
+
+        someMessage(predicate) {
+            return this.findMessage(predicate) != null;
+        },
+
+        findMessageFromLeaf(predicate, leafId, rootId = this.rootId) {
+            const root = this.getNodeIfExists(rootId);
+            let node = this.getNodeIfExists(leafId);
+
+            while (root && node && node !== root) {
+                if (predicate(node.message)) {
+                    return node.message;
+                }
+
+                node = this.getNodeIfExists(node.parentId);
+            }
+
+            return undefined;
+        },
+
+        findFirst(predicate) {
+            return this.findFirstFromLeaf(predicate, this.currentLeafId);
+        },
+
+        findFirstFromLeaf(predicate, leafId) {
+            let result;
+            let node = this.getNodeByIdOrMessageId(leafId);
+
+            while (node) {
+                if (predicate(node.message)) {
+                    result = node.message;
+                }
+
+                node = this.getNodeIfExists(node.parentId);
+            }
+
+            return result;
+        },
+
+        findFirstFromLeafToParent(predicate, leafId, parentId) {
+            let result;
+            let node = this.getNodeByIdOrMessageId(leafId);
+
+            while (node) {
+                if (predicate(node.message)) {
+                    result = node.message;
+                }
+
+                if (node.parentId === parentId) {
+                    break;
+                }
+
+                node = this.getNodeIfExists(node.parentId);
+            }
+
+            return result;
+        },
+
         getParent(id) {
             const node = this.getNodeByIdOrMessageId(id);
             return this.getNodeByIdOrMessageId(node.parentId);
@@ -1627,6 +1702,130 @@ describe("chatStorePageBridge", () => {
         );
     });
 
+    it("uses the cached branch for findMessage and someMessage", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        const originalGetBranchFromLeaf = fakeStore.getBranchFromLeaf;
+        const getBranchFromLeafSpy = vi.fn(function getBranchFromLeafSpy(...args) {
+            return originalGetBranchFromLeaf.apply(this, args);
+        });
+
+        fakeStore.getBranchFromLeaf = getBranchFromLeafSpy;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-cache",
+        });
+
+        expect(bridge.__branchCacheLastInstallResult.methods).toContain(
+            "findMessage"
+        );
+        expect(bridge.__branchCacheLastInstallResult.methods).toContain(
+            "someMessage"
+        );
+
+        const first = fakeStore.findMessage((message) => message.id === "msg-2");
+        const second = fakeStore.findMessage((message) => message.id === "msg-2");
+        const hasUser = fakeStore.someMessage(
+            (message) => message.author.role === "user"
+        );
+
+        expect(first?.id).toBe("msg-2");
+        expect(second?.id).toBe("msg-2");
+        expect(hasUser).toBe(true);
+
+        expect(getBranchFromLeafSpy).toHaveBeenCalledTimes(1);
+        expect(getBranchFromLeafSpy).toHaveBeenCalledWith("node-4");
+
+        const stats = bridge.getBranchCacheStats();
+
+        expect(stats.size.getBranchFromLeaf).toBe(1);
+        expect(stats.stats.branchSearch).toBeTruthy();
+    });
+
+    it("preserves branch search helper semantics while using cached branches", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-semantics",
+        });
+
+        const findMessageFromLeafResult = fakeStore.findMessageFromLeaf(
+            (message) => message.author.role === "user",
+            "node-4",
+            "node-1"
+        );
+
+        const findFirstFromLeafResult = fakeStore.findFirstFromLeaf(
+            (message) => message.author.role === "user",
+            "node-4"
+        );
+
+        const findFirstFromLeafToParentResult = fakeStore.findFirstFromLeafToParent(
+            (message) => message.author.role === "user",
+            "node-4",
+            "node-1"
+        );
+
+        expect(findMessageFromLeafResult?.id).toBe("msg-3");
+        expect(findFirstFromLeafResult?.id).toBe("msg-1");
+        expect(findFirstFromLeafToParentResult?.id).toBe("msg-3");
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            installed: true,
+            size: {
+                getBranchFromLeaf: 1,
+            },
+        });
+    });
+
+    it("restores branch search wrappers when store read optimization is disabled", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        const originalFindMessage = fakeStore.findMessage;
+        const originalSomeMessage = fakeStore.someMessage;
+        const originalFindMessageFromLeaf = fakeStore.findMessageFromLeaf;
+        const originalFindFirst = fakeStore.findFirst;
+        const originalFindFirstFromLeaf = fakeStore.findFirstFromLeaf;
+        const originalFindFirstFromLeafToParent =
+            fakeStore.findFirstFromLeafToParent;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-uninstall",
+        });
+
+        expect(fakeStore.findMessage).not.toBe(originalFindMessage);
+        expect(fakeStore.someMessage).not.toBe(originalSomeMessage);
+        expect(fakeStore.findMessageFromLeaf).not.toBe(originalFindMessageFromLeaf);
+        expect(fakeStore.findFirst).not.toBe(originalFindFirst);
+        expect(fakeStore.findFirstFromLeaf).not.toBe(originalFindFirstFromLeaf);
+        expect(fakeStore.findFirstFromLeafToParent).not.toBe(
+            originalFindFirstFromLeafToParent
+        );
+
+        bridge.disableStoreReadOptimization();
+
+        expect(fakeStore.findMessage).toBe(originalFindMessage);
+        expect(fakeStore.someMessage).toBe(originalSomeMessage);
+        expect(fakeStore.findMessageFromLeaf).toBe(originalFindMessageFromLeaf);
+        expect(fakeStore.findFirst).toBe(originalFindFirst);
+        expect(fakeStore.findFirstFromLeaf).toBe(originalFindFirstFromLeaf);
+        expect(fakeStore.findFirstFromLeafToParent).toBe(
+            originalFindFirstFromLeafToParent
+        );
+    });
+
     it("keeps pruning available with deleteClientOnlyMessage-only stores", () => {
         appendVisibleMessage("a3");
         loadBridgeWithCurrentScript(script);
@@ -1766,5 +1965,194 @@ describe("chatStorePageBridge", () => {
             "u3",
             "root",
         ]);
+    });
+
+    it("falls back to original branch search helpers for unsupported call shapes", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        const originalFindMessage = fakeStore.findMessage;
+        const originalSomeMessage = fakeStore.someMessage;
+        const originalFindMessageFromLeaf = fakeStore.findMessageFromLeaf;
+
+        const findMessageSpy = vi.fn(function originalFindMessageSpy(...args) {
+            return originalFindMessage.apply(this, args);
+        });
+
+        const someMessageSpy = vi.fn(function originalSomeMessageSpy(...args) {
+            return originalSomeMessage.apply(this, args);
+        });
+
+        const findMessageFromLeafSpy = vi.fn(
+            function originalFindMessageFromLeafSpy(...args) {
+                return originalFindMessageFromLeaf.apply(this, args);
+            }
+        );
+
+        fakeStore.findMessage = findMessageSpy;
+        fakeStore.someMessage = someMessageSpy;
+        fakeStore.findMessageFromLeaf = findMessageFromLeafSpy;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-fallbacks",
+        });
+
+        const predicate = (message) => message.id === "msg-2";
+
+        fakeStore.findMessage(predicate, "unsupported-extra-arg");
+        fakeStore.someMessage(predicate, "unsupported-extra-arg");
+
+        expect(() => {
+            fakeStore.findMessageFromLeaf(null, "node-4", "node-1");
+        }).toThrow("predicate is not a function");
+
+        expect(findMessageSpy).toHaveBeenCalled();
+        expect(someMessageSpy).toHaveBeenCalled();
+        expect(findMessageFromLeafSpy).toHaveBeenCalled();
+
+        const stats = bridge.getBranchCacheStats();
+
+        expect(stats.stats.branchSearch.mode).toContain("branch-search-wrappers");
+
+        if (stats.stats.branchSearch.fallbacks !== undefined) {
+            expect(stats.stats.branchSearch.fallbacks).toBeGreaterThanOrEqual(3);
+        }
+    });
+
+    it("clears cached branch data after topology pruning", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-cache-clear-after-prune",
+        });
+
+        expect(
+            fakeStore.findMessage((message) => message.id === "msg-2")?.id
+        ).toBe("msg-2");
+
+        expect(bridge.getBranchCacheStats().size.getBranchFromLeaf).toBeGreaterThan(0);
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-branch-search-cache-clear-after-prune",
+        });
+
+        expect(result.ok).toBe(true);
+
+        expect(bridge.getBranchCacheStats().size.getBranchFromLeaf).toBe(0);
+        expect(bridge.getBranchCacheStats().size.getBranch).toBe(0);
+
+        expect(
+            fakeStore.findMessage((message) => message.id === "msg-2")
+        ).toBeUndefined();
+    });
+
+    it("does not cache branch search predicate results", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-branch-search-predicate-not-cached",
+        });
+
+        let wantedMessageId = "msg-2";
+
+        const predicate = vi.fn((message) => message.id === wantedMessageId);
+
+        const first = fakeStore.findMessage(predicate);
+
+        wantedMessageId = "msg-4";
+
+        const second = fakeStore.findMessage(predicate);
+
+        expect(first?.id).toBe("msg-2");
+        expect(second?.id).toBe("msg-4");
+
+        expect(predicate).toHaveBeenCalled();
+
+        const stats = bridge.getBranchCacheStats();
+
+        expect(stats.size.getBranchFromLeaf).toBe(1);
+        expect(stats.stats.branchSearch.mode).toContain("branch-search-wrappers");
+
+        if (stats.stats.branchSearch.methods !== undefined) {
+            expect(stats.stats.branchSearch.methods.findMessage).toBeGreaterThanOrEqual(2);
+        }
+    });
+
+    it("installs branch cache gracefully when branch search helpers are unavailable", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        delete fakeStore.findMessage;
+        delete fakeStore.someMessage;
+        delete fakeStore.findMessageFromLeaf;
+        delete fakeStore.findFirst;
+        delete fakeStore.findFirstFromLeaf;
+        delete fakeStore.findFirstFromLeafToParent;
+
+        const originalGetBranch = fakeStore.getBranch;
+        const originalGetBranchFromLeaf = fakeStore.getBranchFromLeaf;
+
+        bridge.registerStore(fakeStore, {
+            source: "test-partial-branch-store",
+        });
+
+        expect(bridge.hasStore()).toBe(true);
+        expect(bridge.getStore()).toBe(fakeStore);
+
+        expect(bridge.__branchCacheInstalled).toBe(true);
+
+        expect(fakeStore.getBranch).not.toBe(originalGetBranch);
+        expect(fakeStore.getBranchFromLeaf).not.toBe(originalGetBranchFromLeaf);
+
+        expect(fakeStore.findMessage).toBeUndefined();
+        expect(fakeStore.someMessage).toBeUndefined();
+        expect(fakeStore.findMessageFromLeaf).toBeUndefined();
+        expect(fakeStore.findFirst).toBeUndefined();
+        expect(fakeStore.findFirstFromLeaf).toBeUndefined();
+        expect(fakeStore.findFirstFromLeafToParent).toBeUndefined();
+
+        const result = fakeStore.getBranchFromLeaf("node-4");
+
+        expect(Array.isArray(result)).toBe(true);
+        expect(result.map((node) => node.id)).toEqual([
+            "root",
+            "node-1",
+            "node-2",
+            "node-3",
+            "node-4",
+        ]);
+
+        const stats = bridge.getBranchCacheStats();
+
+        expect(stats.installed).toBe(true);
+        expect(stats.lastInstallResult.ok).toBe(true);
+        expect(stats.lastInstallResult.methods).toContain("getBranch");
+        expect(stats.lastInstallResult.methods).toContain("getBranchFromLeaf");
+
+        expect(stats.lastInstallResult.methods).not.toContain("findMessage");
+        expect(stats.lastInstallResult.methods).not.toContain("someMessage");
+        expect(stats.lastInstallResult.methods).not.toContain("findMessageFromLeaf");
+        expect(stats.lastInstallResult.methods).not.toContain("findFirst");
+        expect(stats.lastInstallResult.methods).not.toContain("findFirstFromLeaf");
+        expect(stats.lastInstallResult.methods).not.toContain(
+            "findFirstFromLeafToParent"
+        );
+
+        expect(stats.size.getBranchFromLeaf).toBe(1);
     });
 });

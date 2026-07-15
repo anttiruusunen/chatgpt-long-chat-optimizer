@@ -1193,9 +1193,7 @@ function readInitialLoadHidingSettingsFromDom() {
 
             const branchOriginals = this.__branchCacheOriginals;
             if (branchOriginals) {
-                for (const methodName of ["getBranch", "getBranchFromLeaf"]) {
-                    const original = branchOriginals[methodName];
-
+                for (const [methodName, original] of Object.entries(branchOriginals)) {
                     if (
                         typeof original === "function" &&
                         store[methodName] !== original

@@ -46,6 +46,62 @@ function createCurrentLeafIdReader(store) {
     };
 }
 
+function getStoreRootIdValue(store) {
+    try {
+        const rootId = store?.rootId;
+
+        return typeof rootId === "function" ? rootId.call(store) : rootId;
+    } catch {
+        return null;
+    }
+}
+
+function getBranchSearchParentId(node) {
+    return (
+        node?.parentId ||
+        node?.parent ||
+        node?.parent_id ||
+        node?.parentNodeId ||
+        node?.parent_node_id ||
+        null
+    );
+}
+
+function getBranchSearchMessage(node) {
+    return node?.message && typeof node.message === "object"
+        ? node.message
+        : node;
+}
+
+function isBranchSearchRootNode(node) {
+    return getNodeRole(node) === "root";
+}
+
+function createBranchSearchRecorder(stats) {
+    return function recordBranchSearch(methodName, {
+        iterations = 0,
+        matched = false,
+        fallback = false,
+    } = {}) {
+        if (!ENABLE_CACHE_PROFILING || !stats) {
+            return;
+        }
+
+        stats.calls += 1;
+        stats.iterations += iterations;
+
+        if (matched) {
+            stats.matches += 1;
+        }
+
+        if (fallback) {
+            stats.fallbacks += 1;
+        }
+
+        stats.methods[methodName] = (stats.methods[methodName] || 0) + 1;
+    };
+}
+
 function resolveNodeCore(bridge, id) {
     const store = bridge.__store;
     if (!store || !id) return null;
@@ -686,6 +742,16 @@ export const cacheInstallerMethods = {
         const getBranchOriginal = getStoreMethod(store, "getBranch");
         const getBranchFromLeafOriginal = getStoreMethod(store, "getBranchFromLeaf");
 
+        const findMessageOriginal = getStoreMethod(store, "findMessage");
+        const someMessageOriginal = getStoreMethod(store, "someMessage");
+        const findMessageFromLeafOriginal = getStoreMethod(store, "findMessageFromLeaf");
+        const findFirstOriginal = getStoreMethod(store, "findFirst");
+        const findFirstFromLeafOriginal = getStoreMethod(store, "findFirstFromLeaf");
+        const findFirstFromLeafToParentOriginal = getStoreMethod(
+            store,
+            "findFirstFromLeafToParent"
+        );
+
         const originals = {};
 
         if (getBranchOriginal) {
@@ -694,6 +760,30 @@ export const cacheInstallerMethods = {
 
         if (getBranchFromLeafOriginal) {
             originals.getBranchFromLeaf = getBranchFromLeafOriginal;
+        }
+
+        if (findMessageOriginal) {
+            originals.findMessage = findMessageOriginal;
+        }
+
+        if (someMessageOriginal) {
+            originals.someMessage = someMessageOriginal;
+        }
+
+        if (findMessageFromLeafOriginal) {
+            originals.findMessageFromLeaf = findMessageFromLeafOriginal;
+        }
+
+        if (findFirstOriginal) {
+            originals.findFirst = findFirstOriginal;
+        }
+
+        if (findFirstFromLeafOriginal) {
+            originals.findFirstFromLeaf = findFirstFromLeafOriginal;
+        }
+
+        if (findFirstFromLeafToParentOriginal) {
+            originals.findFirstFromLeafToParent = findFirstFromLeafToParentOriginal;
         }
 
         if (Object.keys(originals).length === 0) {
@@ -726,6 +816,20 @@ export const cacheInstallerMethods = {
             }
         );
 
+        const branchSearchStats = createCacheStats(
+            {
+                calls: 0,
+                iterations: 0,
+                matches: 0,
+                fallbacks: 0,
+                methods: {},
+                mode: "profiled:branch-search-wrappers",
+            },
+            {
+                mode: "production:branch-search-wrappers",
+            }
+        );
+
         const getBranchCache = createPersistentCache({
             stats: getBranchStats,
         });
@@ -742,6 +846,7 @@ export const cacheInstallerMethods = {
         this.__branchCacheStats = {
             getBranch: getBranchStats,
             getBranchFromLeaf: getBranchFromLeafStats,
+            branchSearch: branchSearchStats,
         };
 
         this.__branchCacheOriginals = originals;
@@ -823,6 +928,355 @@ export const cacheInstallerMethods = {
                 );
 
                 return result ?? null;
+            };
+        }
+
+        const recordBranchSearch = createBranchSearchRecorder(branchSearchStats);
+
+        function readCachedBranch(leafId) {
+            if (!leafId || typeof store.getBranchFromLeaf !== "function") {
+                return null;
+            }
+
+            const branch = store.getBranchFromLeaf(leafId);
+
+            return Array.isArray(branch) ? branch : null;
+        }
+
+        function fallbackToOriginalSearch(methodName, original, args) {
+            recordBranchSearch(methodName, {
+                fallback: true,
+            });
+
+            return original.apply(store, args);
+        }
+
+        if (
+            typeof findMessageOriginal === "function" &&
+            typeof store.getBranchFromLeaf === "function"
+        ) {
+            store.findMessage = function cachedFindMessage(predicate, ...rest) {
+                if (typeof predicate !== "function" || rest.length > 0) {
+                    return fallbackToOriginalSearch(
+                        "findMessage",
+                        findMessageOriginal,
+                        [predicate, ...rest]
+                    );
+                }
+
+                const leafId =
+                    typeof store.currentLeafId === "function"
+                        ? store.currentLeafId()
+                        : store.currentLeafId;
+
+                let branch;
+
+                try {
+                    branch = readCachedBranch(leafId);
+                } catch {
+                    return fallbackToOriginalSearch(
+                        "findMessage",
+                        findMessageOriginal,
+                        [predicate]
+                    );
+                }
+
+                if (!branch) {
+                    return fallbackToOriginalSearch(
+                        "findMessage",
+                        findMessageOriginal,
+                        [predicate]
+                    );
+                }
+
+                let iterations = 0;
+
+                for (let index = branch.length - 1; index >= 0; index -= 1) {
+                    const node = branch[index];
+
+                    if (!node) {
+                        continue;
+                    }
+
+                    iterations += 1;
+
+                    const message = getBranchSearchMessage(node);
+
+                    if (predicate(message)) {
+                        recordBranchSearch("findMessage", {
+                            iterations,
+                            matched: true,
+                        });
+
+                        return message;
+                    }
+
+                    if (isBranchSearchRootNode(node)) {
+                        break;
+                    }
+                }
+
+                recordBranchSearch("findMessage", {
+                    iterations,
+                    matched: false,
+                });
+
+                return undefined;
+            };
+        }
+
+        if (
+            typeof someMessageOriginal === "function" &&
+            typeof store.findMessage === "function"
+        ) {
+            store.someMessage = function cachedSomeMessage(predicate, ...rest) {
+                if (typeof predicate !== "function" || rest.length > 0) {
+                    return fallbackToOriginalSearch(
+                        "someMessage",
+                        someMessageOriginal,
+                        [predicate, ...rest]
+                    );
+                }
+
+                recordBranchSearch("someMessage");
+
+                return store.findMessage(predicate) != null;
+            };
+        }
+
+        if (
+            typeof findMessageFromLeafOriginal === "function" &&
+            typeof store.getBranchFromLeaf === "function"
+        ) {
+            store.findMessageFromLeaf = function cachedFindMessageFromLeaf(
+                predicate,
+                leafId,
+                rootId = getStoreRootIdValue(store)
+            ) {
+                if (typeof predicate !== "function") {
+                    return fallbackToOriginalSearch(
+                        "findMessageFromLeaf",
+                        findMessageFromLeafOriginal,
+                        [predicate, leafId, rootId]
+                    );
+                }
+
+                let rootNode = null;
+                let branch = null;
+
+                try {
+                    rootNode =
+                        typeof store.getNodeIfExists === "function"
+                            ? store.getNodeIfExists(rootId)
+                            : null;
+
+                    branch = readCachedBranch(leafId);
+                } catch {
+                    return fallbackToOriginalSearch(
+                        "findMessageFromLeaf",
+                        findMessageFromLeafOriginal,
+                        [predicate, leafId, rootId]
+                    );
+                }
+
+                if (!rootNode || !branch) {
+                    return fallbackToOriginalSearch(
+                        "findMessageFromLeaf",
+                        findMessageFromLeafOriginal,
+                        [predicate, leafId, rootId]
+                    );
+                }
+
+                let iterations = 0;
+
+                for (let index = branch.length - 1; index >= 0; index -= 1) {
+                    const node = branch[index];
+
+                    if (!node) {
+                        continue;
+                    }
+
+                    if (node === rootNode || node.id === rootNode.id) {
+                        break;
+                    }
+
+                    iterations += 1;
+
+                    const message = getBranchSearchMessage(node);
+
+                    if (predicate(message)) {
+                        recordBranchSearch("findMessageFromLeaf", {
+                            iterations,
+                            matched: true,
+                        });
+
+                        return message;
+                    }
+                }
+
+                recordBranchSearch("findMessageFromLeaf", {
+                    iterations,
+                    matched: false,
+                });
+
+                return undefined;
+            };
+        }
+
+        if (
+            typeof findFirstOriginal === "function" &&
+            typeof store.findFirstFromLeaf === "function"
+        ) {
+            store.findFirst = function cachedFindFirst(predicate, ...rest) {
+                if (typeof predicate !== "function" || rest.length > 0) {
+                    return fallbackToOriginalSearch(
+                        "findFirst",
+                        findFirstOriginal,
+                        [predicate, ...rest]
+                    );
+                }
+
+                const leafId =
+                    typeof store.currentLeafId === "function"
+                        ? store.currentLeafId()
+                        : store.currentLeafId;
+
+                recordBranchSearch("findFirst");
+
+                return store.findFirstFromLeaf(predicate, leafId);
+            };
+        }
+
+        if (
+            typeof findFirstFromLeafOriginal === "function" &&
+            typeof store.getBranchFromLeaf === "function"
+        ) {
+            store.findFirstFromLeaf = function cachedFindFirstFromLeaf(
+                predicate,
+                leafId
+            ) {
+                if (typeof predicate !== "function") {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeaf",
+                        findFirstFromLeafOriginal,
+                        [predicate, leafId]
+                    );
+                }
+
+                let branch;
+
+                try {
+                    branch = readCachedBranch(leafId);
+                } catch {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeaf",
+                        findFirstFromLeafOriginal,
+                        [predicate, leafId]
+                    );
+                }
+
+                if (!branch) {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeaf",
+                        findFirstFromLeafOriginal,
+                        [predicate, leafId]
+                    );
+                }
+
+                let iterations = 0;
+                let result;
+
+                for (let index = branch.length - 1; index >= 0; index -= 1) {
+                    const node = branch[index];
+
+                    if (!node) {
+                        continue;
+                    }
+
+                    iterations += 1;
+
+                    const message = getBranchSearchMessage(node);
+
+                    if (predicate(message)) {
+                        result = message;
+                    }
+                }
+
+                recordBranchSearch("findFirstFromLeaf", {
+                    iterations,
+                    matched: result != null,
+                });
+
+                return result;
+            };
+        }
+
+        if (
+            typeof findFirstFromLeafToParentOriginal === "function" &&
+            typeof store.getBranchFromLeaf === "function"
+        ) {
+            store.findFirstFromLeafToParent = function cachedFindFirstFromLeafToParent(
+                predicate,
+                leafId,
+                parentId
+            ) {
+                if (typeof predicate !== "function") {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeafToParent",
+                        findFirstFromLeafToParentOriginal,
+                        [predicate, leafId, parentId]
+                    );
+                }
+
+                let branch;
+
+                try {
+                    branch = readCachedBranch(leafId);
+                } catch {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeafToParent",
+                        findFirstFromLeafToParentOriginal,
+                        [predicate, leafId, parentId]
+                    );
+                }
+
+                if (!branch) {
+                    return fallbackToOriginalSearch(
+                        "findFirstFromLeafToParent",
+                        findFirstFromLeafToParentOriginal,
+                        [predicate, leafId, parentId]
+                    );
+                }
+
+                let iterations = 0;
+                let result;
+
+                for (let index = branch.length - 1; index >= 0; index -= 1) {
+                    const node = branch[index];
+
+                    if (!node) {
+                        continue;
+                    }
+
+                    iterations += 1;
+
+                    const message = getBranchSearchMessage(node);
+
+                    if (predicate(message)) {
+                        result = message;
+                    }
+
+                    if (getBranchSearchParentId(node) === parentId) {
+                        break;
+                    }
+                }
+
+                recordBranchSearch("findFirstFromLeafToParent", {
+                    iterations,
+                    matched: result != null,
+                });
+
+                return result;
             };
         }
 
