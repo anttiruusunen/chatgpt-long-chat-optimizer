@@ -102,6 +102,15 @@ vi.mock("../../src/content/streaming/replyTiming.js", () => ({
     isReplyStreaming: vi.fn(() => false),
 }));
 
+vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
+    postThreadOptimizerBridgeMessage: vi.fn(),
+    syncStoreReadOptimizationToPageWithRetry: vi.fn(),
+    syncPruningStateToPageBridge: vi.fn(),
+
+    onStoreHistoryPruneCompleted: vi.fn(() => () => {}),
+    onInitialLoadHistoryReduced: vi.fn(() => () => {}),
+}));
+
 function appendConversationTurns(
     container,
     { anchorId = "4", start = 1, end = 4 } = {}
@@ -236,6 +245,11 @@ describe("navigation rearm integration", () => {
 
     afterEach(async () => {
         await resetNavigationWatcher();
+
+        const overlayModule = await import(
+            "../../src/content/ui/pruneOverlay.js"
+        );
+        overlayModule.resetPruneOverlayForTests();
 
         vi.clearAllTimers();
         vi.useRealTimers();
@@ -460,6 +474,86 @@ describe("navigation rearm integration", () => {
 
             vi.advanceTimersByTime(1000);
             await flushScheduledWork();
+
+            expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
+        },
+        NAVIGATION_REARM_TEST_TIMEOUT_MS
+    );
+
+    it(
+        "force-hides an active prune overlay when navigation lands on the new chat route",
+        async () => {
+            history.replaceState({}, "", "/c/current-chat");
+            createConversationContainer();
+
+            await importIndexAndClearStartupPruneCount();
+
+            const overlayModule = await import("../../src/content/ui/pruneOverlay.js");
+
+            overlayModule.showPruneOverlay({
+                reason: "test-active-initial-prune",
+            });
+
+            expect(overlayModule.isPruneOverlayActive()).toBe(true);
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay")
+            ).toBeTruthy();
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay-card")
+            ).toBeTruthy();
+
+            navigateTo("/");
+
+            await advanceNavigationDetection();
+            await flushScheduledWork();
+
+            expect(overlayModule.isPruneOverlayActive()).toBe(false);
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay")
+            ).toBeNull();
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay-card")
+            ).toBeNull();
+
+            expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
+        },
+        NAVIGATION_REARM_TEST_TIMEOUT_MS
+    );
+
+    it(
+        "force-hides an active prune overlay when navigation leaves chat routes",
+        async () => {
+            history.replaceState({}, "", "/c/current-chat");
+            createConversationContainer();
+
+            await importIndexAndClearStartupPruneCount();
+
+            const overlayModule = await import("../../src/content/ui/pruneOverlay.js");
+
+            overlayModule.showPruneOverlay({
+                reason: "test-active-initial-prune",
+            });
+
+            expect(overlayModule.isPruneOverlayActive()).toBe(true);
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay")
+            ).toBeTruthy();
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay-card")
+            ).toBeTruthy();
+
+            navigateTo("/settings");
+
+            await advanceNavigationDetection();
+            await flushScheduledWork();
+
+            expect(overlayModule.isPruneOverlayActive()).toBe(false);
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay")
+            ).toBeNull();
+            expect(
+                document.getElementById("long-chat-optimizer-prune-overlay-card")
+            ).toBeNull();
 
             expect(mockRefs.runInitialPruneBase).not.toHaveBeenCalled();
         },

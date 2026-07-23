@@ -214,6 +214,22 @@ export function createPruneController({
         });
     }
 
+    function cancelInitialPrunePendingState({
+        reason = "initial-prune-cancelled",
+    } = {}) {
+        activeStorePruneRequests.clear();
+        isInitialPruneOverlayShown = false;
+
+        hidePruneOverlay({
+            force: true,
+            reason,
+        });
+
+        debugLog("Prune controller: cancelled initial prune pending state", {
+            reason,
+        });
+    }
+
     function trackStorePruneRequest(
         result,
         {
@@ -652,6 +668,7 @@ export function createPruneController({
         clearPendingAutoPrune,
         scheduleAutoPrune,
         showInitialPrunePendingOverlay,
+        cancelInitialPrunePendingState,
         getPruneStatus,
     };
 }

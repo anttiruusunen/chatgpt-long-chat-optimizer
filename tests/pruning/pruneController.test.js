@@ -572,4 +572,77 @@ describe("pruneController", () => {
         });
     });
 
+    it("force-cancels an active initial prune overlay and ignores stale store completion", async () => {
+        const { createPruneController } = await loadController();
+
+        const container = document.createElement("main");
+        const onPruneFinished = vi.fn();
+
+        mockRefs.pruneOldSectionsBase.mockReturnValue({
+            visibleSectionsChanged: true,
+            placeholderChanged: false,
+            posted: true,
+            requestId: "stale-initial-prune-request",
+            deferred: false,
+            reason: null,
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune: mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.runInitialPrune(container, {
+            onPruneFinished,
+        });
+
+        const deps = mockRefs.runInitialPruneBase.mock.calls[0][1];
+
+        deps.pruneOldSections(1, {
+            reason: "initial-prune",
+        });
+
+        deps.onPruneResult({
+            posted: true,
+            deferred: false,
+            requestId: "stale-initial-prune-request",
+        });
+
+        deps.onPruneFinished({
+            reason: "initial-prune-finished",
+            result: {
+                posted: true,
+                deferred: false,
+                requestId: "stale-initial-prune-request",
+            },
+        });
+
+        expect(mockRefs.showInitialPruneOverlay).toHaveBeenCalledTimes(1);
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+        expect(onPruneFinished).not.toHaveBeenCalled();
+
+        controller.cancelInitialPrunePendingState({
+            reason: "empty-chat-navigation",
+        });
+
+        expect(mockRefs.hideInitialPruneOverlay).toHaveBeenCalledWith({
+            force: true,
+            reason: "empty-chat-navigation",
+        });
+
+        mockRefs.hideInitialPruneOverlay.mockClear();
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "stale-initial-prune-request",
+            result: {
+                ok: true,
+                requestId: "stale-initial-prune-request",
+            },
+        });
+
+        expect(onPruneFinished).not.toHaveBeenCalled();
+        expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
+    });
+
 });

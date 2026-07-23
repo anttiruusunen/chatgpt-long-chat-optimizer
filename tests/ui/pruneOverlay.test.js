@@ -66,6 +66,50 @@ describe("prune overlay", () => {
         expect(card.textContent).toContain("Hiding older messages");
     });
 
+    it("does not restore overlay nodes after a force hide stops the watchdog", async () => {
+        const initialMain = document.createElement("main");
+        document.body.appendChild(initialMain);
+
+        showInitialPruneOverlay();
+
+        document.body.innerHTML = "<main></main>";
+
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(isPruneOverlayActive()).toBe(true);
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeTruthy();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeTruthy();
+
+        hideInitialPruneOverlay({
+            force: true,
+            reason: "test-route-cleanup",
+        });
+
+        expect(isPruneOverlayActive()).toBe(false);
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeNull();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeNull();
+
+        document.body.appendChild(document.createElement("div"));
+
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(isPruneOverlayActive()).toBe(false);
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay")
+        ).toBeNull();
+        expect(
+            document.getElementById("long-chat-optimizer-prune-overlay-card")
+        ).toBeNull();
+    });
+
     it("hides the overlay when pruning completes", () => {
         showInitialPruneOverlay();
         hideInitialPruneOverlay();

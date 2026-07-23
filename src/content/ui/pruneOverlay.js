@@ -224,6 +224,18 @@ function createOverlayCard() {
     return card;
 }
 
+function removeOverlayDom() {
+    for (const node of document.querySelectorAll(`#${OVERLAY_ID}, #${CARD_ID}`)) {
+        node.remove();
+    }
+
+    for (const host of document.querySelectorAll(`[${HOST_ATTR}]`)) {
+        host.removeAttribute(HOST_ATTR);
+    }
+
+    activeOverlayHost = null;
+}
+
 function removeHostMarkerIfDetached() {
     if (
         activeOverlayHost instanceof HTMLElement &&
@@ -236,6 +248,7 @@ function removeHostMarkerIfDetached() {
 
 function ensureOverlayMounted() {
     if (activeOverlayCount <= 0) {
+        removeOverlayDom();
         return;
     }
 
@@ -266,6 +279,12 @@ export function isPruneOverlayActive() {
     return activeOverlayCount > 0;
 }
 
+export function forceRemovePruneOverlay() {
+    activeOverlayCount = 0;
+    stopPruneOverlayWatchdog();
+    removeOverlayDom();
+}
+
 export function showPruneOverlay() {
     activeOverlayCount += 1;
 
@@ -275,26 +294,18 @@ export function showPruneOverlay() {
 
 export function hidePruneOverlay(options = {}) {
     if (options.force) {
-        activeOverlayCount = 0;
-    } else {
-        activeOverlayCount = Math.max(0, activeOverlayCount - 1);
+        forceRemovePruneOverlay();
+        return;
     }
+
+    activeOverlayCount = Math.max(0, activeOverlayCount - 1);
 
     if (activeOverlayCount > 0) {
         ensureOverlayMounted();
         return;
     }
 
-    stopPruneOverlayWatchdog();
-
-    document.getElementById(OVERLAY_ID)?.remove();
-    document.getElementById(CARD_ID)?.remove();
-
-    if (activeOverlayHost instanceof HTMLElement) {
-        activeOverlayHost.removeAttribute(HOST_ATTR);
-    }
-
-    activeOverlayHost = null;
+    forceRemovePruneOverlay();
 }
 
 export function showInitialPruneOverlay(options) {
@@ -312,13 +323,8 @@ export function resetPruneOverlayForTests() {
     stopPruneOverlayWatchdog();
     resetPruneOverlayWatchdogForTests();
 
-    document.getElementById(OVERLAY_ID)?.remove();
-    document.getElementById(CARD_ID)?.remove();
+    removeOverlayDom();
     document.getElementById(STYLE_ID)?.remove();
-
-    for (const host of document.querySelectorAll(`[${HOST_ATTR}]`)) {
-        host.removeAttribute(HOST_ATTR);
-    }
 }
 
 export function resetInitialPruneOverlayForTests() {

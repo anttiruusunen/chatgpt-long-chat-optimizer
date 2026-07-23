@@ -48,6 +48,8 @@ const mockRefs = vi.hoisted(() => ({
     clearPendingAutoPrune: vi.fn(),
     scheduleAutoPrune: vi.fn(),
     showInitialPrunePendingOverlay: vi.fn(),
+
+    cancelInitialPrunePendingState: vi.fn(),
 }));
 
 vi.mock("../../src/shared/ext.js", () => ({
@@ -311,6 +313,8 @@ function resetMocks() {
         scheduleAutoPrune: mockRefs.scheduleAutoPrune,
         showInitialPrunePendingOverlay:
             mockRefs.showInitialPrunePendingOverlay,
+        cancelInitialPrunePendingState:
+            mockRefs.cancelInitialPrunePendingState,
     });
 }
 

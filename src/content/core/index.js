@@ -392,11 +392,20 @@ function waitForFreshContainerAndInitialPrune(previousContainer, options = {}) {
 /**
  * Clears per-conversation lifecycle state before a new thread is initialized.
  */
-function resetConversationLifecycleForNavigation() {
+function resetConversationLifecycleForNavigation({
+    reason = "navigation-reset",
+    locationKey = null,
+} = {}) {
     clearPendingNavigationPrune();
     invalidateConversationDomCache();
     resetVisibleMessagesReadyNotification();
     clearPendingAutoPrune();
+
+    if (!isChatRouteLocation(locationKey) || isNewChatLocationKey(locationKey)) {
+        cancelInitialPrunePendingState({
+            reason: `${reason}:cancel-initial-prune-overlay`,
+        });
+    }
 
     pendingDeferredInitialPrune = false;
     disableStoreReadOptimizationForPage("navigation-reset");
@@ -404,7 +413,10 @@ function resetConversationLifecycleForNavigation() {
     state.currentPagePrunedTurnCount = 0;
     state.currentPageHistoryWasReduced = false;
 
-    debugLog("Index: reset conversation lifecycle state for navigation");
+    debugLog("Index: reset conversation lifecycle state for navigation", {
+        reason,
+        locationKey,
+    });
 }
 
 function shouldSkipDuplicateLinkNavigationRearm(reason, locationKey) {
@@ -455,7 +467,7 @@ function rearmInitialPruneForNavigation(reason, locationKey = null) {
 
     const previousContainer = state.observedContainer || getConversationContainer();
 
-    resetConversationLifecycleForNavigation();
+    resetConversationLifecycleForNavigation({ reason, locationKey });
 
     if (!isChatRouteLocation(locationKey)) {
         lastCompletedFreshNavigationLocationKey = null;
@@ -610,6 +622,7 @@ const {
     clearPendingAutoPrune,
     scheduleAutoPrune,
     showInitialPrunePendingOverlay,
+    cancelInitialPrunePendingState,
     getPruneStatus,
 } = pruneController;
 
