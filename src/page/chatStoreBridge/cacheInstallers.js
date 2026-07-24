@@ -14,6 +14,7 @@ import {
 import {
     findStoreNodeByMessageId,
     getNodeDirect,
+    getNodeDirectFresh,
     unavailable,
 } from "./common.js";
 
@@ -918,6 +919,32 @@ export const cacheInstallerMethods = {
                 }
 
                 if (ENABLE_CACHE_PROFILING) getBranchFromLeafStats.misses += 1;
+
+                let leafExists = Boolean(
+                    leafId && getNodeDirectFresh(store, leafId)?.id
+                );
+
+                if (
+                    leafId &&
+                    !leafExists &&
+                    typeof store.getNodeIfExists === "function"
+                ) {
+                    try {
+                        leafExists = Boolean(store.getNodeIfExists(leafId));
+                    } catch {}
+                }
+
+                if (leafId && !leafExists) {
+                    const emptyBranch = [];
+
+                    getBranchFromLeafSet(cacheKey, emptyBranch);
+                    updateCachedCount(
+                        getBranchFromLeafStats,
+                        getBranchFromLeafCache.cache
+                    );
+
+                    return emptyBranch;
+                }
 
                 const result = getBranchFromLeafOriginal.call(store, leafId, ...rest);
 

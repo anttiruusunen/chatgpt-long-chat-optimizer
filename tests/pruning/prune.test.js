@@ -90,6 +90,49 @@ describe("prune", () => {
         });
     });
 
+    it("hides mounted turns older than the retained exchange window", async () => {
+        const {
+            reconcilePrunedConversationSections,
+        } = await loadPruneModule();
+
+        document.body.innerHTML = `
+            <main>
+                <section data-turn="user" data-testid="conversation-turn-1">
+                    Old user
+                </section>
+                <section data-turn="assistant" data-testid="conversation-turn-2">
+                    Old assistant
+                </section>
+                <section data-turn="user" data-testid="conversation-turn-3">
+                    Current user
+                </section>
+                <section data-turn="assistant" data-testid="conversation-turn-4">
+                    Current assistant
+                </section>
+            </main>
+        `;
+
+        const result = reconcilePrunedConversationSections(1);
+        const sections = [
+            ...document.querySelectorAll(
+                'section[data-testid^="conversation-turn-"]'
+            ),
+        ];
+
+        expect(result).toMatchObject({
+            changed: true,
+            hiddenCount: 2,
+            historyKeptExchanges: 1,
+            sectionCount: 4,
+        });
+        expect(sections.map((section) => section.hidden)).toEqual([
+            true,
+            true,
+            false,
+            false,
+        ]);
+    });
+
     it("requests store prune even when the DOM has no visible conversation turns", async () => {
         const { state, pruneOldSections } = await loadPruneModule();
 
@@ -267,5 +310,94 @@ describe("prune", () => {
                 error: "bridge exploded",
             })
         );
+    });
+
+    it("restores newly retained turns when the exchange window increases", async () => {
+        const {
+            reconcilePrunedConversationSections,
+        } = await loadPruneModule();
+
+        document.body.innerHTML = `
+            <main>
+                <section data-turn="user" data-testid="conversation-turn-1">
+                    User 1
+                </section>
+                <section data-turn="assistant" data-testid="conversation-turn-2">
+                    Assistant 1
+                </section>
+                <section data-turn="user" data-testid="conversation-turn-3">
+                    User 2
+                </section>
+                <section data-turn="assistant" data-testid="conversation-turn-4">
+                    Assistant 2
+                </section>
+                <section data-turn="user" data-testid="conversation-turn-5">
+                    User 3
+                </section>
+                <section data-turn="assistant" data-testid="conversation-turn-6">
+                    Assistant 3
+                </section>
+                <section data-turn="user" data-testid="conversation-turn-7">
+                    User 4
+                </section>
+                <section
+                    data-turn="assistant"
+                    data-testid="conversation-turn-8"
+                    hidden
+                >
+                    Assistant 4
+                </section>
+            </main>
+        `;
+
+        const sections = [
+            ...document.querySelectorAll(
+                'section[data-testid^="conversation-turn-"]'
+            ),
+        ];
+        const externallyHiddenSection = sections[7];
+
+        reconcilePrunedConversationSections(1);
+
+        expect(sections.map((section) => section.hidden)).toEqual([
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true,
+        ]);
+        expect(
+            externallyHiddenSection.hasAttribute(
+                "data-long-chat-optimizer-store-pruned"
+            )
+        ).toBe(false);
+
+        const result = reconcilePrunedConversationSections(2);
+
+        expect(result).toMatchObject({
+            changed: true,
+            hiddenCount: 4,
+            historyKeptExchanges: 2,
+            sectionCount: 8,
+        });
+        expect(sections.map((section) => section.hidden)).toEqual([
+            true,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+        ]);
+
+        expect(
+            externallyHiddenSection.hasAttribute(
+                "data-long-chat-optimizer-store-pruned"
+            )
+        ).toBe(false);
     });
 });

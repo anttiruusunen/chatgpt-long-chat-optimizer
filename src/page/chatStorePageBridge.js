@@ -1000,16 +1000,39 @@ function readInitialLoadHidingSettingsFromDom() {
             const currentStore = this.__store;
             const currentNodeCount = getStoreNodeCount(currentStore);
             const nextNodeCount = validation.nodeCount ?? getStoreNodeCount(store);
+            const currentVisibleCheck = currentStore
+                ? candidateStoreCanResolveVisibleNewestNode(currentStore)
+                : { ok: false, reason: "store not registered" };
+            const nextVisibleCheck =
+                validation.scored?.visibleNewest ||
+                candidateStoreCanResolveVisibleNewestNode(store);
 
             if (currentStore === store) {
                 return true;
             }
 
-            if (currentStore && nextNodeCount < currentNodeCount) {
+            const replacesStaleStore = Boolean(
+                currentStore &&
+                nextVisibleCheck.ok &&
+                !currentVisibleCheck.ok
+            );
+
+            if (
+                currentStore &&
+                (
+                    (currentVisibleCheck.ok && !nextVisibleCheck.ok) ||
+                    (
+                        nextNodeCount < currentNodeCount &&
+                        !replacesStaleStore
+                    )
+                )
+            ) {
                 if (ENABLE_DEV_DIAGNOSTICS) {
-                    console.debug("[thread-optimizer bridge] ignored smaller store candidate", {
+                    console.debug("[thread-optimizer bridge] ignored inferior store candidate", {
                         currentNodeCount,
                         nextNodeCount,
+                        currentVisibleCheck,
+                        nextVisibleCheck,
                     });
                 }
                 return false;
@@ -1218,6 +1241,35 @@ function readInitialLoadHidingSettingsFromDom() {
             historyKeptExchanges = 1,
             reason = "store-prune",
         } = {}) {
+            const keepCount = Math.max(
+                1,
+                Math.floor(Number(historyKeptExchanges) || 1)
+            );
+            const storeVerification =
+                this.verifyRegisteredStoreAgainstVisibleMessages(
+                    `${reason}:pre-prune`,
+                    {
+                        force: true,
+                    }
+                );
+
+            if (!storeVerification?.ok) {
+                return {
+                    ok: false,
+                    reason: "active store does not match newest visible message",
+                    historyKeptExchanges: keepCount,
+                    storeVerification,
+                    deleteMethod: null,
+                    deleteMode: null,
+                    currentLeafId: null,
+                    branchNodeCount: 0,
+                    keepNodeIds: [],
+                    deleteNodeIds: [],
+                    deleted: [],
+                    failed: [],
+                };
+            }
+
             const store = this.__store;
             const deleteMethod = getStoreDeleteNodeMethod(store);
 
@@ -1237,10 +1289,6 @@ function readInitialLoadHidingSettingsFromDom() {
                 };
             }
 
-            const keepCount = Math.max(
-                1,
-                Math.floor(Number(historyKeptExchanges) || 1)
-            );
             const rootId = getStoreRootId(store);
             const currentLeafId = getStoreCurrentLeafId(store);
 
@@ -1540,10 +1588,15 @@ function readInitialLoadHidingSettingsFromDom() {
             });
         },
 
-        discoverNow() {
-            if (this.__storeDiscoveryLocked) {
+        discoverNow({
+            force = false,
+            requireVisibleNewest = false,
+            reason = "discover-now",
+        } = {}) {
+            if (this.__storeDiscoveryLocked && !force) {
                 return true;
             }
+
             if (this.__discoveryInProgress) {
                 return false;
             }
@@ -1578,11 +1631,26 @@ function readInitialLoadHidingSettingsFromDom() {
                         this.__visitedFibers = totalVisitedFibers;
                         this.__visitedObjects = totalVisitedObjects;
 
-                        return this.registerStore(result.store, {
+                        const visibleCheck =
+                            candidateStoreCanResolveVisibleNewestNode(
+                                result.store
+                            );
+
+                        if (requireVisibleNewest && !visibleCheck.ok) {
+                            continue;
+                        }
+
+                        const registered = this.registerStore(result.store, {
                             source: "react-fiber-scan",
                             discoveryRun,
                             limits,
+                            discoveryReason: reason,
+                            visibleCheck,
                         });
+
+                        if (registered) {
+                            return true;
+                        }
                     }
                 }
 
@@ -1629,10 +1697,16 @@ function readInitialLoadHidingSettingsFromDom() {
             return true;
         },
 
-        verifyRegisteredStoreAgainstVisibleMessages(reason = "visible-messages-ready") {
+        verifyRegisteredStoreAgainstVisibleMessages(
+            reason = "visible-messages-ready",
+            {
+                force = false,
+            } = {}
+        ) {
             const conversationKey = location.pathname + location.search;
 
             if (
+                !force &&
                 this.__visibleMessagesVerificationDone &&
                 this.__visibleMessagesVerificationConversationKey === conversationKey
             ) {
@@ -1669,7 +1743,7 @@ function readInitialLoadHidingSettingsFromDom() {
                 return result;
             }
 
-            if (this.__storeDiscoveryLocked) {
+            if (this.__storeDiscoveryLocked && !force) {
                 const result = {
                     ok: false,
                     locked: true,
@@ -1684,10 +1758,19 @@ function readInitialLoadHidingSettingsFromDom() {
                 return result;
             }
 
-            this.clearStore();
+            if (force) {
+                this.__storeDiscoveryLocked = false;
+                this.__storeDiscoveryLockReason = null;
+            }
+
             this.__lastError = null;
 
-            const rediscovered = this.discoverNow();
+            const previousStore = this.__store;
+            const rediscovered = this.discoverNow({
+                force: true,
+                requireVisibleNewest: true,
+                reason,
+            });
 
             const nextNodeCount = getStoreNodeCount(this.__store);
             const nextCheck = this.__store
@@ -1698,20 +1781,19 @@ function readInitialLoadHidingSettingsFromDom() {
                 this.lockStoreDiscovery(
                     `${reason}:rediscovered-store-resolves-visible-newest`
                 );
-            } else if (nextNodeCount > 1) {
-                this.lockStoreDiscovery(`${reason}:rediscovered-hydrated-store`);
             }
 
             const result = {
-                ok: Boolean(nextCheck.ok || nextNodeCount > 1),
+                ok: Boolean(nextCheck.ok),
                 locked: Boolean(this.__storeDiscoveryLocked),
                 rediscovered,
+                storeChanged: previousStore !== this.__store,
                 currentCheck,
                 nextCheck,
                 nodeCount: nextNodeCount,
             };
 
-            this.__visibleMessagesVerificationDone = true;
+            this.__visibleMessagesVerificationDone = Boolean(result.ok);
             this.__lastVisibleMessagesVerificationResult = result;
 
             return result;

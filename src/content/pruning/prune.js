@@ -41,6 +41,89 @@ function normalizeHistoryKeptExchanges(
     return Math.max(1, Math.floor(Number(historyKeptExchanges) || 1));
 }
 
+const STORE_PRUNED_SECTION_ATTR =
+    "data-long-chat-optimizer-store-pruned";
+
+function getConversationSectionRole(section) {
+    if (!(section instanceof HTMLElement)) {
+        return null;
+    }
+
+    return (
+        section.getAttribute("data-turn") ||
+        section.getAttribute("data-message-author-role") ||
+        section
+            .querySelector("[data-message-author-role]")
+            ?.getAttribute("data-message-author-role") ||
+        null
+    );
+}
+
+export function reconcilePrunedConversationSections(
+    historyKeptExchanges = state.settings.historyKeptExchanges
+) {
+    const keepCount = normalizeHistoryKeptExchanges(historyKeptExchanges);
+    const sections = getConversationSections();
+
+    let restoredCount = 0;
+
+    for (const section of sections) {
+        if (section.getAttribute(STORE_PRUNED_SECTION_ATTR) !== "true") {
+            continue;
+        }
+
+        section.removeAttribute(STORE_PRUNED_SECTION_ATTR);
+        section.hidden = false;
+        restoredCount += 1;
+    }
+
+    let keptExchangeCount = 0;
+    let firstKeptSectionIndex = null;
+
+    for (let index = sections.length - 1; index >= 0; index -= 1) {
+        if (getConversationSectionRole(sections[index]) !== "user") {
+            continue;
+        }
+
+        keptExchangeCount += 1;
+
+        if (keptExchangeCount >= keepCount) {
+            firstKeptSectionIndex = index;
+            break;
+        }
+    }
+
+    if (firstKeptSectionIndex == null) {
+        return {
+            changed: restoredCount > 0,
+            hiddenCount: 0,
+            restoredCount,
+            keptExchangeCount,
+            historyKeptExchanges: keepCount,
+            sectionCount: sections.length,
+        };
+    }
+
+    let hiddenCount = 0;
+
+    for (let index = 0; index < firstKeptSectionIndex; index += 1) {
+        const section = sections[index];
+
+        section.setAttribute(STORE_PRUNED_SECTION_ATTR, "true");
+        section.hidden = true;
+        hiddenCount += 1;
+    }
+
+    return {
+        changed: hiddenCount > 0 || restoredCount > 0,
+        hiddenCount,
+        restoredCount,
+        keptExchangeCount,
+        historyKeptExchanges: keepCount,
+        sectionCount: sections.length,
+    };
+}
+
 /**
  * Requests a store-native prune from the page bridge.
  *

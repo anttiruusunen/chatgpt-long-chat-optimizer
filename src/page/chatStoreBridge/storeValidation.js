@@ -408,7 +408,10 @@ export function validateStoreCandidate(store) {
         const scored = scoreStoreCandidate(store);
         const minimumNodeCount = getExpectedMinimumStoreNodeCount();
 
-        if (scored.nodeCount < minimumNodeCount) {
+        if (
+            scored.nodeCount < minimumNodeCount &&
+            !scored.visibleNewest.ok
+        ) {
             return {
                 ok: false,
                 reason: `node count too small: ${scored.nodeCount} < ${minimumNodeCount}`,

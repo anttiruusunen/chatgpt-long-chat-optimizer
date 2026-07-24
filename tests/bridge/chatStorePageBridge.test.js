@@ -798,6 +798,119 @@ describe("chatStorePageBridge", () => {
         expect(bridge.__visibleMessagesVerificationDone).toBe(true);
     });
 
+    it("replaces a larger stale store with a smaller store that resolves the newest visible message", () => {
+        appendVisibleMessage("current-visible");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const staleStore = createFakeStore(8);
+        const currentStore = createFakeStore(3);
+
+        for (const [nodeId, node] of staleStore.__nodeMap) {
+            node.message.id = `stale-${nodeId}`;
+        }
+
+        currentStore.__nodeMap.get("node-2").message.id = "current-visible";
+
+        expect(
+            bridge.registerStore(staleStore, {
+                source: "test-stale-larger-store",
+            })
+        ).toBe(true);
+
+        expect(
+            bridge.registerStore(currentStore, {
+                source: "test-current-smaller-store",
+            })
+        ).toBe(true);
+
+        expect(bridge.getStore()).toBe(currentStore);
+    });
+
+    it("force-verifies and replaces a locked stale store before pruning", () => {
+        appendVisibleMessage("current-visible");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const staleStore = createFakeStore(8);
+        const currentStore = createFakeStore(3);
+
+        for (const [nodeId, node] of staleStore.__nodeMap) {
+            node.message.id = `stale-${nodeId}`;
+        }
+
+        currentStore.__nodeMap.get("node-2").message.id = "current-visible";
+
+        bridge.registerStore(staleStore, {
+            source: "test-force-verification-stale-store",
+        });
+        bridge.lockStoreDiscovery("test-locked-stale-store");
+        bridge.__visibleMessagesVerificationDone = true;
+        bridge.__visibleMessagesVerificationConversationKey =
+            location.pathname + location.search;
+
+        const discoverSpy = vi
+            .spyOn(bridge, "discoverNow")
+            .mockImplementation(function discoverCurrentStore(options) {
+                expect(options).toMatchObject({
+                    force: true,
+                    requireVisibleNewest: true,
+                });
+
+                return this.registerStore(currentStore, {
+                    source: "test-force-verification-current-store",
+                });
+            });
+
+        const result = bridge.verifyRegisteredStoreAgainstVisibleMessages(
+            "test-force-verification",
+            {
+                force: true,
+            }
+        );
+
+        expect(discoverSpy).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+            ok: true,
+            rediscovered: true,
+            storeChanged: true,
+        });
+        expect(bridge.getStore()).toBe(currentStore);
+    });
+
+    it("fails closed instead of pruning a store that does not resolve the newest visible message", () => {
+        appendVisibleMessage("current-visible");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const staleStore = createFakeStore(8);
+
+        for (const [nodeId, node] of staleStore.__nodeMap) {
+            node.message.id = `stale-${nodeId}`;
+        }
+
+        bridge.registerStore(staleStore, {
+            source: "test-fail-closed-stale-store",
+        });
+
+        const deleteSpy = vi.spyOn(staleStore, "deleteNode");
+
+        vi.spyOn(bridge, "discoverNow").mockReturnValue(false);
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-fail-closed-stale-store",
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "active store does not match newest visible message",
+            deleteNodeIds: [],
+            deleted: [],
+        });
+        expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
     it("disableStoreReadOptimization uninstalls store wrappers", () => {
         appendVisibleMessage("msg-3");
         loadBridgeWithCurrentScript(script);
@@ -1666,6 +1779,35 @@ describe("chatStorePageBridge", () => {
         });
     });
 
+    it("returns an empty cached branch for a leaf deleted by pruning", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-missing-deleted-branch",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-missing-deleted-branch",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-1")).toBe(false);
+
+        expect(() => fakeStore.getBranchFromLeaf("node-1")).not.toThrow();
+        expect(fakeStore.getBranchFromLeaf("node-1")).toEqual([]);
+        expect(
+            fakeStore.findMessageFromLeaf(
+                () => true,
+                "node-1"
+            )
+        ).toBeUndefined();
+    });
+
     it("installs branch cache for getBranchFromLeaf", () => {
         appendVisibleMessage("msg-4");
         loadBridgeWithCurrentScript(script);
@@ -2154,5 +2296,47 @@ describe("chatStorePageBridge", () => {
         );
 
         expect(stats.size.getBranchFromLeaf).toBe(1);
+    });
+
+    it("invalidates a pre-warmed branch cache when pruning deletes the leaf", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-prewarmed-deleted-branch",
+        });
+
+        const cachedBranch = fakeStore.getBranchFromLeaf("node-1");
+
+        expect(cachedBranch.map((node) => node.id)).toEqual([
+            "root",
+            "node-1",
+        ]);
+        expect(
+            bridge.getBranchCacheStats().size.getBranchFromLeaf
+        ).toBeGreaterThan(0);
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-prewarmed-deleted-branch",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-1")).toBe(false);
+
+        expect(() =>
+            fakeStore.getBranchFromLeaf("node-1")
+        ).not.toThrow();
+        expect(fakeStore.getBranchFromLeaf("node-1")).toEqual([]);
+
+        expect(
+            fakeStore.findMessageFromLeaf(
+                () => true,
+                "node-1"
+            )
+        ).toBeUndefined();
     });
 });

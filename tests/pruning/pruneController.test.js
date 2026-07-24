@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const mockRefs = vi.hoisted(() => ({
     pruneOldSectionsBase: vi.fn(),
+    reconcilePrunedConversationSections: vi.fn(),
     runInitialPruneBase: vi.fn(),
     clearCssVisibilityWindow: vi.fn(),
     scheduleConversationChromeSync: vi.fn(),
@@ -23,6 +24,8 @@ const mockRefs = vi.hoisted(() => ({
 
 vi.mock("../../src/content/pruning/prune.js", () => ({
     pruneOldSections: mockRefs.pruneOldSectionsBase,
+    reconcilePrunedConversationSections:
+        mockRefs.reconcilePrunedConversationSections,
     runInitialPrune: mockRefs.runInitialPruneBase,
 }));
 
@@ -105,6 +108,10 @@ describe("pruneController", () => {
         mockRefs.ensureObserverAttached.mockReturnValue(true);
         mockRefs.withDomMutationGuard.mockImplementation((fn) => fn());
         mockRefs.isPruneOverlayActive.mockReturnValue(false);
+        mockRefs.reconcilePrunedConversationSections.mockReturnValue({
+            changed: true,
+            hiddenCount: 2,
+        });
     });
 
     afterEach(() => {
@@ -572,6 +579,45 @@ describe("pruneController", () => {
         });
     });
 
+    it("reconciles mounted turns after a successful store prune completion", async () => {
+        const { state, createPruneController } = await loadController();
+
+        state.settings.historyKeptExchanges = 1;
+
+        mockRefs.pruneOldSectionsBase.mockReturnValue({
+            posted: true,
+            requestId: "dom-reconciliation-request",
+            deferred: false,
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune:
+                mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.pruneOldSections(1, {
+            reason: "reply-settled",
+        });
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "dom-reconciliation-request",
+            result: {
+                ok: true,
+                historyKeptExchanges: 1,
+                deletedCount: 2,
+            },
+        });
+
+        expect(
+            mockRefs.reconcilePrunedConversationSections
+        ).toHaveBeenCalledWith(1);
+        expect(mockRefs.scheduleRefreshPostPruneState).toHaveBeenCalledWith({
+            reason: "store-prune-dom-reconciliation",
+        });
+    });
+
     it("force-cancels an active initial prune overlay and ignores stale store completion", async () => {
         const { createPruneController } = await loadController();
 
@@ -645,4 +691,65 @@ describe("pruneController", () => {
         expect(mockRefs.hideInitialPruneOverlay).not.toHaveBeenCalled();
     });
 
+    it("does not reconcile mounted turns for stale or failed store prune completions", async () => {
+        const { createPruneController } = await loadController();
+
+        mockRefs.pruneOldSectionsBase.mockReturnValue({
+            posted: true,
+            requestId: "failed-dom-reconciliation-request",
+            deferred: false,
+        });
+
+        const controller = createPruneController({
+            ensureObserverAttached: mockRefs.ensureObserverAttached,
+            waitForContainerAndInitialPrune:
+                mockRefs.waitForContainerAndInitialPrune,
+            withDomMutationGuard: mockRefs.withDomMutationGuard,
+        });
+
+        controller.pruneOldSections(1, {
+            reason: "reply-settled",
+        });
+
+        // Ignore calls made while initiating the prune. From here onward,
+        // only completion handling is under test.
+        mockRefs.withDomMutationGuard.mockClear();
+        mockRefs.reconcilePrunedConversationSections.mockClear();
+        mockRefs.scheduleRefreshPostPruneState.mockClear();
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "unknown-stale-request",
+            result: {
+                ok: true,
+                historyKeptExchanges: 1,
+                deletedCount: 2,
+            },
+        });
+
+        expect(
+            mockRefs.reconcilePrunedConversationSections
+        ).not.toHaveBeenCalled();
+        expect(mockRefs.withDomMutationGuard).not.toHaveBeenCalled();
+        expect(
+            mockRefs.scheduleRefreshPostPruneState
+        ).not.toHaveBeenCalled();
+
+        mockRefs.storePruneCompletionListeners[0]({
+            requestId: "failed-dom-reconciliation-request",
+            result: {
+                ok: false,
+                historyKeptExchanges: 1,
+                deletedCount: 0,
+                reason: "store-prune-failed",
+            },
+        });
+
+        expect(
+            mockRefs.reconcilePrunedConversationSections
+        ).not.toHaveBeenCalled();
+        expect(mockRefs.withDomMutationGuard).not.toHaveBeenCalled();
+        expect(
+            mockRefs.scheduleRefreshPostPruneState
+        ).not.toHaveBeenCalled();
+    });
 });

@@ -3,6 +3,7 @@ import { getConversationContainer } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import {
     pruneOldSections as pruneOldSectionsBase,
+    reconcilePrunedConversationSections,
     runInitialPrune as runInitialPruneBase,
 } from "./prune.js";
 import {
@@ -120,6 +121,25 @@ export function createPruneController({
 
                 activeStorePruneRequests.delete(completedRequestId);
 
+                let domReconciliationResult = null;
+
+                if (result?.ok) {
+                    const reconcileDom = () =>
+                        reconcilePrunedConversationSections(
+                            result.historyKeptExchanges ??
+                                state.settings.historyKeptExchanges
+                        );
+
+                    domReconciliationResult =
+                        typeof withDomMutationGuard === "function"
+                            ? withDomMutationGuard(reconcileDom)
+                            : reconcileDom();
+
+                    scheduleRefreshPostPruneState({
+                        reason: "store-prune-dom-reconciliation",
+                    });
+                }
+
                 markHistoryReducedFromPruneResult(
                     result,
                     "store-prune-completed"
@@ -130,6 +150,7 @@ export function createPruneController({
                     result,
                     reason: activeRequest.reason,
                     showOverlay: activeRequest.showOverlay,
+                    domReconciliationResult,
                     currentPagePrunedTurnCount:
                         state.currentPagePrunedTurnCount,
                     currentPageHistoryWasReduced:

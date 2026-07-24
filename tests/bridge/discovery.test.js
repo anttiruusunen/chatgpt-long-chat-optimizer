@@ -275,6 +275,33 @@ describe("chatStoreBridge discovery", () => {
         expect(validation.scored.visibleNewest.ok).toBe(true);
     });
 
+    it("accepts a smaller store when it resolves the newest visible message", () => {
+        document.body.innerHTML = `
+            <main>
+                ${Array.from(
+                    { length: 12 },
+                    (_, index) => `
+                        <section
+                            data-testid="conversation-turn-${index + 1}"
+                            data-message-id="${
+                                index === 11
+                                    ? "msg-visible"
+                                    : `old-visible-${index}`
+                            }"
+                        ></section>
+                    `
+                ).join("")}
+            </main>
+        `;
+
+        const store = createFakeStore();
+        const validation = validateStoreCandidate(store);
+
+        expect(store.nodes).toHaveLength(2);
+        expect(validation.ok).toBe(true);
+        expect(validation.scored.visibleNewest.ok).toBe(true);
+    });
+
     it("discovers a store even when several optional methods are missing", () => {
         appendVisibleMessage("msg-visible");
 
