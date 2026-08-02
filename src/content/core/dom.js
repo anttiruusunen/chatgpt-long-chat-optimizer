@@ -238,3 +238,68 @@ export function resetConversationDomCacheForTests() {
     invalidateConversationDomCache();
     invalidateConversationScrollContainerCache();
 }
+
+export function getLatestUserSectionBefore(section) {
+    const sections = getConversationSections();
+
+    if (!(section instanceof HTMLElement)) {
+        return null;
+    }
+
+    const sectionIndex = sections.indexOf(section);
+
+    if (sectionIndex <= 0) {
+        return null;
+    }
+
+    for (let i = sectionIndex - 1; i >= 0; i -= 1) {
+        if (sections[i].getAttribute("data-turn") === "user") {
+            return sections[i];
+        }
+    }
+
+    return null;
+}
+
+export function getNewestExchangeSections() {
+    const sections = getConversationSections();
+    const protectedSections = new Set();
+
+    if (sections.length === 0) {
+        return protectedSections;
+    }
+
+    const latestSection = sections[sections.length - 1];
+
+    if (latestSection instanceof HTMLElement) {
+        protectedSections.add(latestSection);
+    }
+
+    const latestAssistant = getLatestAssistantSection();
+
+    if (latestAssistant) {
+        protectedSections.add(latestAssistant);
+
+        const latestUser = getLatestUserSectionBefore(latestAssistant);
+
+        if (latestUser) {
+            protectedSections.add(latestUser);
+        }
+    }
+
+    const anchor = getAnchorSection();
+
+    if (anchor) {
+        protectedSections.add(anchor);
+    }
+
+    return protectedSections;
+}
+
+export function isNewestExchangeSection(section) {
+    if (!(section instanceof HTMLElement)) {
+        return false;
+    }
+
+    return getNewestExchangeSections().has(section);
+}

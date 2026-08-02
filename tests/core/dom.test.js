@@ -6,6 +6,9 @@ import {
     getConversationSections,
     getRecentSections,
     getLatestAssistantSection,
+    getLatestUserSectionBefore,
+    getNewestExchangeSections,
+    isNewestExchangeSection,
     getConversationScrollContainer,
     resetConversationDomCacheForTests,
 } from "../../src/content/core/dom.js";
@@ -289,4 +292,87 @@ describe("conversation DOM helpers", () => {
 
         expect(getConversationScrollContainer()).toBe(getDocumentScroller());
     });
+
+    it("finds the latest user section before the latest assistant", () => {
+        const { sections } = buildWrappedConversation();
+
+        expect(getLatestUserSectionBefore(sections[3])).toBe(sections[2]);
+    });
+
+    it("returns null when there is no user section before the supplied section", () => {
+        const { sections } = buildWrappedConversation();
+
+        expect(getLatestUserSectionBefore(sections[0])).toBe(null);
+    });
+
+    it("returns null for an invalid latest-user lookup target", () => {
+        buildWrappedConversation();
+
+        expect(getLatestUserSectionBefore(null)).toBe(null);
+        expect(getLatestUserSectionBefore(document.createElement("div"))).toBe(null);
+    });
+
+    it("protects the newest complete user-assistant exchange", () => {
+        const { sections } = buildWrappedConversation();
+
+        sections[1].setAttribute("data-scroll-anchor", "false");
+        sections[3].setAttribute("data-scroll-anchor", "true");
+
+        resetConversationDomCacheForTests();
+
+        const protectedSections = getNewestExchangeSections();
+
+        expect(protectedSections.has(sections[2])).toBe(true);
+        expect(protectedSections.has(sections[3])).toBe(true);
+
+        expect(protectedSections.has(sections[0])).toBe(false);
+        expect(protectedSections.has(sections[1])).toBe(false);
+    });
+
+    it("protects the latest section even when the latest assistant is not the final mounted turn", () => {
+        const { sections } = buildWrappedConversation();
+
+        const fifth = makeWrapper("5", "user");
+        document.getElementById("conversation-host").appendChild(fifth.wrapper);
+
+        resetConversationDomCacheForTests();
+
+        const protectedSections = getNewestExchangeSections();
+
+        expect(protectedSections.has(fifth.section)).toBe(true);
+        expect(protectedSections.has(sections[3])).toBe(true);
+        expect(protectedSections.has(sections[2])).toBe(true);
+    });
+
+    it("includes the current anchor in newest-exchange protection", () => {
+        const { sections } = buildWrappedConversation();
+
+        const protectedSections = getNewestExchangeSections();
+
+        expect(protectedSections.has(sections[1])).toBe(true);
+    });
+
+    it("reports newest-exchange membership through isNewestExchangeSection", () => {
+        const { sections } = buildWrappedConversation();
+
+        sections[1].setAttribute("data-scroll-anchor", "false");
+        sections[3].setAttribute("data-scroll-anchor", "true");
+
+        resetConversationDomCacheForTests();
+
+        expect(isNewestExchangeSection(sections[2])).toBe(true);
+        expect(isNewestExchangeSection(sections[3])).toBe(true);
+
+        expect(isNewestExchangeSection(sections[0])).toBe(false);
+        expect(isNewestExchangeSection(sections[1])).toBe(false);
+    });
+
+    it("returns an empty newest-exchange protection set when no conversation exists", () => {
+        document.body.innerHTML = `<main><div id="empty"></div></main>`;
+
+        resetConversationDomCacheForTests();
+
+        expect(Array.from(getNewestExchangeSections())).toEqual([]);
+    });
 });
+

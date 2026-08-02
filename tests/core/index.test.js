@@ -725,7 +725,9 @@ describe("core/index", () => {
         expect(mockRefs.showInitialPrunePendingOverlay).not.toHaveBeenCalled();
     });
 
-    it("handles reply lifecycle callbacks", async () => {
+    it("handles reply lifecycle callbacks with delayed reply-settled pruning", async () => {
+        vi.useFakeTimers();
+
         await importFreshIndex();
 
         const state = window.__threadOptimizerState;
@@ -734,8 +736,9 @@ describe("core/index", () => {
         state.didInitialPrune = true;
 
         mockRefs.pruneOldSections.mockClear();
-        mockRefs.scheduleRefreshPostPruneState.mockClear();
+        mockRefs.scheduleAutoPrune.mockClear();
         mockRefs.optimizeUnoptimizedConversationSections.mockClear();
+        mockRefs.scheduleConversationChromeSync.mockClear();
 
         options.onBeforeReplyStarted();
 
@@ -747,22 +750,37 @@ describe("core/index", () => {
 
         options.onReplySettled();
 
-        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
-        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
         expect(
             mockRefs.optimizeUnoptimizedConversationSections
         ).toHaveBeenCalledTimes(1);
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
-            "reply-settled"
-        );
+
+        expect(
+            mockRefs.optimizeUnoptimizedConversationSections
+        ).toHaveBeenCalledWith("reply-settled");
+
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,
-            includeStreaming: true,
+            includeStreaming: false,
         });
+
+        vi.advanceTimersByTime(999);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith(
+            "reply-settled-stable"
+        );
     });
 
-    it("does not schedule reply-settled auto-prune when an incomplete initial prune is retried", async () => {
+    it("does not schedule delayed reply-settled auto-prune when an incomplete initial prune is retried", async () => {
+        vi.useFakeTimers();
+
         await importFreshIndex();
 
         const state = window.__threadOptimizerState;
@@ -776,30 +794,32 @@ describe("core/index", () => {
 
         mockRefs.scheduleAutoPrune.mockClear();
         mockRefs.runInitialPrune.mockClear();
-        mockRefs.scheduleRefreshPostPruneState.mockClear();
         mockRefs.optimizeUnoptimizedConversationSections.mockClear();
+        mockRefs.scheduleConversationChromeSync.mockClear();
 
         options.onReplySettled();
 
         expect(mockRefs.runInitialPrune).toHaveBeenCalledTimes(1);
         expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
-        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
 
         expect(
             mockRefs.optimizeUnoptimizedConversationSections
-        ).toHaveBeenCalledTimes(1);
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
-            "reply-settled"
-        );
+        ).toHaveBeenCalledWith("reply-settled");
 
         expect(mockRefs.scheduleConversationChromeSync).toHaveBeenCalledWith({
             reason: "reply-settled",
             forceCss: true,
-            includeStreaming: true,
+            includeStreaming: false,
         });
     });
 
-    it("does not store-prune at reply start and schedules auto-prune after reply settles", async () => {
+    it("does not store-prune at reply start and delays auto-prune after reply settles", async () => {
+        vi.useFakeTimers();
+
         await importFreshIndex();
 
         const state = window.__threadOptimizerState;
@@ -809,8 +829,6 @@ describe("core/index", () => {
 
         mockRefs.pruneOldSections.mockClear();
         mockRefs.scheduleAutoPrune.mockClear();
-        mockRefs.scheduleRefreshPostPruneState.mockClear();
-        mockRefs.optimizeUnoptimizedConversationSections.mockClear();
 
         options.onBeforeReplyStarted();
 
@@ -819,14 +837,192 @@ describe("core/index", () => {
 
         options.onReplySettled();
 
-        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith("reply-settled");
-        expect(mockRefs.scheduleRefreshPostPruneState).not.toHaveBeenCalled();
-        expect(
-            mockRefs.optimizeUnoptimizedConversationSections
-        ).toHaveBeenCalledTimes(1);
-        expect(mockRefs.optimizeUnoptimizedConversationSections).toHaveBeenCalledWith(
-            "reply-settled"
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith(
+            "reply-settled-stable"
         );
+    });
+
+    it("restarts the reply-settled grace period when reply-settled fires twice", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        vi.advanceTimersByTime(700);
+
+        options.onReplySettled();
+
+        vi.advanceTimersByTime(300);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(699);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledTimes(1);
+        expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith(
+            "reply-settled-stable"
+        );
+    });
+
+    it("cancels pending reply-settled auto-prune when navigating to another conversation", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const replyOptions = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+        state.observedContainer = createReadyConversationContainer();
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        replyOptions.onReplySettled();
+
+        vi.advanceTimersByTime(500);
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "pushState",
+            locationKey: "/c/next-chat",
+        });
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+    });
+
+    it("cancels pending reply-settled auto-prune when navigating to New Chat", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const replyOptions = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+        state.observedContainer = createReadyConversationContainer();
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        replyOptions.onReplySettled();
+
+        const navigationHandler =
+            mockRefs.installConversationNavigationWatcher.mock.calls[0][0]
+                .onNavigationDetected;
+
+        navigationHandler({
+            reason: "new-chat-click",
+            locationKey: "/",
+        });
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+    });
+
+    it("does not execute delayed reply-settled prune if auto-prune is disabled during the grace period", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        state.settings.autoPrune = false;
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+    });
+
+    it("does not execute delayed reply-settled prune if pruning is disabled during the grace period", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        state.featureFlags.pruning = false;
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+    });
+
+    it("does not execute delayed reply-settled prune if initial-prune state is reset during the grace period", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        state.didInitialPrune = false;
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
+    });
+
+    it("does not execute delayed reply-settled prune after leaving chat routes", async () => {
+        vi.useFakeTimers();
+
+        await importFreshIndex();
+
+        const state = window.__threadOptimizerState;
+        const options = mockRefs.installReplyTimingListeners.mock.calls[0][0];
+
+        state.didInitialPrune = true;
+
+        mockRefs.scheduleAutoPrune.mockClear();
+
+        options.onReplySettled();
+
+        setTestLocation("/pricing");
+
+        vi.advanceTimersByTime(1000);
+
+        expect(mockRefs.scheduleAutoPrune).not.toHaveBeenCalled();
     });
 
     it("reacts to storage changes by syncing affected feature paths", async () => {
@@ -877,3 +1073,4 @@ describe("core/index", () => {
         expect(mockRefs.scheduleConversationChromeSync).not.toHaveBeenCalled();
     });
 });
+

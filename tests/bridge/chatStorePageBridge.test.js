@@ -2339,4 +2339,295 @@ describe("chatStorePageBridge", () => {
             )
         ).toBeUndefined();
     });
+
+    it("always keeps the newest visible node during aggressive store pruning", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-keep-newest-visible-node",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-keep-newest-visible-node",
+        });
+
+        expect(result.ok).toBe(true);
+
+        expect(result.keepNodeIds).toContain("node-4");
+        expect(result.deleteNodeIds).not.toContain("node-4");
+
+        expect(fakeStore.__nodeMap.has("node-4")).toBe(true);
+    });
+
+    it("keeps the newest user-assistant exchange when historyKeptExchanges is one", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-keep-newest-exchange",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-keep-newest-exchange",
+        });
+
+        expect(result.ok).toBe(true);
+
+        expect(result.keepNodeIds).toContain("node-3");
+        expect(result.keepNodeIds).toContain("node-4");
+
+        expect(result.deleteNodeIds).not.toContain("node-3");
+        expect(result.deleteNodeIds).not.toContain("node-4");
+
+        expect(fakeStore.__nodeMap.has("node-3")).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-4")).toBe(true);
+    });
+
+    it("fails closed when the newest visible message resolves to a node outside the active branch", () => {
+        appendVisibleMessage("detached-visible-message");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        fakeStore.__nodeMap.set("detached-node", {
+            id: "detached-node",
+            parentId: "node-2",
+            children: [],
+            message: {
+                id: "detached-visible-message",
+                author: {
+                    role: "assistant",
+                },
+                content: {
+                    content_type: "text",
+                    parts: ["Detached visible assistant"],
+                },
+                metadata: {},
+                clientMetadata: {},
+            },
+        });
+
+        bridge.registerStore(fakeStore, {
+            source: "test-visible-node-outside-active-branch",
+        });
+
+        const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-visible-node-outside-active-branch",
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "newest visible message is not on active branch",
+            newestVisibleNodeId: "detached-node",
+            deleteNodeIds: [],
+            deleted: [],
+            failed: [],
+        });
+
+        expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when current leaf is a user while the newest visible assistant is an ancestor", () => {
+        appendVisibleMessage("msg-2");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        fakeStore.currentLeafId = "node-3";
+
+        bridge.registerStore(fakeStore, {
+            source: "test-stale-user-current-leaf",
+        });
+
+        const deleteSpy = vi.spyOn(fakeStore, "deleteNode");
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-stale-user-current-leaf",
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "current leaf is stale before newest visible assistant",
+            currentLeafId: "node-3",
+            currentLeafRole: "user",
+            newestVisibleNodeId: "node-2",
+            deleteNodeIds: [],
+            deleted: [],
+            failed: [],
+        });
+
+        expect(deleteSpy).not.toHaveBeenCalled();
+
+        expect(fakeStore.__nodeMap.has("node-1")).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(true);
+        expect(fakeStore.__nodeMap.has("node-3")).toBe(true);
+    });
+
+    it("does not treat an older visible assistant as stale when current leaf is also an assistant", () => {
+        appendVisibleMessage("msg-2");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        fakeStore.currentLeafId = "node-4";
+
+        bridge.registerStore(fakeStore, {
+            source: "test-assistant-current-leaf",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-assistant-current-leaf",
+        });
+
+        expect(result.reason).not.toBe(
+            "current leaf is stale before newest visible assistant"
+        );
+    });
+
+    it("uses the rediscovered visible-node check when forced verification replaces the store", () => {
+        appendVisibleMessage("current-visible");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+
+        const staleStore = createFakeStore(5);
+        const currentStore = createFakeStore(5);
+
+        for (const node of staleStore.__nodeMap.values()) {
+            if (node.id !== "root") {
+                node.message.id = `stale-${node.id}`;
+            }
+        }
+
+        currentStore.__nodeMap.get("node-4").message.id = "current-visible";
+
+        bridge.registerStore(staleStore, {
+            source: "test-stale-store-before-prune",
+        });
+
+        vi.spyOn(bridge, "discoverNow").mockImplementation(function discoverCurrent() {
+            return this.registerStore(currentStore, {
+                source: "test-current-store-during-prune",
+            });
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-next-check-visible-node",
+        });
+
+        expect(bridge.getStore()).toBe(currentStore);
+
+        expect(result.ok).toBe(true);
+        expect(result.keepNodeIds).toContain("node-4");
+        expect(result.deleteNodeIds).not.toContain("node-4");
+        expect(currentStore.__nodeMap.has("node-4")).toBe(true);
+    });
+
+    it("performs no topology mutation when visible-node branch validation fails", () => {
+        appendVisibleMessage("detached-visible-message");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(7);
+
+        fakeStore.__nodeMap.set("detached-node", {
+            id: "detached-node",
+            parentId: "node-2",
+            children: [],
+            message: {
+                id: "detached-visible-message",
+                author: { role: "assistant" },
+                content: {
+                    content_type: "text",
+                    parts: [],
+                },
+                metadata: {},
+                clientMetadata: {},
+            },
+        });
+
+        bridge.registerStore(fakeStore, {
+            source: "test-no-mutation-on-visible-branch-failure",
+        });
+
+        const beforeEntries = Array.from(fakeStore.__nodeMap.entries()).map(
+            ([id, node]) => [
+                id,
+                {
+                    parentId: node.parentId,
+                    children: [...node.children],
+                    messageId: node.message?.id,
+                },
+            ]
+        );
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-no-mutation-on-visible-branch-failure",
+        });
+
+        const afterEntries = Array.from(fakeStore.__nodeMap.entries()).map(
+            ([id, node]) => [
+                id,
+                {
+                    parentId: node.parentId,
+                    children: [...node.children],
+                    messageId: node.message?.id,
+                },
+            ]
+        );
+
+        expect(result.ok).toBe(false);
+        expect(result.reason).toBe(
+            "newest visible message is not on active branch"
+        );
+
+        expect(afterEntries).toEqual(beforeEntries);
+    });
+
+    it("protects the newest visible node even when it is not the current leaf", () => {
+        appendVisibleMessage("msg-2");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(6);
+
+        // Keep the current leaf on an assistant node so the stale-user-leaf
+        // fail-closed guard does not intentionally stop this prune.
+        fakeStore.currentLeafId = "node-4";
+
+        bridge.registerStore(fakeStore, {
+            source: "test-explicit-visible-node-protection",
+        });
+
+        const result = bridge.pruneStoreHistory({
+            historyKeptExchanges: 1,
+            reason: "test-explicit-visible-node-protection",
+        });
+
+        expect(result.keepNodeIds).toContain("node-2");
+        expect(result.deleteNodeIds).not.toContain("node-2");
+        expect(fakeStore.__nodeMap.has("node-2")).toBe(true);
+    });
+
+    
 });
+

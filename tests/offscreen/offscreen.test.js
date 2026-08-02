@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushDomWriteBatchNow } from "../../src/content/core/domWriteBatch.js";
+import { resetConversationDomCacheForTests } from "../../src/content/core/dom.js";
 
 const mockRefs = vi.hoisted(() => ({
     isReplyStreaming: vi.fn(() => false),
@@ -85,6 +86,7 @@ describe("offscreen browser-native section mode", () => {
 
         document.documentElement.removeAttribute(ROOT_ATTR);
         document.body.innerHTML = "";
+        resetConversationDomCacheForTests();
 
         createConversationDom();
         mockSectionHeights();
@@ -101,6 +103,7 @@ describe("offscreen browser-native section mode", () => {
 
         document.documentElement.removeAttribute(ROOT_ATTR);
         document.body.innerHTML = "";
+        resetConversationDomCacheForTests();
 
         state.isOffscreenRefreshScheduled = false;
         state.offscreenRefreshTimer = null;
@@ -113,16 +116,18 @@ describe("offscreen browser-native section mode", () => {
         expect(document.documentElement.getAttribute(ROOT_ATTR)).toBe("true");
     });
 
-    it("applies content-visibility markers and intrinsic sizes to mounted sections", () => {
+    it("applies content-visibility markers only to sections outside the newest exchange", () => {
         refreshObservedSections();
 
-        for (const section of getSections()) {
-            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
-            expect(section.getAttribute(HEIGHT_ATTR)).toMatch(/^\d+$/);
-            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
-                /^\d+px$/
-            );
-        }
+        const sections = getSections();
+
+        expect(sections[0].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[1].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[1].getAttribute(HEIGHT_ATTR)).toMatch(/^\d+$/);
+        expect(sections[1].style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
+            /^\d+px$/
+        );
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
     });
 
     it("does not apply legacy live-section overrides during refresh", () => {
@@ -135,7 +140,7 @@ describe("offscreen browser-native section mode", () => {
         expect(state.offscreenLiveSection).toBe(null);
     });
 
-    it("optimizes only newly added conversation sections on incremental updates", () => {
+    it("optimizes a newly added conversation section when it is not part of the newest exchange", () => {
         refreshObservedSections();
 
         const wrapper = document.createElement("div");
@@ -144,7 +149,7 @@ describe("offscreen browser-native section mode", () => {
         const section = document.createElement("section");
         section.setAttribute("data-testid", "conversation-turn-4");
         section.setAttribute("data-turn", "assistant");
-        section.textContent = "New assistant";
+        section.textContent = "Older inserted assistant";
 
         Object.defineProperty(section, "offsetHeight", {
             configurable: true,
@@ -154,17 +159,19 @@ describe("offscreen browser-native section mode", () => {
         section.getBoundingClientRect = vi.fn(() => ({
             width: 800,
             height: 220,
-            top: 300,
+            top: 200,
             right: 800,
-            bottom: 520,
+            bottom: 420,
             left: 0,
             x: 0,
-            y: 300,
+            y: 200,
             toJSON: () => {},
         }));
 
         wrapper.appendChild(section);
-        document.getElementById("conversation").appendChild(wrapper);
+
+        const latest = getLatestAssistant();
+        document.getElementById("conversation").insertBefore(wrapper, latest);
 
         expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
 
@@ -179,18 +186,17 @@ describe("offscreen browser-native section mode", () => {
         expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("220px");
     });
 
-    it("reconciles unoptimized conversation sections without refreshing already optimized sections", () => {
+    it("reconciles only unoptimized sections outside the newest exchange", () => {
         refreshObservedSections();
 
         const existingSections = getSections();
-        const beforeHeights = existingSections.map((section) =>
-            section.getAttribute(HEIGHT_ATTR)
-        );
+        const optimizedExisting = existingSections[1];
+        const beforeHeight = optimizedExisting.getAttribute(HEIGHT_ATTR);
 
         const section = document.createElement("section");
         section.setAttribute("data-testid", "conversation-turn-4");
         section.setAttribute("data-turn", "assistant");
-        section.textContent = "Nested assistant added outside the shallow observer path";
+        section.textContent = "Nested older assistant";
 
         Object.defineProperty(section, "offsetHeight", {
             configurable: true,
@@ -200,18 +206,20 @@ describe("offscreen browser-native section mode", () => {
         section.getBoundingClientRect = vi.fn(() => ({
             width: 800,
             height: 260,
-            top: 300,
+            top: 200,
             right: 800,
-            bottom: 560,
+            bottom: 460,
             left: 0,
             x: 0,
-            y: 300,
+            y: 200,
             toJSON: () => {},
         }));
 
         const nestedWrapper = document.createElement("div");
         nestedWrapper.appendChild(section);
-        document.getElementById("conversation").appendChild(nestedWrapper);
+
+        const latest = getLatestAssistant();
+        document.getElementById("conversation").insertBefore(nestedWrapper, latest);
 
         expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
 
@@ -223,26 +231,25 @@ describe("offscreen browser-native section mode", () => {
         expect(section.getAttribute(SECTION_ATTR)).toBe("true");
         expect(section.getAttribute(HEIGHT_ATTR)).toBe("260");
         expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("260px");
-
-        expect(existingSections.map((existing) => existing.getAttribute(HEIGHT_ATTR))).toEqual(
-            beforeHeights
-        );
+        expect(optimizedExisting.getAttribute(HEIGHT_ATTR)).toBe(beforeHeight);
     });
 
-    it("keeps cached intrinsic sizes stable on repeated refreshes", () => {
-        const latest = getLatestAssistant();
+    it("keeps cached intrinsic sizes stable on repeated refreshes for optimized older sections", () => {
+        const olderAssistant = getSections()[1];
 
         refreshObservedSections();
 
-        expect(latest.getAttribute(HEIGHT_ATTR)).toBe("150");
-        expect(latest.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("150px");
+        expect(olderAssistant.getAttribute(HEIGHT_ATTR)).toBe("125");
+        expect(olderAssistant.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe(
+            "125px"
+        );
 
-        Object.defineProperty(latest, "offsetHeight", {
+        Object.defineProperty(olderAssistant, "offsetHeight", {
             configurable: true,
             value: 240,
         });
 
-        latest.getBoundingClientRect = vi.fn(() => ({
+        olderAssistant.getBoundingClientRect = vi.fn(() => ({
             width: 800,
             height: 240,
             top: 0,
@@ -256,8 +263,10 @@ describe("offscreen browser-native section mode", () => {
 
         refreshObservedSections();
 
-        expect(latest.getAttribute(HEIGHT_ATTR)).toBe("150");
-        expect(latest.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("150px");
+        expect(olderAssistant.getAttribute(HEIGHT_ATTR)).toBe("125");
+        expect(olderAssistant.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe(
+            "125px"
+        );
     });
 
     it("disabling removes the root CSS mode flag", () => {
@@ -273,36 +282,40 @@ describe("offscreen browser-native section mode", () => {
     it("disabling clears active browser-native offscreen section markers", () => {
         refreshObservedSections();
 
-        for (const section of getSections()) {
-            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
-            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).not.toBe("");
-        }
+        const sections = getSections();
+
+        expect(sections[0].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[1].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[1].style.getPropertyValue(INTRINSIC_SIZE_VAR)).not.toBe("");
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
 
         setOffscreenOptimizationEnabled(false);
 
-        for (const section of getSections()) {
+        for (const section of sections) {
             expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
             expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("");
             expect(section.hasAttribute(LEGACY_LIVE_ATTR)).toBe(false);
-
-            // Height metadata is inert without SECTION_ATTR/root mode and can stay cached.
-            expect(section.hasAttribute(HEIGHT_ATTR)).toBe(true);
         }
+
+        // Height metadata is inert without SECTION_ATTR/root mode and can stay cached.
+        expect(sections[1].hasAttribute(HEIGHT_ATTR)).toBe(true);
     });
 
-    it("schedule path eventually applies browser-native section markers", () => {
+    it("schedule path eventually optimizes only sections outside the newest exchange", () => {
         scheduleOffscreenRefresh({
             reason: "test-refresh",
         });
 
         flushDomWriteBatchNow();
 
-        for (const section of getSections()) {
-            expect(section.getAttribute(SECTION_ATTR)).toBe("true");
-            expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
-                /^\d+px$/
-            );
-        }
+        const sections = getSections();
+
+        expect(sections[0].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[1].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[1].style.getPropertyValue(INTRINSIC_SIZE_VAR)).toMatch(
+            /^\d+px$/
+        );
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
     });
 
     it("does not schedule refresh work when offscreen optimization is disabled", () => {
@@ -331,4 +344,275 @@ describe("offscreen browser-native section mode", () => {
         expect(latest.hasAttribute(LEGACY_LIVE_ATTR)).toBe(false);
         expect(state.offscreenLiveSection).toBe(null);
     });
+
+    it("never applies browser-native offscreen optimization to the newest exchange during a full refresh", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        Old user
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Old assistant
+                    </section>
+                    <section data-testid="conversation-turn-3" data-turn="user">
+                        Latest user
+                    </section>
+                    <section data-testid="conversation-turn-4" data-turn="assistant" data-scroll-anchor="true">
+                        Latest assistant
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        const sections = getSections();
+
+        refreshObservedSections();
+
+        expect(sections[0].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[1].getAttribute(SECTION_ATTR)).toBe("true");
+
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[3].hasAttribute(SECTION_ATTR)).toBe(false);
+    });
+
+    it("clears existing offscreen markers from the newest exchange during full refresh", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        Old user
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Old assistant
+                    </section>
+                    <section
+                        data-testid="conversation-turn-3"
+                        data-turn="user"
+                        data-thread-optimizer-offscreen-opt="true"
+                        style="--thread-optimizer-section-intrinsic-size: 200px;"
+                    >
+                        Latest user
+                    </section>
+                    <section
+                        data-testid="conversation-turn-4"
+                        data-turn="assistant"
+                        data-scroll-anchor="true"
+                        data-thread-optimizer-offscreen-opt="true"
+                        style="--thread-optimizer-section-intrinsic-size: 220px;"
+                    >
+                        Latest assistant
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        const sections = getSections();
+
+        refreshObservedSections();
+
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[2].style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("");
+
+        expect(sections[3].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[3].style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("");
+    });
+
+    it("does not optimize a newly added latest assistant section", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        Old user
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Old assistant
+                    </section>
+                    <section data-testid="conversation-turn-3" data-turn="user">
+                        Latest user
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        const wrapper = document.createElement("div");
+        wrapper.setAttribute("data-turn-id-container", "4");
+
+        const section = document.createElement("section");
+        section.setAttribute("data-testid", "conversation-turn-4");
+        section.setAttribute("data-turn", "assistant");
+        section.setAttribute("data-scroll-anchor", "true");
+        section.textContent = "Streaming assistant";
+
+        Object.defineProperty(section, "offsetHeight", {
+            configurable: true,
+            value: 220,
+        });
+
+        section.getBoundingClientRect = vi.fn(() => ({
+            width: 800,
+            height: 220,
+            top: 300,
+            right: 800,
+            bottom: 520,
+            left: 0,
+            x: 0,
+            y: 300,
+            toJSON: () => {},
+        }));
+
+        wrapper.appendChild(section);
+        document.getElementById("conversation").appendChild(wrapper);
+
+        const optimizedCount = optimizeAddedConversationNodes(
+            [wrapper],
+            "test-newest-assistant"
+        );
+
+        expect(optimizedCount).toBe(0);
+        expect(section.hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(section.style.getPropertyValue(INTRINSIC_SIZE_VAR)).toBe("");
+    });
+
+    it("does not reconcile the newest assistant section after reply settlement", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        Old user
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Old assistant
+                    </section>
+                    <section data-testid="conversation-turn-3" data-turn="user">
+                        Latest user
+                    </section>
+                    <section data-testid="conversation-turn-4" data-turn="assistant" data-scroll-anchor="true">
+                        Latest assistant
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        const sections = getSections();
+
+        const optimizedCount = optimizeUnoptimizedConversationSections(
+            "reply-settled"
+        );
+
+        expect(optimizedCount).toBe(2);
+
+        expect(sections[0].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[1].getAttribute(SECTION_ATTR)).toBe("true");
+
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[3].hasAttribute(SECTION_ATTR)).toBe(false);
+    });
+
+    it("removes stale offscreen optimization from the newest exchange during reconciliation", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        Old user
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Old assistant
+                    </section>
+                    <section
+                        data-testid="conversation-turn-3"
+                        data-turn="user"
+                        data-thread-optimizer-offscreen-opt="true"
+                        style="--thread-optimizer-section-intrinsic-size: 200px;"
+                    >
+                        Latest user
+                    </section>
+                    <section
+                        data-testid="conversation-turn-4"
+                        data-turn="assistant"
+                        data-scroll-anchor="true"
+                        data-thread-optimizer-offscreen-opt="true"
+                        style="--thread-optimizer-section-intrinsic-size: 220px;"
+                    >
+                        Latest assistant
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        refreshObservedSections();
+
+        const sections = getSections();
+
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[3].hasAttribute(SECTION_ATTR)).toBe(false);
+    });
+
+    it("allows a previously protected exchange to become optimized after a newer exchange mounts", () => {
+        document.body.innerHTML = `
+            <main>
+                <div id="conversation">
+                    <section data-testid="conversation-turn-1" data-turn="user">
+                        User 1
+                    </section>
+                    <section data-testid="conversation-turn-2" data-turn="assistant">
+                        Assistant 1
+                    </section>
+                    <section data-testid="conversation-turn-3" data-turn="user">
+                        User 2
+                    </section>
+                    <section data-testid="conversation-turn-4" data-turn="assistant" data-scroll-anchor="true">
+                        Assistant 2
+                    </section>
+                </div>
+            </main>
+        `;
+
+        mockSectionHeights();
+
+        refreshObservedSections();
+
+        let sections = getSections();
+
+        expect(sections[2].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[3].hasAttribute(SECTION_ATTR)).toBe(false);
+
+        sections[3].removeAttribute("data-scroll-anchor");
+
+        const user3 = document.createElement("section");
+        user3.setAttribute("data-testid", "conversation-turn-5");
+        user3.setAttribute("data-turn", "user");
+
+        const assistant3 = document.createElement("section");
+        assistant3.setAttribute("data-testid", "conversation-turn-6");
+        assistant3.setAttribute("data-turn", "assistant");
+        assistant3.setAttribute("data-scroll-anchor", "true");
+
+        document.getElementById("conversation").appendChild(user3);
+        document.getElementById("conversation").appendChild(assistant3);
+
+        resetConversationDomCacheForTests();
+        mockSectionHeights();
+
+        refreshObservedSections();
+
+        sections = getSections();
+
+        expect(sections[2].getAttribute(SECTION_ATTR)).toBe("true");
+        expect(sections[3].getAttribute(SECTION_ATTR)).toBe("true");
+
+        expect(sections[4].hasAttribute(SECTION_ATTR)).toBe(false);
+        expect(sections[5].hasAttribute(SECTION_ATTR)).toBe(false);
+    });
+
 });

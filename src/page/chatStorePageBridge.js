@@ -1295,6 +1295,66 @@ function readInitialLoadHidingSettingsFromDom() {
             const branch = getActiveStoreBranchNewestFirst(store);
             const branchNodes = branch.nodes;
 
+            const branchNodeIds = new Set(
+                branchNodes
+                    .map((node) => node?.id)
+                    .filter((nodeId) => typeof nodeId === "string" && nodeId.length > 0)
+            );
+
+            const newestVisibleNodeId =
+                storeVerification?.nextCheck?.nodeId ??
+                storeVerification?.currentCheck?.nodeId ??
+                null;
+
+            if (newestVisibleNodeId && !branchNodeIds.has(newestVisibleNodeId)) {
+                return {
+                    ok: false,
+                    reason: "newest visible message is not on active branch",
+                    historyKeptExchanges: keepCount,
+                    storeVerification,
+                    deleteMethod: deleteMethod.name,
+                    deleteMode: deleteMethod.mode,
+                    currentLeafId,
+                    newestVisibleNodeId,
+                    branchNodeCount: branchNodes.length,
+                    keepNodeIds: [],
+                    deleteNodeIds: [],
+                    deleted: [],
+                    failed: [],
+                };
+            }
+
+            const currentLeafNode = getNodeDirectFresh(store, currentLeafId);
+            const currentLeafRole =
+                currentLeafNode?.message?.author?.role ||
+                currentLeafNode?.message?.role ||
+                currentLeafNode?.author?.role ||
+                currentLeafNode?.role ||
+                null;
+
+            if (
+                newestVisibleNodeId &&
+                newestVisibleNodeId !== currentLeafId &&
+                currentLeafRole === "user"
+            ) {
+                return {
+                    ok: false,
+                    reason: "current leaf is stale before newest visible assistant",
+                    historyKeptExchanges: keepCount,
+                    storeVerification,
+                    deleteMethod: deleteMethod.name,
+                    deleteMode: deleteMethod.mode,
+                    currentLeafId,
+                    currentLeafRole,
+                    newestVisibleNodeId,
+                    branchNodeCount: branchNodes.length,
+                    keepNodeIds: [],
+                    deleteNodeIds: [],
+                    deleted: [],
+                    failed: [],
+                };
+            }
+
             if (!currentLeafId || branchNodes.length === 0) {
                 return {
                     ok: false,
@@ -1319,6 +1379,10 @@ function readInitialLoadHidingSettingsFromDom() {
 
             keepNodeIds.add(currentLeafId);
             if (rootId) keepNodeIds.add(rootId);
+
+            if (newestVisibleNodeId) {
+                keepNodeIds.add(newestVisibleNodeId);
+            }
 
             const deleteNodeIds = [];
             const skipped = [];

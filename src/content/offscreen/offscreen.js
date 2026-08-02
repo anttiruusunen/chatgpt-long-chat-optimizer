@@ -2,6 +2,7 @@ import { state } from "../core/state.js";
 import {
     getConversationSections,
     isConversationSection,
+    isNewestExchangeSection,
 } from "../core/dom.js";
 import { debugLog } from "../core/logger.js";
 import {
@@ -52,11 +53,17 @@ function syncBrowserNativeOffscreenMode(reason = "unknown") {
     for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i];
 
-        if (enabled) {
-            applyOffscreenOptimization(section);
-        } else {
+        if (!enabled) {
             clearSectionOffscreenOptimization(section);
+            continue;
         }
+
+        if (isNewestExchangeSection(section)) {
+            clearSectionOffscreenOptimization(section);
+            continue;
+        }
+
+        applyOffscreenOptimization(section);
     }
 
     debugLog("Offscreen: synced browser-native content visibility", {
@@ -125,18 +132,26 @@ export function optimizeAddedConversationNodes(
 
     setRootOffscreenMode(true);
 
+    let optimizedCount = 0;
+
     for (const section of sections) {
+        if (isNewestExchangeSection(section)) {
+            clearSectionOffscreenOptimization(section);
+            continue;
+        }
+
         applyOffscreenOptimization(section);
+        optimizedCount += 1;
     }
 
-    if (sections.length > 0) {
+    if (optimizedCount > 0) {
         debugLog("Offscreen: optimized added conversation sections", {
             reason: getReasonText(reason),
-            sectionCount: sections.length,
+            sectionCount: optimizedCount,
         });
     }
 
-    return sections.length;
+    return optimizedCount;
 }
 
 export function optimizeUnoptimizedConversationSections(
@@ -159,6 +174,11 @@ export function optimizeUnoptimizedConversationSections(
 
     for (const section of sections) {
         if (!isConversationSection(section)) {
+            continue;
+        }
+
+        if (isNewestExchangeSection(section)) {
+            clearSectionOffscreenOptimization(section);
             continue;
         }
 

@@ -58,7 +58,9 @@ async function waitForStoreReadOptimizationMessage(page, expected) {
     );
 }
 
-test("feature flags: offscreen optimization disabled/enabled controls native offscreen markers", async ({ page }) => {
+test("feature flags: offscreen optimization disabled/enabled protects the newest exchange", async ({
+    page,
+}) => {
     await loadOptimizerFixture(page, {
         settings: {
             autoPrune: false,
@@ -66,7 +68,14 @@ test("feature flags: offscreen optimization disabled/enabled controls native off
         },
     });
 
-    await expect(page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)).toHaveCount(0);
+    const sections = page.locator("section[data-turn]");
+
+    await expect(sections).toHaveCount(12);
+
+    await expect(
+        page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)
+    ).toHaveCount(0);
+
     await expect(
         page.locator(`section[${OFFSCREEN_SECTION_ATTR}="true"]`)
     ).toHaveCount(0);
@@ -75,16 +84,48 @@ test("feature flags: offscreen optimization disabled/enabled controls native off
         enableOffscreenOptimization: true,
     });
 
-    await expect(page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)).toHaveCount(1);
+    await expect(
+        page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)
+    ).toHaveCount(1);
+
     await expect(
         page.locator(`section[${OFFSCREEN_SECTION_ATTR}="true"]`)
-    ).toHaveCount(12);
+    ).toHaveCount(10);
+
+    const optimizationState = await sections.evaluateAll(
+        (items, sectionAttr) =>
+            items.map((section) => ({
+                turn: section.getAttribute("data-turn"),
+                optimized: section.getAttribute(sectionAttr),
+            })),
+        OFFSCREEN_SECTION_ATTR
+    );
+
+    expect(
+        optimizationState
+            .slice(0, -2)
+            .every((section) => section.optimized === "true")
+    ).toBe(true);
+
+    expect(optimizationState.slice(-2)).toEqual([
+        {
+            turn: "user",
+            optimized: null,
+        },
+        {
+            turn: "assistant",
+            optimized: null,
+        },
+    ]);
 
     await setStorage(page, {
         enableOffscreenOptimization: false,
     });
 
-    await expect(page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)).toHaveCount(0);
+    await expect(
+        page.locator(`html[${OFFSCREEN_ROOT_ATTR}="true"]`)
+    ).toHaveCount(0);
+
     await expect(
         page.locator(`section[${OFFSCREEN_SECTION_ATTR}="true"]`)
     ).toHaveCount(0);

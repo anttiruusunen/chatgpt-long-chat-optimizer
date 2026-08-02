@@ -51,13 +51,39 @@ import {
 import { createPruneController } from "../pruning/pruneController.js";
 
 const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
+const REPLY_SETTLED_AUTO_PRUNE_DELAY_MS = 1000;
 
 let pendingNavigationPruneTimer = null;
 let navigationPruneGeneration = 0;
 let pendingDeferredInitialPrune = false;
 let lastCompletedFreshNavigationLocationKey = null;
+let pendingReplySettledAutoPruneTimer = null;
 
 installDomMutationGuard();
+
+function clearPendingReplySettledAutoPrune() {
+    if (pendingReplySettledAutoPruneTimer) {
+        clearTimeout(pendingReplySettledAutoPruneTimer);
+        pendingReplySettledAutoPruneTimer = null;
+    }
+}
+
+function scheduleReplySettledAutoPrune() {
+    clearPendingReplySettledAutoPrune();
+
+    pendingReplySettledAutoPruneTimer = setTimeout(() => {
+        pendingReplySettledAutoPruneTimer = null;
+
+        if (
+            isChatRouteLocation(normalizeLocationPath()) &&
+            state.settings.autoPrune &&
+            state.featureFlags.pruning &&
+            state.didInitialPrune
+        ) {
+            scheduleAutoPrune("reply-settled-stable");
+        }
+    }, REPLY_SETTLED_AUTO_PRUNE_DELAY_MS);
+}
 
 function clearPendingNavigationPrune() {
     if (pendingNavigationPruneTimer) {
@@ -400,6 +426,7 @@ function resetConversationLifecycleForNavigation({
     invalidateConversationDomCache();
     resetVisibleMessagesReadyNotification();
     clearPendingAutoPrune();
+    clearPendingReplySettledAutoPrune();
 
     if (!isChatRouteLocation(locationKey) || isNewChatLocationKey(locationKey)) {
         cancelInitialPrunePendingState({
@@ -676,7 +703,7 @@ async function initialize() {
                 state.featureFlags.pruning &&
                 state.didInitialPrune
             ) {
-                scheduleAutoPrune("reply-settled");
+                scheduleReplySettledAutoPrune();
             }
 
             optimizeUnoptimizedConversationSections("reply-settled");
@@ -684,7 +711,7 @@ async function initialize() {
             scheduleConversationChromeSync({
                 reason: "reply-settled",
                 forceCss: true,
-                includeStreaming: true,
+                includeStreaming: false,
             });
         },
     });
