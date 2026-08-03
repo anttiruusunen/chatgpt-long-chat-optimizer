@@ -7,6 +7,8 @@ const STORE_PRUNE_COMPLETED_TYPE = "thread-optimizer:store-prune-completed";
 const VISIBLE_MESSAGES_READY_TYPE = "thread-optimizer:visible-messages-ready";
 const INITIAL_LOAD_HISTORY_REDUCED_TYPE =
     "thread-optimizer:initial-load-history-reduced";
+const CLEAR_BRANCH_CACHE_TYPE =
+    "thread-optimizer:clear-branch-cache";
 
 let nextStorePruneRequestId = 1;
 const storePruneCompletionListeners = new Set();
@@ -138,6 +140,15 @@ export function requestStoreHistoryPrune({
         historyKeptExchanges: keepCount,
         reason: posted ? null : "failed to post bridge message",
     };
+}
+
+export function requestBranchCacheClear({
+    reason = "reply-settled",
+} = {}) {
+    return postThreadOptimizerBridgeMessage({
+        type: CLEAR_BRANCH_CACHE_TYPE,
+        reason,
+    });
 }
 
 export function onStoreHistoryPruneCompleted(listener) {

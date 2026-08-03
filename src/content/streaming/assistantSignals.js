@@ -89,6 +89,32 @@ export function hasResponseActions(section) {
     );
 }
 
+export function hasComposerSendState(root = document) {
+    if (!(root instanceof Element) && root !== document) {
+        return false;
+    }
+
+    const button = root.querySelector?.("#composer-submit-button");
+
+    if (!(button instanceof HTMLElement)) {
+        return false;
+    }
+
+    const status = [
+        button.getAttribute("aria-label"),
+        button.getAttribute("data-testid"),
+        button.getAttribute("title"),
+    ]
+        .filter(Boolean)
+        .join(" ");
+
+    if (/stop/i.test(status)) {
+        return false;
+    }
+
+    return /send/i.test(status);
+}
+
 export function hasAssistantErrorState(section) {
     if (!(section instanceof HTMLElement)) {
         return false;

@@ -49,6 +49,7 @@ import {
     syncStoreReadOptimizationToPageWithRetry,
 } from "./pageBridgeSync.js";
 import { createPruneController } from "../pruning/pruneController.js";
+import { requestBranchCacheClear } from "../bridge/chatStoreBridgeClient.js";
 
 const NAVIGATION_POST_PRUNE_REFRESH_DELAY_MS = 500;
 const REPLY_SETTLED_AUTO_PRUNE_DELAY_MS = 1000;
@@ -738,6 +739,19 @@ async function initialize() {
         },
 
         onReplySettled: () => {
+            if (isChatRouteLocation(normalizeLocationPath())) {
+                const posted = requestBranchCacheClear({
+                    reason: "reply-settled",
+                });
+
+                debugLog(
+                    "Index: requested branch cache clear after reply settled",
+                    {
+                        posted,
+                    }
+                );
+            }
+
             const retriedInitialPrune =
                 retryIncompleteInitialPruneAfterReplySettled();
 

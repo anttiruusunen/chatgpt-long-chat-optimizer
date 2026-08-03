@@ -82,6 +82,8 @@ const mockRefs = vi.hoisted(() => {
         syncPruningStateToPageBridge: vi.fn(),
         syncStoreReadOptimizationToPageWithRetry: vi.fn(),
 
+        requestBranchCacheClear: vi.fn(),
+
         pruneOldSections: vi.fn(),
         runInitialPrune: vi.fn(),
         bootstrapInitialPruneFromObservedMutation: vi.fn(),
@@ -203,6 +205,11 @@ vi.mock("../../src/content/core/pageBridgeSync.js", () => ({
         mockRefs.syncPruningStateToPageBridge,
     syncStoreReadOptimizationToPageWithRetry:
         mockRefs.syncStoreReadOptimizationToPageWithRetry,
+}));
+
+vi.mock("../../src/content/bridge/chatStoreBridgeClient.js", () => ({
+    requestBranchCacheClear:
+        mockRefs.requestBranchCacheClear,
 }));
 
 vi.mock("../../src/content/pruning/pruneController.js", () => ({
@@ -473,5 +480,49 @@ describe("reply-settled auto-prune lifecycle", () => {
         expect(mockRefs.scheduleAutoPrune).toHaveBeenCalledWith(
             "reply-settled-stable"
         );
+    });
+
+    it("requests one branch-cache clear when a reply settles", async () => {
+        const listeners = await loadIndex();
+
+        listeners.onReplySettled();
+
+        expect(
+            mockRefs.requestBranchCacheClear
+        ).toHaveBeenCalledTimes(1);
+
+        expect(
+            mockRefs.requestBranchCacheClear
+        ).toHaveBeenCalledWith({
+            reason: "reply-settled",
+        });
+    });
+
+    it("does not request a branch-cache clear when a reply starts", async () => {
+        const listeners = await loadIndex();
+
+        listeners.onBeforeReplyStarted({
+            trigger: "textarea-enter",
+        });
+
+        listeners.onReplyStarted({
+            trigger: "textarea-enter",
+        });
+
+        expect(
+            mockRefs.requestBranchCacheClear
+        ).not.toHaveBeenCalled();
+    });
+
+    it("does not request a branch-cache clear after settlement on a non-chat route", async () => {
+        const listeners = await loadIndex();
+
+        mockRefs.isChatRouteLocation.mockReturnValue(false);
+
+        listeners.onReplySettled();
+
+        expect(
+            mockRefs.requestBranchCacheClear
+        ).not.toHaveBeenCalled();
     });
 });

@@ -5,6 +5,7 @@ import {
     hasResponseActions,
     hasAssistantErrorState,
     hasAssistantActiveGenerationState,
+    hasComposerSendState,
     isLikelyComposerInput,
     getClosestComposerSubmitButton,
 } from "./assistantSignals.js";
@@ -17,6 +18,10 @@ let onReplySettledCallback = null;
 
 function latestAssistantHasSettledSignal() {
     if (hasAssistantActiveGenerationState(document)) {
+        return false;
+    }
+
+    if (!hasComposerSendState(document)) {
         return false;
     }
 

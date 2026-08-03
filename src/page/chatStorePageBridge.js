@@ -343,6 +343,18 @@ function readInitialLoadHidingSettingsFromDom() {
                 };
             }
 
+            case "thread-optimizer:clear-branch-cache": {
+                return {
+                    ok: true,
+                    value: {
+                        reason:
+                            typeof data.reason === "string"
+                                ? data.reason.slice(0, 100)
+                                : "reply-settled",
+                    },
+                };
+            }
+
             case "thread-optimizer:visible-messages-ready": {
                 return {
                     ok: true,
@@ -2972,6 +2984,22 @@ function readInitialLoadHidingSettingsFromDom() {
                 bridge.verifyRegisteredStoreAgainstVisibleMessages(
                     "visible-messages-ready"
                 );
+
+                return;
+            }
+
+            if (data.type === "thread-optimizer:clear-branch-cache") {
+                const result = bridge.clearBranchCache?.();
+
+                if (ENABLE_DEBUG) {
+                    console.debug(
+                        "[thread-optimizer bridge] reply-settled node caches cleared",
+                        {
+                            reason: payload.reason,
+                            result,
+                        }
+                    );
+                }
 
                 return;
             }

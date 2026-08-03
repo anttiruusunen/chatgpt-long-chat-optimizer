@@ -75,6 +75,7 @@ export const MESSAGE_TYPES = new Set([
     "thread-optimizer:set-store-read-optimization",
     "thread-optimizer:set-initial-load-hiding",
     "thread-optimizer:visible-messages-ready",
+    "thread-optimizer:clear-branch-cache",
 ]);
 
 export const ENABLE_DEBUG =

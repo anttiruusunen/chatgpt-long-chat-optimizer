@@ -93,6 +93,7 @@ function addComposer() {
 
     const submitButton = document.createElement("button");
     submitButton.id = "composer-submit-button";
+    submitButton.setAttribute("aria-label", "Send message");
     submitButton.type = "button";
     submitButton.textContent = "Send";
 
@@ -311,6 +312,42 @@ describe("replyTiming", () => {
         );
 
         expect(onReplyStarted).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not complete until the composer submit button returns to Send mode", async () => {
+        const { assistant2 } = buildConversationDom();
+        const { textarea, submitButton } = addComposer();
+
+        submitButton.setAttribute("aria-label", "Generating response");
+
+        const onReplySettled = vi.fn();
+        installReplyTimingListeners({ onReplySettled });
+
+        textarea.dispatchEvent(
+            new KeyboardEvent("keydown", {
+                key: "Enter",
+                bubbles: true,
+            })
+        );
+
+        addResponseActions(assistant2);
+        ensureReplyCompletionPoll();
+
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(state.replyTiming.pending).toBe(true);
+        expect(onReplySettled).not.toHaveBeenCalled();
+
+        submitButton.setAttribute("aria-label", "Send message");
+
+        vi.advanceTimersByTime(200);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(state.replyTiming.pending).toBe(false);
+        expect(onReplySettled).toHaveBeenCalledTimes(1);
     });
 
     it("does not complete timing while active generation UI is still present", async () => {

@@ -2628,6 +2628,80 @@ describe("chatStorePageBridge", () => {
         expect(fakeStore.__nodeMap.has("node-2")).toBe(true);
     });
 
-    
+    it("clears the branch cache when requested by a trusted bridge message", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-reply-settled-branch-cache-clear",
+        });
+
+        /*
+        * Populate both branch caches first so we prove that the bridge
+        * message invalidates real cached branch data.
+        */
+        fakeStore.getBranch();
+        fakeStore.getBranchFromLeaf("node-4");
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            size: {
+                getBranch: 1,
+                getBranchFromLeaf: 1,
+            },
+        });
+
+        dispatchValidBridgeMessage(
+            "thread-optimizer:clear-branch-cache",
+            {
+                reason: "reply-settled",
+            }
+        );
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            size: {
+                getBranch: 0,
+                getBranchFromLeaf: 0,
+            },
+        });
+    });
+
+    it("does not clear the branch cache for an untrusted clear request", () => {
+        appendVisibleMessage("msg-4");
+        loadBridgeWithCurrentScript(script);
+
+        const bridge = window[BRIDGE_GLOBAL];
+        const fakeStore = createFakeStore(5);
+
+        bridge.registerStore(fakeStore, {
+            source: "test-untrusted-branch-cache-clear",
+        });
+
+        fakeStore.getBranch();
+        fakeStore.getBranchFromLeaf("node-4");
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            size: {
+                getBranch: 1,
+                getBranchFromLeaf: 1,
+            },
+        });
+
+        dispatchBridgeMessage({
+            source: "thread-optimizer",
+            token: "wrong-token",
+            type: "thread-optimizer:clear-branch-cache",
+            reason: "reply-settled",
+        });
+
+        expect(bridge.getBranchCacheStats()).toMatchObject({
+            size: {
+                getBranch: 1,
+                getBranchFromLeaf: 1,
+            },
+        });
+    });
 });
 

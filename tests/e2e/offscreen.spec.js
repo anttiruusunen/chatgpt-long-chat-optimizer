@@ -90,12 +90,14 @@ async function startReplyAndAppendStreamingExchange(page) {
          * replyTiming recognizes a composer submit button by aria-label.
          */
         const sendButton = document.createElement("button");
+        sendButton.id = "composer-submit-button";
         sendButton.setAttribute("aria-label", "Send message");
         sendButton.textContent = "Send";
         document.body.appendChild(sendButton);
 
         sendButton.click();
-        sendButton.remove();
+        sendButton.setAttribute("aria-label", "Stop answering");
+        sendButton.textContent = "Stop";
 
         /*
          * Mount the new exchange synchronously before the reply completion
@@ -488,6 +490,10 @@ test("offscreen: reply settlement optimizes the previous exchange while keeping 
      * detect this and run the production onReplySettled callback.
      */
     await fixture.completeLatestStreaming();
+    await page.locator("#composer-submit-button").evaluate((button) => {
+        button.setAttribute("aria-label", "Send message");
+        button.textContent = "Send";
+    });
     await fixture.expectLatestAssistantComplete();
 
     await page.waitForFunction(() => {
@@ -586,6 +592,10 @@ test("offscreen: reply settlement and delayed auto-prune never optimize or remov
     await fixture.expectLatestAssistantStreaming();
 
     await fixture.completeLatestStreaming();
+    await page.locator("#composer-submit-button").evaluate((button) => {
+        button.setAttribute("aria-label", "Send message");
+        button.textContent = "Send";
+    });
     await fixture.expectLatestAssistantComplete();
 
     /*

@@ -1352,6 +1352,7 @@ export const cacheInstallerMethods = {
         return { ok: true };
     },
 
+
     getBranchCacheStats() {
         return {
             installed: Boolean(this.__branchCacheInstalled),
