@@ -58,10 +58,13 @@ let navigationPruneGeneration = 0;
 let pendingDeferredInitialPrune = false;
 let lastCompletedFreshNavigationLocationKey = null;
 let pendingReplySettledAutoPruneTimer = null;
+let replySettledAutoPruneGeneration = 0;
 
 installDomMutationGuard();
 
 function clearPendingReplySettledAutoPrune() {
+    replySettledAutoPruneGeneration += 1;
+
     if (pendingReplySettledAutoPruneTimer) {
         clearTimeout(pendingReplySettledAutoPruneTimer);
         pendingReplySettledAutoPruneTimer = null;
@@ -71,8 +74,18 @@ function clearPendingReplySettledAutoPrune() {
 function scheduleReplySettledAutoPrune() {
     clearPendingReplySettledAutoPrune();
 
+    const scheduledGeneration = replySettledAutoPruneGeneration;
+
     pendingReplySettledAutoPruneTimer = setTimeout(() => {
         pendingReplySettledAutoPruneTimer = null;
+
+        if (scheduledGeneration !== replySettledAutoPruneGeneration) {
+            debugLog("Index: skipped stale reply-settled auto-prune", {
+                scheduledGeneration,
+                activeGeneration: replySettledAutoPruneGeneration,
+            });
+            return;
+        }
 
         if (
             isChatRouteLocation(normalizeLocationPath()) &&
@@ -681,20 +694,52 @@ async function initialize() {
     syncPruningStateToPageBridge();
 
     installReplyTimingListeners({
-        onBeforeReplyStarted: () => {
+        onBeforeReplyStarted: ({ trigger } = {}) => {
+            /*
+            * A delayed prune belongs to the reply that just settled.
+            *
+            * Once another reply begins, that work is stale and must never be
+            * allowed to cross into the new reply lifecycle.
+            *
+            * Cancel both:
+            * - the outer reply-settled delay owned by this module
+            * - any auto-prune debounce/deferred retry already handed off to the
+            *   prune controller
+            */
+            clearPendingReplySettledAutoPrune();
+            clearPendingAutoPrune();
+
             if (!isChatRouteLocation(normalizeLocationPath())) {
                 return;
             }
 
-            debugLog("Index: skipped reply-start store prune", {
-                reason: "reply-start-store-prune-disabled",
+            debugLog("Index: cancelled stale auto-prune before reply start", {
+                trigger,
+                reason: "reply-start-cancel-pending-auto-prune",
             });
         },
-        onReplyStarted: () => {
+
+        onReplyStarted: ({ trigger } = {}) => {
+            /*
+            * Defense in depth.
+            *
+            * onBeforeReplyStarted normally invalidates stale prune work first,
+            * but keep the actual reply-start boundary safe as well in case a
+            * future ChatGPT interaction path reaches this callback differently.
+            */
+            clearPendingReplySettledAutoPrune();
+            clearPendingAutoPrune();
+
+            debugLog("Index: ensured stale auto-prune is cancelled at reply start", {
+                trigger,
+            });
+
             handleReplyStreamingStarted();
         },
+
         onReplySettled: () => {
-            const retriedInitialPrune = retryIncompleteInitialPruneAfterReplySettled();
+            const retriedInitialPrune =
+                retryIncompleteInitialPruneAfterReplySettled();
 
             if (
                 !retriedInitialPrune &&
